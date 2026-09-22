@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>dev.vexelray.sim</groupId>
+    <artifactId>vexelray-sim-fluid</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>vexelray-sim-fluid</name>
+    <description>
+        Fluid simulation for VexelRay: a volume holding both water and air, static geometry and convex
+        rigid bodies, drawn by an SDF raymarcher from the same field it simulates. The simulation is
+        SupirVast IR in -core, the stack is in -gui, and -demo is an application of both.
+    </description>
+
+    <modules>
+        <!-- The simulation itself, authored as SupirVast IR: one program that lowers to SPIR-V for the GPU and
+             runs on the CPU for anything else. No engine, no window. -->
+        <module>vexelray-sim-fluid-core</module>
+        <!-- The simulation on the VexelRay stack: the engine, the GUI, and whatever else of it is needed to
+             show and drive the field. -->
+        <module>vexelray-sim-fluid-gui</module>
+        <!-- The application that drives it: piloting a pirate ship. -->
+        <module>vexelray-sim-fluid-demo</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <!-- The stack, installed to the local .m2 from the sibling checkouts. -->
+        <supirvast.version>0.2.0-SNAPSHOT</supirvast.version>
+        <vexelray.version>0.1.0-SNAPSHOT</vexelray.version>
+        <vexelray.gui.version>0.1.0-SNAPSHOT</vexelray.gui.version>
+
+        <junit.version>5.11.4</junit.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Reactor-internal modules: children reference these without a version. -->
+            <dependency>
+                <groupId>dev.vexelray.sim</groupId>
+                <artifactId>vexelray-sim-fluid-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vexelray.sim</groupId>
+                <artifactId>vexelray-sim-fluid-gui</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- SupirVast's pure-Java IR, and the only thing -core depends on. -->
+            <dependency>
+                <groupId>dev.supirvast</groupId>
+                <artifactId>vastir</artifactId>
+                <version>${supirvast.version}</version>
+            </dependency>
+
+            <!-- The engine's front door: the pipeline DSL and the RenderTechnique SPI. -->
+            <dependency>
+                <groupId>dev.vexelray</groupId>
+                <artifactId>vexelray-engine-api</artifactId>
+                <version>${vexelray.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vexelray.gui</groupId>
+                <artifactId>vexelray-gui-core</artifactId>
+                <version>${vexelray.gui.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.13.0</version>
+                    <!-- Explicit release on the plugin as well as the property, so IDEs pick up the Java 25
+                         language level reliably. Same as the sibling repos. -->
+                    <configuration>
+                        <target>${maven.compiler.release}</target>
+                        <release>${maven.compiler.release}</release>
+                        <compilerArgs>
+                            <arg>-Xdoclint:reference,syntax</arg>
+                        </compilerArgs>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.5.2</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vexelray.sim</groupId>
+        <artifactId>vexelray-sim-fluid</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>vexelray-sim-fluid-gui</artifactId>
+
+    <description>
+        The simulation on the VexelRay stack: the engine that runs and draws the field, and the GUI that
+        shows and drives it. Everything Vulkan-aware lives here and nowhere below it.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>dev.vexelray.sim</groupId>
+            <artifactId>vexelray-sim-fluid-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vexelray</groupId>
+            <artifactId>vexelray-engine-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vexelray.gui</groupId>
+            <artifactId>vexelray-gui-core</artifactId>
+        </dependency>
+    </dependencies>
+</project>
