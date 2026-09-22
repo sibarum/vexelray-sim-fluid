@@ -26,10 +26,10 @@ cannot be fixed from here at all.
 
 - [ ] **FLIP.** A fluid library without one is not taken seriously, and it suits the shared core:
       particles carry the fluid and a patch grid does the solve. Particle-to-grid is a `⊕`-sum per node,
-      so any schedule is correct ([architecture.md](architecture.md#conserved-pairs)). Colliding writes
-      need atomics, which the IR lacks, so the schedule is one of: graph colouring by cell parity (4
-      colours in 2D, 8 in 3D), sort-and-reduce, per-node gather after a bitonic sort, or additive
-      blending through the graphics path. Colouring is closest to textbook FLIP. Open: incompressible
+      so any schedule is correct ([architecture.md](architecture.md#conserved-pairs)). SupirVast now has
+      atomics, including `f32` add, so the direct scatter is available and is the baseline to beat;
+      colouring by cell parity, sort-and-reduce and gather-after-sort remain the alternatives to measure
+      against it. A grid column is a fixed-length `KernelColumn` (`withLength`). Open: incompressible
       projection or weakly compressible (local, no global solve, smaller time step); 2D or 3D first.
 
 ## Upstream
@@ -37,9 +37,10 @@ cannot be fixed from here at all.
 Limits of the stack that `-core`'s IR runs on, found while setting this project up. Whether each one
 matters depends on the approach.
 
-- [ ] **`core` IR has no atomics, no workgroup shared memory and no barriers** (fix belongs in
-      `supirvast`). There are no such forms in `Expr` or `Statement`. Gather-style kernels need none of
-      them; anything that appends to a list, compacts, or reduces within a workgroup does.
+- [ ] **`core` IR has no workgroup shared memory and no barriers** (fix belongs in `supirvast`).
+      Atomics on storage buffers exist; reducing within a workgroup before touching global memory, which
+      is what makes a contended scatter fast, needs these two. Worth doing once a scatter is measured to be
+      the bottleneck.
 
 - [ ] **`Accelerator` builds every kernel with a `1×1×1` workgroup** (fix belongs in `supirvast`).
       `register` hard-codes it, so a dispatch of N invocations is N workgroups of one thread each, which
