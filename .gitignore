@@ -27,3 +27,6 @@ replay_pid*
 target/
 .idea/
 *.iml
+
+# Screenshots taken while developing, via the automation socket (ottermate ... shot screenshots/<name>.png)
+screenshots/

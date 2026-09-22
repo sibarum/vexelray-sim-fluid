@@ -20,6 +20,13 @@ cannot be fixed from here at all.
 - [ ] **The README is one line.** It should state [the thesis](architecture.md#the-thesis), name the two
       scales, and point at [architecture.md](architecture.md).
 
+- [ ] **The demo is driveable from the first commit that draws anything.** It is a framework application
+      (`VexelApplication`) depending on `vexelray-framework-automation`, whose `Driver` binds the socket only
+      under `--automation`, so a shipped build links nothing that listens. Pictures come from
+      `ottermate --launch <demo> shot screenshots/<name>.png` — the live window on the demo's own device,
+      which is what a marched fluid needs, since the old static capture draws a placeholder for any
+      device-bound viewport. `screenshots/` is gitignored.
+
 - [ ] **`-gui`'s dependencies are a guess.** It declares `vexelray-engine-api` and `vexelray-gui-core`
       because a technique and a GUI are the obvious seams, not because anything uses them. Settle them
       against the first code that needs the stack, and drop whichever one it does not.
