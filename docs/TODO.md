@@ -8,10 +8,10 @@ cannot be fixed from here at all.
 
 ## Next
 
-- [ ] **An adaptive step.** `ShallowWater` takes `dt` from the caller, who has to know the fastest wave in
-      the patch. Computing it is a reduction — `max(|u| + √(gh))` over every cell — and an atomic max over
-      the float's bits does it in one pass, since non-negative floats order like their bit patterns. The
-      step then reads `dt` from a buffer the reduction wrote, and the host never has to look.
+- [ ] **The clock is an f32.** Fine for a test's five seconds; not for a world left running. At an hour in,
+      an f32's spacing is ~0.25 ms against steps of ~10 ms, so the clock drifts by a few percent of a step
+      per step. A world-scale patch wants an f64 clock or a split one (whole seconds plus a fraction) — and
+      the clock is one element, so the cost is nothing but the choice.
 
 - [ ] **The flux is computed twice per face.** Each cell computes all four of its faces, so every interior
       face is computed by both cells that share it. Correct and conservative, and half wasted. A face pass
@@ -54,8 +54,11 @@ matters depends on the approach.
 
 - [ ] **`core` IR has no workgroup shared memory and no barriers** (fix belongs in `supirvast`).
       Atomics on storage buffers exist; reducing within a workgroup before touching global memory, which
-      is what makes a contended scatter fast, needs these two. Worth doing once a scatter is measured to be
-      the bottleneck.
+      is what makes a contended scatter fast, needs these two. **First measurement:** the step-size
+      reduction fused into `ShallowWater`, at 2²⁰ cells — 0.69 ms per step without it, 0.70–0.83 with the
+      filtered atomic it ships with, 1.17 with every cell taking the atomic. The filter recovers most of it;
+      a workgroup pre-reduction would take the remaining 10–20%. Real, not yet urgent; FLIP's scatter is
+      the case that will decide it.
 
 - [ ] **The engine cannot dispatch compute inside a frame** (fix belongs in `vexelray`).
       `TechniqueContext` names pure compute only as a future technique kind, so any GPU work before

@@ -1,5 +1,6 @@
 package dev.vexelray.sim.fluid.stencil;
 
+import dev.supirvast.vastir.core.AtomicOp;
 import dev.supirvast.vastir.core.Buffer;
 import dev.supirvast.vastir.core.Expr;
 import dev.supirvast.vastir.core.Function;
@@ -9,6 +10,10 @@ import dev.supirvast.vastir.type.Type;
 import java.util.List;
 
 import static dev.vexelray.sim.fluid.stencil.Body.F32;
+import static dev.vexelray.sim.fluid.stencil.Body.I32;
+import static dev.vexelray.sim.fluid.stencil.Body.abs;
+import static dev.vexelray.sim.fluid.stencil.Body.bitsOf;
+import static dev.vexelray.sim.fluid.stencil.Body.floatOf;
 import static dev.vexelray.sim.fluid.stencil.Body.add;
 import static dev.vexelray.sim.fluid.stencil.Body.div;
 import static dev.vexelray.sim.fluid.stencil.Body.eq;
@@ -41,7 +46,8 @@ import static dev.vexelray.sim.fluid.stencil.Body.v;
  *
  * <h2>How</h2>
  * First-order finite volume. One invocation per cell, and each cell gathers: it reads its four neighbours,
- * computes the flux through each of its four faces, and writes only itself — no scatter, no atomics. A face's
+ * computes the flux through each of its four faces, and writes only its own state — no scatter; the one atomic
+ * is the step-size reduction below, and it touches no state. A face's
  * flux is computed by both cells that share it, from the same two states by the same code, so what leaves one
  * cell is what enters the other and water is conserved by construction rather than by care.
  *
@@ -59,34 +65,60 @@ import static dev.vexelray.sim.fluid.stencil.Body.v;
  * neighbour would give, and underestimating it is what makes a dry front stall or go negative.
  *
  * <h2>Structure and data</h2>
- * The grid's shape and its {@link Edges} are compiled — they are the kernel's structure. Gravity, the step,
- * the cell size and the dry threshold are data, read from the {@link #PARAMS} buffer, so tuning them never
+ * The grid's shape and its {@link Edges} are compiled — they are the kernel's structure. Gravity, the Courant
+ * number, the cell size, the dry threshold and the end time are data, read from the {@link #PARAMS} buffer, so
+ * tuning them never
  * rebuilds the kernel ({@code docs/architecture.md}, <i>structure is compiled, values are data</i>). A buffer
  * rather than push constants because those carry the dispatch's invocation count, and the CPU backend has none.
  *
- * <h2>Stability</h2>
- * Explicit, so the step is bounded: {@code dt ≤ C · min(dx, dy) / s} with {@code s} the fastest wave speed and
- * {@code C ≤ ½} for a two-dimensional first-order scheme to keep depth non-negative. {@link #stableStep} says
- * so. The step is chosen by the caller for now: an adaptive one needs the fastest speed in the patch, which is
- * a reduction, which is a later kernel.
+ * <h2>The step chooses itself</h2>
+ * Explicit, so the step is bounded: {@code dt ≤ C · min(dx, dy) / s}, with {@code s} the fastest wave in the
+ * patch and {@code C ≤ ½} for a two-dimensional first-order scheme to keep depth non-negative. Nobody on the
+ * host has to know {@code s}. Each invocation, having written its cell, computes that cell's fastest wave —
+ * {@code max(|u|, |v|) + √(gh)} — and folds it into a one-element buffer with an atomic max, and the next step
+ * reads the result and sizes itself by it. The reduction is fused into the step that produces the state it
+ * measures, so it costs no pass of its own.
+ *
+ * <p>The atomic is an integer max over the float's bits, which is a float max because a non-negative float
+ * orders the same way its bit pattern does. An invocation that has already seen a larger speed in the buffer
+ * skips the atomic, which is most of them once a few have landed — the difference between a million contended
+ * atomics on one address and a few hundred.
+ *
+ * <p>Three speed buffers rotate: a step reads one, maxes into the next, and clears the third, which is the
+ * only way to zero an accumulator without racing the invocations still reading the current one — the third
+ * was last read by the previous step, which is finished, and is next written by the following one. The clock
+ * ping-pongs with the state: every invocation reads the time, and invocation zero alone writes the next. A step
+ * never passes {@code tEnd}; once there, it moves nothing, so a caller can overshoot the step count freely and
+ * read the clock to know when to stop.
  */
 public final class ShallowWater {
 
-    // Bindings: the three outputs, the three inputs, the parameters. Slot order is binding order.
+    // Bindings, in slot order: the state out, the state in, the parameters, the speeds, the clock.
     public static final Buffer OUT_H = new Buffer("outH", 0, F32);
     public static final Buffer OUT_HU = new Buffer("outHu", 1, F32);
     public static final Buffer OUT_HV = new Buffer("outHv", 2, F32);
     public static final Buffer IN_H = new Buffer("inH", 3, F32);
     public static final Buffer IN_HU = new Buffer("inHu", 4, F32);
     public static final Buffer IN_HV = new Buffer("inHv", 5, F32);
-    /** {@code [g, dt/dx, dt/dy, dry]} — see {@link #params}. */
+    /** {@code [g, courant, dx, dy, dry, tEnd]} — see {@link #params}. */
     public static final Buffer PARAMS = new Buffer("params", 6, F32);
+    /** One element: the fastest wave in the state this step reads, as f32 bits. */
+    public static final Buffer SPEED_IN = new Buffer("speedIn", 7, I32);
+    /** One element: the fastest wave in the state this step writes, accumulated here. Zero on entry. */
+    public static final Buffer SPEED_OUT = new Buffer("speedOut", 8, I32);
+    /** One element: zeroed by this step, to be the next step's {@link #SPEED_OUT}. */
+    public static final Buffer SPEED_CLEAR = new Buffer("speedClear", 9, I32);
+    /** One element: the simulated time before this step. */
+    public static final Buffer CLOCK_IN = new Buffer("clockIn", 10, F32);
+    /** One element: the simulated time after it. */
+    public static final Buffer CLOCK_OUT = new Buffer("clockOut", 11, F32);
 
     /** Every buffer, in binding order. */
-    public static final List<Buffer> BUFFERS = List.of(OUT_H, OUT_HU, OUT_HV, IN_H, IN_HU, IN_HV, PARAMS);
+    public static final List<Buffer> BUFFERS = List.of(OUT_H, OUT_HU, OUT_HV, IN_H, IN_HU, IN_HV, PARAMS,
+            SPEED_IN, SPEED_OUT, SPEED_CLEAR, CLOCK_IN, CLOCK_OUT);
 
     /** How many elements {@link #PARAMS} holds. */
-    public static final int PARAM_COUNT = 4;
+    public static final int PARAM_COUNT = 6;
 
     /**
      * Below this depth a cell is dry: its velocity is zero rather than a quotient of two roundings. A metre
@@ -109,10 +141,20 @@ public final class ShallowWater {
         LocalVar y = b.let("y", div(v(cell), i(nx)));
 
         LocalVar g = b.let("g", load(PARAMS, i(0)));
-        LocalVar rx = b.let("dtOverDx", load(PARAMS, i(1)));
-        LocalVar ry = b.let("dtOverDy", load(PARAMS, i(2)));
-        LocalVar dry = b.let("dry", load(PARAMS, i(3)));
+        LocalVar courant = b.let("courant", load(PARAMS, i(1)));
+        LocalVar dx = b.let("dx", load(PARAMS, i(2)));
+        LocalVar dy = b.let("dy", load(PARAMS, i(3)));
+        LocalVar dry = b.let("dry", load(PARAMS, i(4)));
+        LocalVar end = b.let("tEnd", load(PARAMS, i(5)));
         Physics physics = new Physics(g, dry);
+
+        // The step: as large as the fastest wave allows, and never past the end.
+        LocalVar fastest = b.let("fastest", floatOf(load(SPEED_IN, i(0))));
+        LocalVar time = b.let("time", load(CLOCK_IN, i(0)));
+        LocalVar dt = b.let("dt", div(mul(v(courant), min(v(dx), v(dy))), max(v(fastest), f(1e-30))));
+        b.set(dt, min(v(dt), max(sub(v(end), v(time)), f(0))));
+        LocalVar rx = b.let("dtOverDx", div(v(dt), v(dx)));
+        LocalVar ry = b.let("dtOverDy", div(v(dt), v(dy)));
 
         State here = State.load(b, "c", v(cell));
         State west = neighbour(b, "w", v(cell), eq(v(x), i(0)), -1, edges.west(), true);
@@ -135,31 +177,60 @@ public final class ShallowWater {
 
         // At a stable step depth stays non-negative in exact arithmetic; the clamp is for the last rounding,
         // because a depth of -1e-9 would make the next step's √(gh) a NaN.
-        b.store(OUT_H, v(cell), max(h, f(0)));
-        b.store(OUT_HU, v(cell), hu);
-        b.store(OUT_HV, v(cell), hv);
+        LocalVar newH = b.let("newH", max(h, f(0)));
+        LocalVar newHu = b.let("newHu", hu);
+        LocalVar newHv = b.let("newHv", hv);
+        b.store(OUT_H, v(cell), v(newH));
+        b.store(OUT_HU, v(cell), v(newHu));
+        b.store(OUT_HV, v(cell), v(newHv));
+
+        // The next step's size, measured from what this one wrote. Skipping the atomic when the buffer already
+        // holds more is only a filter: a stale read can let through an atomic that was not needed, never stop
+        // one that was, because the buffer only grows within a step.
+        LocalVar u = velocity(b, "nextU", physics, newH, newHu);
+        LocalVar w = velocity(b, "nextV", physics, newH, newHv);
+        LocalVar speed = b.let("speed", add(max(abs(v(u)), abs(v(w))), sqrt(mul(v(g), v(newH)))));
+        LocalVar speedBits = b.let("speedBits", bitsOf(v(speed)));
+        b.when(gt(v(speedBits), load(SPEED_OUT, i(0))),
+                t -> t.atomic(AtomicOp.MAX, SPEED_OUT, i(0), v(speedBits)));
+
+        b.when(eq(v(cell), i(0)), t -> {
+            t.store(SPEED_CLEAR, i(0), i(0));
+            t.store(CLOCK_OUT, i(0), add(v(time), v(dt)));
+        });
         return new Function("shallowWater", new Type.FunctionType(Type.VOID, List.of()), b.finish());
     }
 
     /**
-     * The four parameters as {@code PARAMS} words: gravity, the step over each cell size, and the depth below
-     * which a cell counts as dry.
+     * The six parameters as {@code PARAMS} words: gravity, the Courant number, the cell size each way, the
+     * depth below which a cell counts as dry, and the time no step may pass.
      */
-    public static int[] params(double g, double dt, double dx, double dy, double dry) {
-        return new int[] {
-                Float.floatToRawIntBits((float) g),
-                Float.floatToRawIntBits((float) (dt / dx)),
-                Float.floatToRawIntBits((float) (dt / dy)),
-                Float.floatToRawIntBits((float) dry)};
-    }
-
-    /** The largest stable step for a fastest wave speed {@code speed}, at Courant number {@code courant}. */
-    public static double stableStep(double dx, double dy, double speed, double courant) {
+    public static int[] params(double g, double courant, double dx, double dy, double dry, double end) {
         if (!(courant > 0 && courant <= 0.5)) {
             throw new IllegalArgumentException("a first-order 2D step needs a Courant number in (0, 1/2], got "
                     + courant);
         }
-        return courant * Math.min(dx, dy) / speed;
+        return new int[] {
+                Float.floatToRawIntBits((float) g),
+                Float.floatToRawIntBits((float) courant),
+                Float.floatToRawIntBits((float) dx),
+                Float.floatToRawIntBits((float) dy),
+                Float.floatToRawIntBits((float) dry),
+                Float.floatToRawIntBits((float) end)};
+    }
+
+    /**
+     * The fastest wave in a state, as the {@link #SPEED_IN} word the first step needs — the only time the host
+     * measures anything, because it is the only time the host made the state.
+     */
+    public static int fastestWave(float[] h, float[] hu, float[] hv, double g, double dry) {
+        float fastest = 0;
+        for (int k = 0; k < h.length; k++) {
+            float u = h[k] > dry ? hu[k] / h[k] : 0;
+            float w = h[k] > dry ? hv[k] / h[k] : 0;
+            fastest = Math.max(fastest, Math.max(Math.abs(u), Math.abs(w)) + (float) Math.sqrt(g * h[k]));
+        }
+        return Float.floatToRawIntBits(fastest);
     }
 
     // --- building blocks ---------------------------------------------------------------------------------

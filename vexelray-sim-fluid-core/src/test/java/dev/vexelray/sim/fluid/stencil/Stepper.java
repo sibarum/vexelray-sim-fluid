@@ -18,6 +18,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 /**
  * Runs the shallow-water step on one backend: set a state, step it, read it back. The tests judge each backend
  * on its own against the physics — the two are not compared, and are not expected to agree bit for bit.
+ *
+ * <p>Both backends rotate the same buffers the same way, which {@link #slots} states once: two states
+ * ping-ponging, three speed buffers rotating (read, accumulate, clear), and two clocks ping-ponging.
  */
 abstract class Stepper implements AutoCloseable {
 
@@ -26,6 +29,8 @@ abstract class Stepper implements AutoCloseable {
     final int nx;
     final int ny;
     final int cells;
+    /** Steps dispatched since {@link #set} — including any that moved nothing because the end was reached. */
+    int dispatched;
 
     Stepper(int nx, int ny) {
         this.nx = nx;
@@ -38,15 +43,51 @@ abstract class Stepper implements AutoCloseable {
         return backend == Backend.CPU ? new Cpu(kernel, nx, ny) : new Gpu(kernel, nx, ny);
     }
 
-    abstract void set(float[] h, float[] hu, float[] hv, int[] params);
+    /** Sets the state and parameters; the first step's speed is measured here, from the state the host made. */
+    final void set(float[] h, float[] hu, float[] hv, int[] params) {
+        double g = Float.intBitsToFloat(params[0]);
+        double dry = Float.intBitsToFloat(params[4]);
+        load(h, hu, hv, params, ShallowWater.fastestWave(h, hu, hv, g, dry));
+        dispatched = 0;
+    }
 
-    abstract void step(int steps);
+    abstract void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed);
+
+    final void step(int steps) {
+        for (int s = 0; s < steps; s++) {
+            dispatch(slots(dispatched));
+            dispatched++;
+        }
+    }
+
+    /** Steps in batches until the clock reaches {@code end}; the steps after it are no-ops, by the kernel. */
+    final void runUntil(double end, int batch, int limit) {
+        while (time() < end * (1 - 1e-6)) {
+            if (dispatched >= limit) {
+                throw new AssertionError("the clock is at " + time() + " of " + end + " after " + limit
+                        + " steps -- the step is not growing as it should");
+            }
+            step(batch);
+        }
+    }
+
+    abstract void dispatch(Slots slots);
+
+    /** The simulated time after the steps dispatched so far. */
+    abstract float time();
 
     /** {@code {h, hu, hv}}. */
     abstract float[][] read();
 
     @Override
     public void close() {
+    }
+
+    /** Which of the rotating buffers step {@code k} binds where. */
+    record Slots(int stateIn, int stateOut, int speedIn, int speedOut, int speedClear, int clockIn, int clockOut) {}
+
+    static Slots slots(int k) {
+        return new Slots(k % 2, (k + 1) % 2, k % 3, (k + 1) % 3, (k + 2) % 3, k % 2, (k + 1) % 2);
     }
 
     static int[] bits(float[] values) {
@@ -65,11 +106,12 @@ abstract class Stepper implements AutoCloseable {
         return values;
     }
 
-    /** Truffle, one call per cell per step, over arrays swapped between steps. */
+    /** Truffle, one call per cell per step, over arrays rotated between steps. */
     private static final class Cpu extends Stepper {
         private final CallTarget target;
-        private int[][] current;
-        private int[][] next;
+        private final int[][][] state = new int[2][3][];
+        private final int[][] speed = new int[3][];
+        private final int[][] clock = new int[2][];
         private int[] params;
 
         Cpu(Function kernel, int nx, int ny) {
@@ -78,34 +120,37 @@ abstract class Stepper implements AutoCloseable {
         }
 
         @Override
-        void set(float[] h, float[] hu, float[] hv, int[] params) {
-            current = new int[][] {bits(h), bits(hu), bits(hv)};
-            next = new int[][] {new int[cells], new int[cells], new int[cells]};
+        void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed) {
+            state[0] = new int[][] {bits(h), bits(hu), bits(hv)};
+            state[1] = new int[][] {new int[cells], new int[cells], new int[cells]};
+            speed[0] = new int[] {firstSpeed};
+            speed[1] = new int[1];
+            speed[2] = new int[1];
+            clock[0] = new int[1];
+            clock[1] = new int[1];
             this.params = params;
         }
 
         @Override
-        void step(int steps) {
-            int[][] slots = new int[7][];
-            for (int s = 0; s < steps; s++) {
-                slots[0] = next[0];
-                slots[1] = next[1];
-                slots[2] = next[2];
-                slots[3] = current[0];
-                slots[4] = current[1];
-                slots[5] = current[2];
-                slots[6] = params;
-                for (int c = 0; c < cells; c++) {
-                    target.call(c, slots);
-                }
-                int[][] swap = current;
-                current = next;
-                next = swap;
+        void dispatch(Slots s) {
+            int[][] out = state[s.stateOut()];
+            int[][] in = state[s.stateIn()];
+            int[][] slots = {out[0], out[1], out[2], in[0], in[1], in[2], params,
+                    speed[s.speedIn()], speed[s.speedOut()], speed[s.speedClear()],
+                    clock[s.clockIn()], clock[s.clockOut()]};
+            for (int c = 0; c < cells; c++) {
+                target.call(c, slots);
             }
         }
 
         @Override
+        float time() {
+            return Float.intBitsToFloat(clock[slots(dispatched).clockIn()][0]);
+        }
+
+        @Override
         float[][] read() {
+            int[][] current = state[slots(dispatched).stateIn()];
             return new float[][] {floats(current[0]), floats(current[1]), floats(current[2])};
         }
     }
@@ -114,61 +159,78 @@ abstract class Stepper implements AutoCloseable {
     private static final class Gpu extends Stepper {
         private final Accelerator accelerator = new Accelerator();
         private final KernelHandle handle;
-        private final List<ResidentBuffer> a = new ArrayList<>();
-        private final List<ResidentBuffer> b = new ArrayList<>();
+        private final List<List<ResidentBuffer>> state = new ArrayList<>();
+        private final List<ResidentBuffer> speed = new ArrayList<>();
+        private final List<ResidentBuffer> clock = new ArrayList<>();
         private final ResidentBuffer params;
-        private boolean inA = true;
 
         Gpu(Function kernel, int nx, int ny) {
             super(nx, ny);
-            boolean gpu = accelerator.capabilities().gpuAvailable();
-            if (!gpu) {
+            if (!accelerator.capabilities().gpuAvailable()) {
                 accelerator.close();
                 assumeTrue(Boolean.getBoolean("supirvast.requireGpu"), "no Vulkan device");
                 throw new IllegalStateException("-Dsupirvast.requireGpu=true but no Vulkan device");
             }
             List<KernelColumn> columns = new ArrayList<>();
             for (Buffer buffer : ShallowWater.BUFFERS) {
-                KernelColumn column = buffer.binding() < 3
+                boolean written = buffer.binding() < 3 || buffer == ShallowWater.SPEED_OUT
+                        || buffer == ShallowWater.SPEED_CLEAR || buffer == ShallowWater.CLOCK_OUT;
+                KernelColumn column = written
                         ? KernelColumn.output(buffer.name(), buffer.binding(), buffer.element())
                         : KernelColumn.input(buffer.name(), buffer.binding(), buffer.element());
-                columns.add(buffer == ShallowWater.PARAMS ? column.withLength(ShallowWater.PARAM_COUNT) : column);
+                int length = buffer == ShallowWater.PARAMS ? ShallowWater.PARAM_COUNT : buffer.binding() > 6 ? 1 : 0;
+                columns.add(length > 0 ? column.withLength(length) : column);
             }
             handle = accelerator.register(new KernelSpec(kernel, columns)).orElseThrow();
             if (handle.preferredBackend() != KernelHandle.Backend.GPU) {
                 throw new IllegalStateException("a GPU is present but the kernel registered CPU-only");
             }
+            for (int k = 0; k < 2; k++) {
+                List<ResidentBuffer> fields = new ArrayList<>();
+                for (int f = 0; f < 3; f++) {
+                    fields.add(accelerator.allocate(ShallowWater.OUT_H.element(), cells));
+                }
+                state.add(fields);
+                clock.add(accelerator.allocate(ShallowWater.CLOCK_IN.element(), 1));
+            }
             for (int k = 0; k < 3; k++) {
-                a.add(accelerator.allocate(ShallowWater.OUT_H.element(), cells));
-                b.add(accelerator.allocate(ShallowWater.OUT_H.element(), cells));
+                speed.add(accelerator.allocate(ShallowWater.SPEED_IN.element(), 1));
             }
             params = accelerator.allocate(ShallowWater.PARAMS.element(), ShallowWater.PARAM_COUNT);
         }
 
         @Override
-        void set(float[] h, float[] hu, float[] hv, int[] params) {
-            a.get(0).write(bits(h));
-            a.get(1).write(bits(hu));
-            a.get(2).write(bits(hv));
+        void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed) {
+            state.get(0).get(0).write(bits(h));
+            state.get(0).get(1).write(bits(hu));
+            state.get(0).get(2).write(bits(hv));
+            speed.get(0).write(new int[] {firstSpeed});
+            speed.get(1).write(new int[1]);
+            speed.get(2).write(new int[1]);
+            clock.get(0).write(new int[1]);
+            clock.get(1).write(new int[1]);
             this.params.write(params);
-            inA = true;
         }
 
         @Override
-        void step(int steps) {
-            for (int s = 0; s < steps; s++) {
-                List<ResidentBuffer> from = inA ? a : b;
-                List<ResidentBuffer> to = inA ? b : a;
-                handle.dispatch(List.of(to.get(0), to.get(1), to.get(2), from.get(0), from.get(1), from.get(2),
-                        params), cells);
-                inA = !inA;
-            }
+        void dispatch(Slots s) {
+            List<ResidentBuffer> out = state.get(s.stateOut());
+            List<ResidentBuffer> in = state.get(s.stateIn());
+            handle.dispatch(List.of(out.get(0), out.get(1), out.get(2), in.get(0), in.get(1), in.get(2), params,
+                    speed.get(s.speedIn()), speed.get(s.speedOut()), speed.get(s.speedClear()),
+                    clock.get(s.clockIn()), clock.get(s.clockOut())), cells);
+        }
+
+        @Override
+        float time() {
+            return Float.intBitsToFloat(clock.get(slots(dispatched).clockIn()).read()[0]);
         }
 
         @Override
         float[][] read() {
-            List<ResidentBuffer> state = inA ? a : b;
-            return new float[][] {floats(state.get(0).read()), floats(state.get(1).read()), floats(state.get(2).read())};
+            List<ResidentBuffer> current = state.get(slots(dispatched).stateIn());
+            return new float[][] {floats(current.get(0).read()), floats(current.get(1).read()),
+                    floats(current.get(2).read())};
         }
 
         @Override

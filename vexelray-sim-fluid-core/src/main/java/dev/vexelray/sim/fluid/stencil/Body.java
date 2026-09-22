@@ -1,5 +1,6 @@
 package dev.vexelray.sim.fluid.stencil;
 
+import dev.supirvast.vastir.core.AtomicOp;
 import dev.supirvast.vastir.core.BinaryOp;
 import dev.supirvast.vastir.core.Buffer;
 import dev.supirvast.vastir.core.Expr;
@@ -50,6 +51,11 @@ final class Body {
 
     void store(Buffer buffer, Expr index, Expr value) {
         statements.add(new Statement.BufferStore(buffer, index, value));
+    }
+
+    /** {@code buffer[index] = op(buffer[index], value)}, indivisibly, discarding the old value. */
+    void atomic(AtomicOp op, Buffer buffer, Expr index, Expr value) {
+        statements.add(new Statement.AtomicUpdate(op, buffer, index, value));
     }
 
     /** {@code if (condition) { then }} — the statements {@code then} writes go into the branch. */
@@ -137,6 +143,20 @@ final class Body {
 
     static Expr sqrt(Expr a) {
         return new Expr.MathCall(MathFn.SQRT, a.type(), List.of(a));
+    }
+
+    static Expr abs(Expr a) {
+        return new Expr.MathCall(MathFn.ABS, a.type(), List.of(a));
+    }
+
+    /** An f32's bits as an i32 — which, for a non-negative float, orders the same way the float does. */
+    static Expr bitsOf(Expr a) {
+        return new Expr.Bitcast(a, I32);
+    }
+
+    /** The f32 whose bits an i32 holds. */
+    static Expr floatOf(Expr a) {
+        return new Expr.Bitcast(a, F32);
     }
 
     /** Unique names across a body and its branches, so a printed kernel reads unambiguously. */

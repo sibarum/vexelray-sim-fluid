@@ -1,8 +1,12 @@
 package dev.vexelray.sim.fluid.stencil;
 
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
+import java.util.Arrays;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -14,10 +18,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * wet/dry boundary, where velocity is {@code 0/0} and where a scheme with the wrong wave speeds stalls, goes
  * negative, or produces a NaN that spreads. A first-order scheme is not expected to match it closely at any
  * one resolution; it is expected to converge, so the test measures the error at two and requires it to fall.
+ *
+ * <p>Nothing here hands the kernel a step. It measures the fastest wave itself and sizes each step by it, so
+ * the tests say only how long to run and check that the clock and the physics agree.
  */
 class ShallowWaterTest {
 
     private static final double G = 9.81;
+    private static final double COURANT = 0.45;
+    private static final double FOREVER = 1e9;
 
     // --- Ritter ------------------------------------------------------------------------------------------
 
@@ -40,21 +49,23 @@ class ShallowWaterTest {
         return root * root / (9 * G);
     }
 
-    /** L1 error of depth against Ritter at time {@link #T}, over the water there should be, on {@code cells}. */
-    private static double ritterError(Stepper.Backend backend, int cells) {
+    private static float[] damBreak(int cells) {
         double dx = LENGTH / cells;
         float[] h = new float[cells];
         for (int k = 0; k < cells; k++) {
             h[k] = (k + 0.5) * dx < DAM ? (float) H0 : 0f;
         }
-        double fastest = 2 * Math.sqrt(G * H0);   // the dry front, the fastest thing in the problem
-        int steps = (int) Math.ceil(T / ShallowWater.stableStep(dx, dx, fastest, 0.45));
-        double dt = T / steps;
+        return h;
+    }
 
+    /** L1 error of depth against Ritter at time {@link #T}, over the water there should be, on {@code cells}. */
+    private static double ritterError(Stepper.Backend backend, int cells) {
+        double dx = LENGTH / cells;
         try (Stepper stepper = Stepper.on(backend, cells, 1, Edges.all(Edge.WALL))) {
-            stepper.set(h, new float[cells], new float[cells],
-                    ShallowWater.params(G, dt, dx, dx, ShallowWater.DEFAULT_DRY));
-            stepper.step(steps);
+            stepper.set(damBreak(cells), new float[cells], new float[cells],
+                    ShallowWater.params(G, COURANT, dx, dx, ShallowWater.DEFAULT_DRY, T));
+            stepper.runUntil(T, 32, 100_000);
+            assertEquals(T, stepper.time(), T * 1e-5, backend + ": the clock should stop exactly at the end");
             float[] depth = stepper.read()[0];
             double error = 0;
             double water = 0;
@@ -80,6 +91,60 @@ class ShallowWaterTest {
                 + coarse + " -> " + fine + "), so the scheme is not converging");
     }
 
+    // --- the step ----------------------------------------------------------------------------------------
+
+    /**
+     * The step is sized by the fastest wave the kernel measured. Before the dam breaks, that is still water's
+     * {@code √(g·h0)}, so the first step is exactly {@code C·dx/√(g·h0)}. Once the dry front forms it runs at
+     * {@code 2√(g·h0)}, so the steps must shrink to about half — a kernel that kept its first step would
+     * overrun the front and go unstable, and one that never measured would not know to shrink.
+     */
+    @ParameterizedTest
+    @EnumSource(Stepper.Backend.class)
+    void theStepFollowsTheFastestWave(Stepper.Backend backend) {
+        int cells = 200;
+        double dx = LENGTH / cells;
+        double c0 = Math.sqrt(G * H0);
+        try (Stepper stepper = Stepper.on(backend, cells, 1, Edges.all(Edge.WALL))) {
+            stepper.set(damBreak(cells), new float[cells], new float[cells],
+                    ShallowWater.params(G, COURANT, dx, dx, ShallowWater.DEFAULT_DRY, FOREVER));
+            stepper.step(1);
+            double first = stepper.time();
+            assertEquals(COURANT * dx / c0, first, first * 1e-5, backend + ": the first step is not C·dx/c0");
+
+            stepper.step(99);
+            double before = stepper.time();
+            stepper.step(10);
+            double later = (stepper.time() - before) / 10;
+            System.out.printf("[step] %s: first %.5f s, after 100 steps %.5f s (ratio %.2f)%n",
+                    backend, first, later, first / later);
+            assertTrue(later < first * 0.7 && later > first * 0.4, backend + ": after the front formed the step is "
+                    + later + " s against a first step of " + first + " s; it should be about half");
+        }
+    }
+
+    /** Steps past the end move nothing: the clock stops and so does the water. */
+    @ParameterizedTest
+    @EnumSource(Stepper.Backend.class)
+    void noStepPassesTheEnd(Stepper.Backend backend) {
+        int cells = 200;
+        double dx = LENGTH / cells;
+        double end = 1;
+        try (Stepper stepper = Stepper.on(backend, cells, 1, Edges.all(Edge.WALL))) {
+            stepper.set(damBreak(cells), new float[cells], new float[cells],
+                    ShallowWater.params(G, COURANT, dx, dx, ShallowWater.DEFAULT_DRY, end));
+            stepper.runUntil(end, 16, 10_000);
+            float[][] atEnd = stepper.read();
+            float clock = stepper.time();
+            stepper.step(50);
+            assertEquals(clock, stepper.time(), 0f, backend + ": the clock moved past the end");
+            float[][] after = stepper.read();
+            for (int f = 0; f < 3; f++) {
+                assertArrayEquals(atEnd[f], after[f], 0f, backend + ": the water moved after the end");
+            }
+        }
+    }
+
     // --- a closed box ------------------------------------------------------------------------------------
 
     /**
@@ -91,7 +156,6 @@ class ShallowWaterTest {
     @EnumSource(Stepper.Backend.class)
     void aClosedBoxHoldsItsWater(Stepper.Backend backend) {
         int n = 48;
-        double dx = 1;
         float[] h = new float[n * n];
         for (int y = 0; y < n; y++) {
             for (int x = 0; x < n; x++) {
@@ -100,11 +164,9 @@ class ShallowWaterTest {
                 h[y * n + x] = (float) (1 + 0.5 * Math.exp(-(rx * rx + ry * ry) / 20));
             }
         }
-        double fastest = Math.sqrt(G * 1.5) + 1;   // the hump's wave speed, with room for the flow it makes
-        double dt = ShallowWater.stableStep(dx, dx, fastest, 0.4);
-
         try (Stepper stepper = Stepper.on(backend, n, n, Edges.all(Edge.WALL))) {
-            stepper.set(h, new float[n * n], new float[n * n], ShallowWater.params(G, dt, dx, dx, ShallowWater.DEFAULT_DRY));
+            stepper.set(h, new float[n * n], new float[n * n],
+                    ShallowWater.params(G, 0.4, 1, 1, ShallowWater.DEFAULT_DRY, FOREVER));
             stepper.step(300);
             float[][] state = stepper.read();
             double before = sum(h);
@@ -114,8 +176,8 @@ class ShallowWaterTest {
                     assertTrue(Float.isFinite(value), backend + ": a non-finite value after 300 steps");
                 }
             }
-            System.out.printf("[box] %s: mass %.6f -> %.6f (drift %.2e)%n", backend, before, after,
-                    Math.abs(after - before) / before);
+            System.out.printf("[box] %s: mass %.6f -> %.6f (drift %.2e) over %.2f s%n", backend, before, after,
+                    Math.abs(after - before) / before, stepper.time());
             assertEquals(before, after, before * 1e-5, backend + ": the box gained or lost water");
         }
     }
@@ -134,9 +196,10 @@ class ShallowWaterTest {
     void aLakeAtRestStaysAtRest(Stepper.Backend backend) {
         int n = 32;
         float[] h = new float[n * n];
-        java.util.Arrays.fill(h, 1f);
+        Arrays.fill(h, 1f);
         try (Stepper stepper = Stepper.on(backend, n, n, Edges.all(Edge.WALL))) {
-            stepper.set(h, new float[n * n], new float[n * n], ShallowWater.params(G, 0.05, 1, 1, ShallowWater.DEFAULT_DRY));
+            stepper.set(h, new float[n * n], new float[n * n],
+                    ShallowWater.params(G, 0.4, 1, 1, ShallowWater.DEFAULT_DRY, FOREVER));
             for (int steps : new int[] {100, 900}) {
                 stepper.step(steps);
                 float[][] state = stepper.read();
@@ -149,6 +212,36 @@ class ShallowWaterTest {
                 assertTrue(depth < 1e-6, backend + ": depth moved by " + depth);
                 assertTrue(momentum < 1e-6, backend + ": a current of " + momentum + " appeared in still water");
             }
+        }
+    }
+
+    // --- cost --------------------------------------------------------------------------------------------
+
+    /**
+     * Not an assertion: a 1024 × 1024 patch stepped a hundred times on the GPU, with the step-size reduction
+     * fused in. Every cell may reach for the same atomic, which is the textbook way for a reduction to become
+     * the bottleneck; this is the number that says whether it has.
+     */
+    @Test
+    void gpuThroughputAtAMillionCells() {
+        int n = 1024;
+        float[] h = new float[n * n];
+        for (int y = 0; y < n; y++) {
+            for (int x = 0; x < n; x++) {
+                h[y * n + x] = x < n / 2 ? 2f : 1f;   // a dam across the middle, so every step has flow
+            }
+        }
+        try (Stepper stepper = Stepper.on(Stepper.Backend.GPU, n, n, Edges.all(Edge.WALL))) {
+            stepper.set(h, new float[n * n], new float[n * n],
+                    ShallowWater.params(G, COURANT, 1, 1, ShallowWater.DEFAULT_DRY, FOREVER));
+            stepper.step(5);
+            stepper.time();   // warm, and drain
+            long start = System.nanoTime();
+            stepper.step(100);
+            float clock = stepper.time();
+            double ms = (System.nanoTime() - start) / 1e6;
+            System.out.printf("[cost] 2^20 cells: %.3f ms per step, fused step-size reduction included "
+                    + "(clock %.2f s)%n", ms / 100, clock);
         }
     }
 
