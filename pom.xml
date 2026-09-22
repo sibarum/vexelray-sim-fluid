@@ -59,6 +59,18 @@
                 <artifactId>vastir</artifactId>
                 <version>${supirvast.version}</version>
             </dependency>
+            <!-- Test scope only: the CPU backend that runs the IR, and the Vulkan path that runs it on the GPU.
+                 Each is tested on its own on whether the simulation works; they are not compared. -->
+            <dependency>
+                <groupId>dev.supirvast</groupId>
+                <artifactId>vast</artifactId>
+                <version>${supirvast.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.supirvast</groupId>
+                <artifactId>vastir-tools</artifactId>
+                <version>${supirvast.version}</version>
+            </dependency>
 
             <!-- The engine's front door: the pipeline DSL and the RenderTechnique SPI. -->
             <dependency>

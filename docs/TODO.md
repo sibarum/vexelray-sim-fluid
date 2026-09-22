@@ -8,14 +8,15 @@ cannot be fixed from here at all.
 
 ## Next
 
-- [ ] **The first kernel, written by hand at the stencil level.** One bounded patch, shallow water, a
-      finite-volume update over conserved pairs, with the edge condition as a parameter rather than
-      assumed. No tower above it yet: it is the output the tower will later have to reproduce
-      ([architecture.md](architecture.md#built-from-the-bottom-up-with-the-output-written-by-hand-first)).
-      Tested on whether it works — a dam break against Ritter's exact solution, mass held — on the CPU and
-      the GPU independently. `-core` will need `vast` and `vastir-tools` back at test scope. Stepped on
-      resident buffers (`Accelerator.allocate`, `KernelHandle.dispatch`), which cost 0.35 ms a step on a
-      2²⁰-cell field where round trips cost 35.
+- [ ] **An adaptive step.** `ShallowWater` takes `dt` from the caller, who has to know the fastest wave in
+      the patch. Computing it is a reduction — `max(|u| + √(gh))` over every cell — and an atomic max over
+      the float's bits does it in one pass, since non-negative floats order like their bit patterns. The
+      step then reads `dt` from a buffer the reduction wrote, and the host never has to look.
+
+- [ ] **The flux is computed twice per face.** Each cell computes all four of its faces, so every interior
+      face is computed by both cells that share it. Correct and conservative, and half wasted. A face pass
+      writing fluxes, then a cell pass differencing them, is the obvious split — worth it once a profile
+      says the step is compute-bound rather than memory-bound, which at first order it may not be.
 
 - [ ] **The README is one line.** It should state [the thesis](architecture.md#the-thesis), name the two
       scales, and point at [architecture.md](architecture.md).
@@ -32,6 +33,11 @@ cannot be fixed from here at all.
       against the first code that needs the stack, and drop whichever one it does not.
 
 ## Later
+
+- [ ] **Second order.** The first kernel is first-order: Ritter's L1 error goes 1.32% → 0.84% from 200 to
+      400 cells. A MUSCL reconstruction with a limiter sharpens fronts at the same resolution, and is the
+      first change that is a *second scheme* — the point at which the discretisation level of the tower
+      earns its place ([architecture.md](architecture.md#built-from-the-bottom-up-with-the-output-written-by-hand-first)).
 
 - [ ] **FLIP.** A fluid library without one is not taken seriously, and it suits the shared core:
       particles carry the fluid and a patch grid does the solve. Particle-to-grid is a `⊕`-sum per node,
