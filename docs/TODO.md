@@ -1,0 +1,55 @@
+# TODO
+
+Work on this simulator that is known about and not done.
+
+Keep an entry short enough that it does not need editing, and delete it when it is done rather than
+ticking it. An entry whose fix belongs in a sibling repo says which one; the ones under **Upstream**
+cannot be fixed from here at all.
+
+## Next
+
+- [ ] **The first kernel, written by hand at the stencil level.** One bounded patch, shallow water, a
+      finite-volume update over conserved pairs, with the edge condition as a parameter rather than
+      assumed. No tower above it yet: it is the output the tower will later have to reproduce
+      ([architecture.md](architecture.md#built-from-the-bottom-up-with-the-output-written-by-hand-first)).
+      Tested on whether it works — a dam break against Ritter's exact solution, mass held — on the CPU and
+      the GPU independently. `-core` will need `vast` and `vastir-tools` back at test scope.
+
+- [ ] **The README is one line.** It should state [the thesis](architecture.md#the-thesis), name the two
+      scales, and point at [architecture.md](architecture.md).
+
+- [ ] **`-gui`'s dependencies are a guess.** It declares `vexelray-engine-api` and `vexelray-gui-core`
+      because a technique and a GUI are the obvious seams, not because anything uses them. Settle them
+      against the first code that needs the stack, and drop whichever one it does not.
+
+## Later
+
+- [ ] **FLIP.** A fluid library without one is not taken seriously, and it suits the shared core:
+      particles carry the fluid and a patch grid does the solve. Particle-to-grid is a `⊕`-sum per node,
+      so any schedule is correct ([architecture.md](architecture.md#conserved-pairs)). Colliding writes
+      need atomics, which the IR lacks, so the schedule is one of: graph colouring by cell parity (4
+      colours in 2D, 8 in 3D), sort-and-reduce, per-node gather after a bitonic sort, or additive
+      blending through the graphics path. Colouring is closest to textbook FLIP. Open: incompressible
+      projection or weakly compressible (local, no global solve, smaller time step); 2D or 3D first.
+
+## Upstream
+
+Limits of the stack that `-core`'s IR runs on, found while setting this project up. Whether each one
+matters depends on the approach.
+
+- [ ] **`core` IR has no atomics, no workgroup shared memory and no barriers** (fix belongs in
+      `supirvast`). There are no such forms in `Expr` or `Statement`. Gather-style kernels need none of
+      them; anything that appends to a list, compacts, or reduces within a workgroup does.
+
+- [ ] **`Accelerator` builds every kernel with a `1×1×1` workgroup** (fix belongs in `supirvast`).
+      `register` hard-codes it, so a dispatch of N invocations is N workgroups of one thread each, which
+      uses a fraction of the device.
+
+- [ ] **`KernelHandle.run` uploads its inputs and reads its outputs back on every call** (fix belongs in
+      `supirvast`). There are no buffers that stay on the device between dispatches, so a kernel stepped
+      in a loop pays the round trip every step: about 650 µs per step for a 64×64 grid on this machine,
+      almost none of it the kernel.
+
+- [ ] **The engine cannot dispatch compute inside a frame** (fix belongs in `vexelray`).
+      `TechniqueContext` names pure compute only as a future technique kind, so any GPU work before
+      drawing has to go through `vastir-tools`, outside the engine's frame, until it can.
