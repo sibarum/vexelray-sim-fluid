@@ -42,14 +42,11 @@ matters depends on the approach.
       is what makes a contended scatter fast, needs these two. Worth doing once a scatter is measured to be
       the bottleneck.
 
-- [ ] **`Accelerator` builds every kernel with a `1×1×1` workgroup** (fix belongs in `supirvast`).
-      `register` hard-codes it, so a dispatch of N invocations is N workgroups of one thread each, which
-      uses a fraction of the device.
-
 - [ ] **`KernelHandle.run` uploads its inputs and reads its outputs back on every call** (fix belongs in
-      `supirvast`). There are no buffers that stay on the device between dispatches, so a kernel stepped
-      in a loop pays the round trip every step: about 650 µs per step for a 64×64 grid on this machine,
-      almost none of it the kernel.
+      `supirvast`, where it is the next step of the workgroup build order). There are no buffers that stay
+      on the device between dispatches, so a stepped simulation pays the round trip every step. Measured:
+      ~16 ms of fixed cost on a 4 MB run, from host-visible, uncached memory, against ~1 ms of kernel. Until
+      it lands, GPU timings in this repo measure marshalling more than simulation.
 
 - [ ] **The engine cannot dispatch compute inside a frame** (fix belongs in `vexelray`).
       `TechniqueContext` names pure compute only as a future technique kind, so any GPU work before
