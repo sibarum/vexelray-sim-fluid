@@ -13,7 +13,9 @@ cannot be fixed from here at all.
       assumed. No tower above it yet: it is the output the tower will later have to reproduce
       ([architecture.md](architecture.md#built-from-the-bottom-up-with-the-output-written-by-hand-first)).
       Tested on whether it works — a dam break against Ritter's exact solution, mass held — on the CPU and
-      the GPU independently. `-core` will need `vast` and `vastir-tools` back at test scope.
+      the GPU independently. `-core` will need `vast` and `vastir-tools` back at test scope. Stepped on
+      resident buffers (`Accelerator.allocate`, `KernelHandle.dispatch`), which cost 0.35 ms a step on a
+      2²⁰-cell field where round trips cost 35.
 
 - [ ] **The README is one line.** It should state [the thesis](architecture.md#the-thesis), name the two
       scales, and point at [architecture.md](architecture.md).
@@ -41,12 +43,6 @@ matters depends on the approach.
       Atomics on storage buffers exist; reducing within a workgroup before touching global memory, which
       is what makes a contended scatter fast, needs these two. Worth doing once a scatter is measured to be
       the bottleneck.
-
-- [ ] **`KernelHandle.run` uploads its inputs and reads its outputs back on every call** (fix belongs in
-      `supirvast`, where it is the next step of the workgroup build order). There are no buffers that stay
-      on the device between dispatches, so a stepped simulation pays the round trip every step. Measured:
-      ~16 ms of fixed cost on a 4 MB run, from host-visible, uncached memory, against ~1 ms of kernel. Until
-      it lands, GPU timings in this repo measure marshalling more than simulation.
 
 - [ ] **The engine cannot dispatch compute inside a frame** (fix belongs in `vexelray`).
       `TechniqueContext` names pure compute only as a future technique kind, so any GPU work before
