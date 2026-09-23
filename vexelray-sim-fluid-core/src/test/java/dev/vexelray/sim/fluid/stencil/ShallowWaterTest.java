@@ -63,9 +63,10 @@ class ShallowWaterTest {
         double dx = LENGTH / cells;
         try (Stepper stepper = Stepper.on(backend, cells, 1, Edges.all(Edge.WALL))) {
             stepper.set(damBreak(cells), new float[cells], new float[cells],
-                    ShallowWater.params(G, COURANT, dx, dx, ShallowWater.DEFAULT_DRY, T));
+                    ShallowWater.params(G, COURANT, dx, dx, ShallowWater.DEFAULT_DRY), T);
             stepper.runUntil(T, 32, 100_000);
-            assertEquals(T, stepper.time(), T * 1e-5, backend + ": the clock should stop exactly at the end");
+            assertEquals(ShallowWater.ticks(T), stepper.ticks(),
+                    backend + ": the clock is an integer, so it lands on the end exactly");
             float[] depth = stepper.read()[0];
             double error = 0;
             double water = 0;
@@ -107,7 +108,7 @@ class ShallowWaterTest {
         double c0 = Math.sqrt(G * H0);
         try (Stepper stepper = Stepper.on(backend, cells, 1, Edges.all(Edge.WALL))) {
             stepper.set(damBreak(cells), new float[cells], new float[cells],
-                    ShallowWater.params(G, COURANT, dx, dx, ShallowWater.DEFAULT_DRY, FOREVER));
+                    ShallowWater.params(G, COURANT, dx, dx, ShallowWater.DEFAULT_DRY), FOREVER);
             stepper.step(1);
             double first = stepper.time();
             assertEquals(COURANT * dx / c0, first, first * 1e-5, backend + ": the first step is not C·dx/c0");
@@ -132,12 +133,13 @@ class ShallowWaterTest {
         double end = 1;
         try (Stepper stepper = Stepper.on(backend, cells, 1, Edges.all(Edge.WALL))) {
             stepper.set(damBreak(cells), new float[cells], new float[cells],
-                    ShallowWater.params(G, COURANT, dx, dx, ShallowWater.DEFAULT_DRY, end));
+                    ShallowWater.params(G, COURANT, dx, dx, ShallowWater.DEFAULT_DRY), end);
             stepper.runUntil(end, 16, 10_000);
             float[][] atEnd = stepper.read();
-            float clock = stepper.time();
+            long clock = stepper.ticks();
+            assertEquals(ShallowWater.ticks(end), clock, backend + ": the clock is an integer, so it lands on the end");
             stepper.step(50);
-            assertEquals(clock, stepper.time(), 0f, backend + ": the clock moved past the end");
+            assertEquals(clock, stepper.ticks(), backend + ": the clock moved past the end");
             float[][] after = stepper.read();
             for (int f = 0; f < 3; f++) {
                 assertArrayEquals(atEnd[f], after[f], 0f, backend + ": the water moved after the end");
@@ -166,7 +168,7 @@ class ShallowWaterTest {
         }
         try (Stepper stepper = Stepper.on(backend, n, n, Edges.all(Edge.WALL))) {
             stepper.set(h, new float[n * n], new float[n * n],
-                    ShallowWater.params(G, 0.4, 1, 1, ShallowWater.DEFAULT_DRY, FOREVER));
+                    ShallowWater.params(G, 0.4, 1, 1, ShallowWater.DEFAULT_DRY), FOREVER);
             stepper.step(300);
             float[][] state = stepper.read();
             double before = sum(h);
@@ -199,7 +201,7 @@ class ShallowWaterTest {
         Arrays.fill(h, 1f);
         try (Stepper stepper = Stepper.on(backend, n, n, Edges.all(Edge.WALL))) {
             stepper.set(h, new float[n * n], new float[n * n],
-                    ShallowWater.params(G, 0.4, 1, 1, ShallowWater.DEFAULT_DRY, FOREVER));
+                    ShallowWater.params(G, 0.4, 1, 1, ShallowWater.DEFAULT_DRY), FOREVER);
             for (int steps : new int[] {100, 900}) {
                 stepper.step(steps);
                 float[][] state = stepper.read();
@@ -233,12 +235,12 @@ class ShallowWaterTest {
         }
         try (Stepper stepper = Stepper.on(Stepper.Backend.GPU, n, n, Edges.all(Edge.WALL))) {
             stepper.set(h, new float[n * n], new float[n * n],
-                    ShallowWater.params(G, COURANT, 1, 1, ShallowWater.DEFAULT_DRY, FOREVER));
+                    ShallowWater.params(G, COURANT, 1, 1, ShallowWater.DEFAULT_DRY), FOREVER);
             stepper.step(5);
             stepper.time();   // warm, and drain
             long start = System.nanoTime();
             stepper.step(100);
-            float clock = stepper.time();
+            double clock = stepper.time();
             double ms = (System.nanoTime() - start) / 1e6;
             System.out.printf("[cost] 2^20 cells: %.3f ms per step, fused step-size reduction included "
                     + "(clock %.2f s)%n", ms / 100, clock);

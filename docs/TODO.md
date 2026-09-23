@@ -8,11 +8,6 @@ cannot be fixed from here at all.
 
 ## Next
 
-- [ ] **The clock is an f32.** Fine for a test's five seconds; not for a world left running. At an hour in,
-      an f32's spacing is ~0.25 ms against steps of ~10 ms, so the clock drifts by a few percent of a step
-      per step. A world-scale patch wants an f64 clock or a split one (whole seconds plus a fraction) — and
-      the clock is one element, so the cost is nothing but the choice.
-
 - [ ] **The flux is computed twice per face.** Each cell computes all four of its faces, so every interior
       face is computed by both cells that share it. Correct and conservative, and half wasted. A face pass
       writing fluxes, then a cell pass differencing them, is the obvious split — worth it once a profile

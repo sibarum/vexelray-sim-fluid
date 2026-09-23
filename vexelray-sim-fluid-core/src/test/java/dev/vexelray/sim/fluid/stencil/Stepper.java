@@ -43,15 +43,18 @@ abstract class Stepper implements AutoCloseable {
         return backend == Backend.CPU ? new Cpu(kernel, nx, ny) : new Gpu(kernel, nx, ny);
     }
 
-    /** Sets the state and parameters; the first step's speed is measured here, from the state the host made. */
-    final void set(float[] h, float[] hu, float[] hv, int[] params) {
+    /**
+     * Sets the state, the parameters and the time no step may pass; the first step's speed is measured here,
+     * from the state the host made.
+     */
+    final void set(float[] h, float[] hu, float[] hv, int[] params, double end) {
         double g = Float.intBitsToFloat(params[0]);
         double dry = Float.intBitsToFloat(params[4]);
-        load(h, hu, hv, params, ShallowWater.fastestWave(h, hu, hv, g, dry));
+        load(h, hu, hv, params, ShallowWater.fastestWave(h, hu, hv, g, dry), ShallowWater.ticks(end));
         dispatched = 0;
     }
 
-    abstract void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed);
+    abstract void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed, long end);
 
     final void step(int steps) {
         for (int s = 0; s < steps; s++) {
@@ -62,7 +65,7 @@ abstract class Stepper implements AutoCloseable {
 
     /** Steps in batches until the clock reaches {@code end}; the steps after it are no-ops, by the kernel. */
     final void runUntil(double end, int batch, int limit) {
-        while (time() < end * (1 - 1e-6)) {
+        while (ticks() < ShallowWater.ticks(end)) {
             if (dispatched >= limit) {
                 throw new AssertionError("the clock is at " + time() + " of " + end + " after " + limit
                         + " steps -- the step is not growing as it should");
@@ -73,8 +76,13 @@ abstract class Stepper implements AutoCloseable {
 
     abstract void dispatch(Slots slots);
 
-    /** The simulated time after the steps dispatched so far. */
-    abstract float time();
+    /** The simulated time after the steps dispatched so far, in ticks. */
+    abstract long ticks();
+
+    /** The same, in seconds. */
+    final double time() {
+        return ShallowWater.seconds(ticks());
+    }
 
     /** {@code {h, hu, hv}}. */
     abstract float[][] read();
@@ -113,6 +121,7 @@ abstract class Stepper implements AutoCloseable {
         private final int[][] speed = new int[3][];
         private final int[][] clock = new int[2][];
         private int[] params;
+        private int[] end;
 
         Cpu(Function kernel, int nx, int ny) {
             super(nx, ny);
@@ -120,15 +129,16 @@ abstract class Stepper implements AutoCloseable {
         }
 
         @Override
-        void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed) {
+        void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed, long end) {
             state[0] = new int[][] {bits(h), bits(hu), bits(hv)};
             state[1] = new int[][] {new int[cells], new int[cells], new int[cells]};
             speed[0] = new int[] {firstSpeed};
             speed[1] = new int[1];
             speed[2] = new int[1];
-            clock[0] = new int[1];
-            clock[1] = new int[1];
+            clock[0] = new int[2];
+            clock[1] = new int[2];
             this.params = params;
+            this.end = ShallowWater.words(end);
         }
 
         @Override
@@ -137,15 +147,15 @@ abstract class Stepper implements AutoCloseable {
             int[][] in = state[s.stateIn()];
             int[][] slots = {out[0], out[1], out[2], in[0], in[1], in[2], params,
                     speed[s.speedIn()], speed[s.speedOut()], speed[s.speedClear()],
-                    clock[s.clockIn()], clock[s.clockOut()]};
+                    clock[s.clockIn()], clock[s.clockOut()], end};
             for (int c = 0; c < cells; c++) {
                 target.call(c, slots);
             }
         }
 
         @Override
-        float time() {
-            return Float.intBitsToFloat(clock[slots(dispatched).clockIn()][0]);
+        long ticks() {
+            return ShallowWater.fromWords(clock[slots(dispatched).clockIn()]);
         }
 
         @Override
@@ -163,6 +173,7 @@ abstract class Stepper implements AutoCloseable {
         private final List<ResidentBuffer> speed = new ArrayList<>();
         private final List<ResidentBuffer> clock = new ArrayList<>();
         private final ResidentBuffer params;
+        private final ResidentBuffer end;
 
         Gpu(Function kernel, int nx, int ny) {
             super(nx, ny);
@@ -197,19 +208,21 @@ abstract class Stepper implements AutoCloseable {
                 speed.add(accelerator.allocate(ShallowWater.SPEED_IN.element(), 1));
             }
             params = accelerator.allocate(ShallowWater.PARAMS.element(), ShallowWater.PARAM_COUNT);
+            end = accelerator.allocate(ShallowWater.END.element(), 1);
         }
 
         @Override
-        void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed) {
+        void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed, long end) {
             state.get(0).get(0).write(bits(h));
             state.get(0).get(1).write(bits(hu));
             state.get(0).get(2).write(bits(hv));
             speed.get(0).write(new int[] {firstSpeed});
             speed.get(1).write(new int[1]);
             speed.get(2).write(new int[1]);
-            clock.get(0).write(new int[1]);
-            clock.get(1).write(new int[1]);
+            clock.get(0).write(new int[2]);
+            clock.get(1).write(new int[2]);
             this.params.write(params);
+            this.end.write(ShallowWater.words(end));
         }
 
         @Override
@@ -218,12 +231,12 @@ abstract class Stepper implements AutoCloseable {
             List<ResidentBuffer> in = state.get(s.stateIn());
             handle.dispatch(List.of(out.get(0), out.get(1), out.get(2), in.get(0), in.get(1), in.get(2), params,
                     speed.get(s.speedIn()), speed.get(s.speedOut()), speed.get(s.speedClear()),
-                    clock.get(s.clockIn()), clock.get(s.clockOut())), cells);
+                    clock.get(s.clockIn()), clock.get(s.clockOut()), end), cells);
         }
 
         @Override
-        float time() {
-            return Float.intBitsToFloat(clock.get(slots(dispatched).clockIn()).read()[0]);
+        long ticks() {
+            return ShallowWater.fromWords(clock.get(slots(dispatched).clockIn()).read());
         }
 
         @Override

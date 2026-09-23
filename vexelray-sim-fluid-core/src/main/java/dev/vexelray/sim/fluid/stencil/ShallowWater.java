@@ -11,6 +11,7 @@ import java.util.List;
 
 import static dev.vexelray.sim.fluid.stencil.Body.F32;
 import static dev.vexelray.sim.fluid.stencil.Body.I32;
+import static dev.vexelray.sim.fluid.stencil.Body.I64;
 import static dev.vexelray.sim.fluid.stencil.Body.abs;
 import static dev.vexelray.sim.fluid.stencil.Body.bitsOf;
 import static dev.vexelray.sim.fluid.stencil.Body.floatOf;
@@ -20,7 +21,9 @@ import static dev.vexelray.sim.fluid.stencil.Body.eq;
 import static dev.vexelray.sim.fluid.stencil.Body.f;
 import static dev.vexelray.sim.fluid.stencil.Body.gt;
 import static dev.vexelray.sim.fluid.stencil.Body.i;
+import static dev.vexelray.sim.fluid.stencil.Body.l;
 import static dev.vexelray.sim.fluid.stencil.Body.load;
+import static dev.vexelray.sim.fluid.stencil.Body.lt;
 import static dev.vexelray.sim.fluid.stencil.Body.max;
 import static dev.vexelray.sim.fluid.stencil.Body.min;
 import static dev.vexelray.sim.fluid.stencil.Body.mod;
@@ -29,6 +32,8 @@ import static dev.vexelray.sim.fluid.stencil.Body.neg;
 import static dev.vexelray.sim.fluid.stencil.Body.not;
 import static dev.vexelray.sim.fluid.stencil.Body.sqrt;
 import static dev.vexelray.sim.fluid.stencil.Body.sub;
+import static dev.vexelray.sim.fluid.stencil.Body.toFloat;
+import static dev.vexelray.sim.fluid.stencil.Body.toLong;
 import static dev.vexelray.sim.fluid.stencil.Body.v;
 
 /**
@@ -66,10 +71,10 @@ import static dev.vexelray.sim.fluid.stencil.Body.v;
  *
  * <h2>Structure and data</h2>
  * The grid's shape and its {@link Edges} are compiled — they are the kernel's structure. Gravity, the Courant
- * number, the cell size, the dry threshold and the end time are data, read from the {@link #PARAMS} buffer, so
- * tuning them never
- * rebuilds the kernel ({@code docs/architecture.md}, <i>structure is compiled, values are data</i>). A buffer
- * rather than push constants because those carry the dispatch's invocation count, and the CPU backend has none.
+ * number, the cell size and the dry threshold are data, read from the {@link #PARAMS} buffer, and the end time
+ * from {@link #END}, so tuning them never rebuilds the kernel ({@code docs/architecture.md}, <i>structure is
+ * compiled, values are data</i>). Buffers rather than push constants because those carry the dispatch's
+ * invocation count, and the CPU backend has none.
  *
  * <h2>The step chooses itself</h2>
  * Explicit, so the step is bounded: {@code dt ≤ C · min(dx, dy) / s}, with {@code s} the fastest wave in the
@@ -88,8 +93,17 @@ import static dev.vexelray.sim.fluid.stencil.Body.v;
  * only way to zero an accumulator without racing the invocations still reading the current one — the third
  * was last read by the previous step, which is finished, and is next written by the following one. The clock
  * ping-pongs with the state: every invocation reads the time, and invocation zero alone writes the next. A step
- * never passes {@code tEnd}; once there, it moves nothing, so a caller can overshoot the step count freely and
- * read the clock to know when to stop.
+ * never passes the end; once there, it moves nothing, so a caller can overshoot the step count freely and read
+ * the clock to know when to stop.
+ *
+ * <h2>Time is an integer</h2>
+ * The clock counts {@link #TICKS_PER_SECOND nanosecond} ticks in an i64 — a rational with a fixed denominator.
+ * A float clock built by adding a step each step rounds each addition, and with a near-constant step the
+ * roundings share a sign: an f32 is off by a few percent of a step per step within the hour, and even an f64
+ * could drift by a day a century. Integer additions do not round, so this one does not drift at all, and 2⁶³
+ * nanoseconds is 292 years. Each step's size is rounded to whole ticks <em>first</em>, and the physics then
+ * steps by those ticks — so the clock is the truth, and the water moves by exactly the time the clock records,
+ * to the f32 the arithmetic is done in.
  */
 public final class ShallowWater {
 
@@ -100,7 +114,7 @@ public final class ShallowWater {
     public static final Buffer IN_H = new Buffer("inH", 3, F32);
     public static final Buffer IN_HU = new Buffer("inHu", 4, F32);
     public static final Buffer IN_HV = new Buffer("inHv", 5, F32);
-    /** {@code [g, courant, dx, dy, dry, tEnd]} — see {@link #params}. */
+    /** {@code [g, courant, dx, dy, dry]} — see {@link #params}. */
     public static final Buffer PARAMS = new Buffer("params", 6, F32);
     /** One element: the fastest wave in the state this step reads, as f32 bits. */
     public static final Buffer SPEED_IN = new Buffer("speedIn", 7, I32);
@@ -108,17 +122,28 @@ public final class ShallowWater {
     public static final Buffer SPEED_OUT = new Buffer("speedOut", 8, I32);
     /** One element: zeroed by this step, to be the next step's {@link #SPEED_OUT}. */
     public static final Buffer SPEED_CLEAR = new Buffer("speedClear", 9, I32);
-    /** One element: the simulated time before this step. */
-    public static final Buffer CLOCK_IN = new Buffer("clockIn", 10, F32);
-    /** One element: the simulated time after it. */
-    public static final Buffer CLOCK_OUT = new Buffer("clockOut", 11, F32);
+    /** One element: the simulated time before this step, in ticks. */
+    public static final Buffer CLOCK_IN = new Buffer("clockIn", 10, I64);
+    /** One element: the simulated time after it, in ticks. */
+    public static final Buffer CLOCK_OUT = new Buffer("clockOut", 11, I64);
+    /** One element: the time no step may pass, in ticks. */
+    public static final Buffer END = new Buffer("end", 12, I64);
 
     /** Every buffer, in binding order. */
     public static final List<Buffer> BUFFERS = List.of(OUT_H, OUT_HU, OUT_HV, IN_H, IN_HU, IN_HV, PARAMS,
-            SPEED_IN, SPEED_OUT, SPEED_CLEAR, CLOCK_IN, CLOCK_OUT);
+            SPEED_IN, SPEED_OUT, SPEED_CLEAR, CLOCK_IN, CLOCK_OUT, END);
 
     /** How many elements {@link #PARAMS} holds. */
-    public static final int PARAM_COUNT = 6;
+    public static final int PARAM_COUNT = 5;
+
+    /** The clock's denominator: a tick is a nanosecond. */
+    public static final long TICKS_PER_SECOND = 1_000_000_000L;
+
+    /**
+     * The longest single step, in seconds: a patch with nothing moving has no fastest wave, and an unbounded
+     * step would overflow the tick count it is converted to. A billion seconds is still only 1e18 ticks.
+     */
+    private static final double LONGEST_STEP = 1e9;
 
     /**
      * Below this depth a cell is dry: its velocity is zero rather than a quotient of two roundings. A metre
@@ -145,14 +170,19 @@ public final class ShallowWater {
         LocalVar dx = b.let("dx", load(PARAMS, i(2)));
         LocalVar dy = b.let("dy", load(PARAMS, i(3)));
         LocalVar dry = b.let("dry", load(PARAMS, i(4)));
-        LocalVar end = b.let("tEnd", load(PARAMS, i(5)));
         Physics physics = new Physics(g, dry);
 
-        // The step: as large as the fastest wave allows, and never past the end.
+        // The step: as large as the fastest wave allows, in whole ticks, and never past the end. The ticks are
+        // decided first and the physics steps by them, so the clock and the water agree on how long it was.
         LocalVar fastest = b.let("fastest", floatOf(load(SPEED_IN, i(0))));
-        LocalVar time = b.let("time", load(CLOCK_IN, i(0)));
-        LocalVar dt = b.let("dt", div(mul(v(courant), min(v(dx), v(dy))), max(v(fastest), f(1e-30))));
-        b.set(dt, min(v(dt), max(sub(v(end), v(time)), f(0))));
+        LocalVar allowed = b.let("allowed", min(div(mul(v(courant), min(v(dx), v(dy))), max(v(fastest), f(1e-30))),
+                f(LONGEST_STEP)));
+        LocalVar now = b.let("now", load(CLOCK_IN, i(0)));
+        LocalVar ticks = b.let("ticks", toLong(mul(v(allowed), f(TICKS_PER_SECOND))));
+        LocalVar left = b.let("left", sub(load(END, i(0)), v(now)));
+        b.when(lt(v(left), l(0)), t -> t.set(left, l(0)));
+        b.when(lt(v(left), v(ticks)), t -> t.set(ticks, v(left)));
+        LocalVar dt = b.let("dt", mul(toFloat(v(ticks)), f(1.0 / TICKS_PER_SECOND)));
         LocalVar rx = b.let("dtOverDx", div(v(dt), v(dx)));
         LocalVar ry = b.let("dtOverDy", div(v(dt), v(dy)));
 
@@ -196,16 +226,16 @@ public final class ShallowWater {
 
         b.when(eq(v(cell), i(0)), t -> {
             t.store(SPEED_CLEAR, i(0), i(0));
-            t.store(CLOCK_OUT, i(0), add(v(time), v(dt)));
+            t.store(CLOCK_OUT, i(0), add(v(now), v(ticks)));
         });
         return new Function("shallowWater", new Type.FunctionType(Type.VOID, List.of()), b.finish());
     }
 
     /**
-     * The six parameters as {@code PARAMS} words: gravity, the Courant number, the cell size each way, the
-     * depth below which a cell counts as dry, and the time no step may pass.
+     * The five parameters as {@code PARAMS} words: gravity, the Courant number, the cell size each way, and the
+     * depth below which a cell counts as dry.
      */
-    public static int[] params(double g, double courant, double dx, double dy, double dry, double end) {
+    public static int[] params(double g, double courant, double dx, double dy, double dry) {
         if (!(courant > 0 && courant <= 0.5)) {
             throw new IllegalArgumentException("a first-order 2D step needs a Courant number in (0, 1/2], got "
                     + courant);
@@ -215,8 +245,27 @@ public final class ShallowWater {
                 Float.floatToRawIntBits((float) courant),
                 Float.floatToRawIntBits((float) dx),
                 Float.floatToRawIntBits((float) dy),
-                Float.floatToRawIntBits((float) dry),
-                Float.floatToRawIntBits((float) end)};
+                Float.floatToRawIntBits((float) dry)};
+    }
+
+    /** {@code seconds} as ticks, to the nearest nanosecond. */
+    public static long ticks(double seconds) {
+        return Math.round(seconds * TICKS_PER_SECOND);
+    }
+
+    /** {@code ticks} as seconds. */
+    public static double seconds(long ticks) {
+        return (double) ticks / TICKS_PER_SECOND;
+    }
+
+    /** An i64 as the two words of the {@code int[]} wire, low word first. */
+    public static int[] words(long value) {
+        return new int[] {(int) value, (int) (value >>> 32)};
+    }
+
+    /** The i64 in two words of the {@code int[]} wire. */
+    public static long fromWords(int[] words) {
+        return (words[0] & 0xFFFFFFFFL) | ((long) words[1] << 32);
     }
 
     /**

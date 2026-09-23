@@ -26,6 +26,7 @@ final class Body {
 
     static final Type.Int I32 = Type.int32();
     static final Type.Float F32 = Type.float32();
+    static final Type.Int I64 = Type.int64();
 
     private final List<Statement> statements = new ArrayList<>();
     private final Names names;
@@ -87,6 +88,20 @@ final class Body {
 
     static Expr f(double value) {
         return new Expr.ConstFloat(F32, value);
+    }
+
+    static Expr l(long value) {
+        return new Expr.ConstInt(I64, value);
+    }
+
+    /** An f32 truncated toward zero to an i64. */
+    static Expr toLong(Expr a) {
+        return new Expr.Convert(a, I64);
+    }
+
+    /** An integer, to the nearest f32. */
+    static Expr toFloat(Expr a) {
+        return new Expr.Convert(a, F32);
     }
 
     static Expr load(Buffer buffer, Expr index) {
