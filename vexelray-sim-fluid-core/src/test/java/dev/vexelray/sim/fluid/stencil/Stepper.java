@@ -109,6 +109,9 @@ abstract class Stepper implements AutoCloseable {
     /** {@code {h, hu, hv}}. */
     abstract float[][] read();
 
+    /** Depths the kernel has clamped to zero since {@link #set}: the water its repairs created. */
+    abstract int clamped();
+
     @Override
     public void close() {
     }
@@ -125,7 +128,8 @@ abstract class Stepper implements AutoCloseable {
         List<KernelColumn> columns = new ArrayList<>();
         for (Buffer buffer : ShallowWater.BUFFERS) {
             boolean written = buffer.binding() < 3 || buffer == ShallowWater.SPEED_OUT
-                    || buffer == ShallowWater.SPEED_CLEAR || buffer == ShallowWater.BUDGET_OUT;
+                    || buffer == ShallowWater.SPEED_CLEAR || buffer == ShallowWater.BUDGET_OUT
+                    || buffer == ShallowWater.CLAMPED;
             KernelColumn column = written
                     ? KernelColumn.output(buffer.name(), buffer.binding(), buffer.element())
                     : KernelColumn.input(buffer.name(), buffer.binding(), buffer.element());
@@ -157,6 +161,7 @@ abstract class Stepper implements AutoCloseable {
         private final int[][][] state = new int[2][3][];
         private final int[][] speed = new int[3][];
         private final int[][] budget = {new int[1], new int[1]};
+        private final int[] clamped = new int[1];
         private int[] params;
 
         Cpu(Function kernel, int nx, int ny) {
@@ -172,6 +177,12 @@ abstract class Stepper implements AutoCloseable {
             speed[1] = new int[1];
             speed[2] = new int[1];
             this.params = params;
+            clamped[0] = 0;
+        }
+
+        @Override
+        int clamped() {
+            return clamped[0];
         }
 
         @Override
@@ -180,7 +191,7 @@ abstract class Stepper implements AutoCloseable {
             int[][] in = state[s.stateIn()];
             int[][] slots = {out[0], out[1], out[2], in[0], in[1], in[2], params,
                     speed[s.speedIn()], speed[s.speedOut()], speed[s.speedClear()],
-                    budget[s.budgetIn()], budget[s.budgetOut()]};
+                    budget[s.budgetIn()], budget[s.budgetOut()], clamped};
             for (int c = 0; c < cells; c++) {
                 target.call(c, slots);
             }
@@ -211,6 +222,7 @@ abstract class Stepper implements AutoCloseable {
         private final List<ResidentBuffer> speed = new ArrayList<>();
         private final List<ResidentBuffer> budget = new ArrayList<>();
         private final ResidentBuffer params;
+        private final ResidentBuffer clamped;
 
         Gpu(Function kernel, int nx, int ny) {
             super(nx, ny);
@@ -235,6 +247,7 @@ abstract class Stepper implements AutoCloseable {
                 speed.add(accelerator.allocate(ShallowWater.SPEED_IN.element(), 1));
             }
             params = accelerator.allocate(ShallowWater.PARAMS.element(), ShallowWater.PARAM_COUNT);
+            clamped = accelerator.allocate(ShallowWater.CLAMPED.element(), 1);
         }
 
         @Override
@@ -246,6 +259,12 @@ abstract class Stepper implements AutoCloseable {
             speed.get(1).write(new int[1]);
             speed.get(2).write(new int[1]);
             this.params.write(params);
+            clamped.write(new int[1]);
+        }
+
+        @Override
+        int clamped() {
+            return clamped.read()[0];
         }
 
         @Override
@@ -254,7 +273,7 @@ abstract class Stepper implements AutoCloseable {
             List<ResidentBuffer> in = state.get(s.stateIn());
             handle.dispatch(List.of(out.get(0), out.get(1), out.get(2), in.get(0), in.get(1), in.get(2), params,
                     speed.get(s.speedIn()), speed.get(s.speedOut()), speed.get(s.speedClear()),
-                    budget.get(s.budgetIn()), budget.get(s.budgetOut())), cells);
+                    budget.get(s.budgetIn()), budget.get(s.budgetOut()), clamped), cells);
         }
 
         @Override

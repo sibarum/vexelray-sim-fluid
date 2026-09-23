@@ -8,6 +8,24 @@ wrote the kernels by hand and the math is buried in them. The bet here is that S
 unnecessary. Dynamics are declared symbolically, and a tower of lowerings turns the declaration into
 kernels, with each level doing the analysis only it can do. See [the lowering tower](#the-lowering-tower).
 
+## Experiments first, then a decision
+
+This repo is a **series of experiments**, each a technique built far enough to be measured, and the
+implementation is chosen from their results rather than ahead of them. The expectation is a hybrid —
+most likely a modified FLIP that supports levels of detail — but that is a prediction, not a decision,
+and nothing here should be shaped to make it come true.
+
+What that asks of every piece:
+
+- **An experiment produces evidence**: tests against exact solutions and conserved quantities, and
+  numbers — error, drift, cost per step — that another technique can be held against.
+- **Its limits are written down** where it is, as plainly as its results. The first kernel is a height
+  field, which cannot overturn, splash or stack; that is a property of the technique to weigh, not a bug
+  to fix inside it.
+- **What the experiments share is infrastructure, not technique**: resident buffers, the budgeted clock,
+  the debug renderer. That is the part worth making solid early, because every experiment after it pays
+  less.
+
 ## Two scales of fluid
 
 There will eventually be two fluid simulations here, not one, and they are distinguished by what the fluid

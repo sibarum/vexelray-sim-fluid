@@ -13,13 +13,140 @@
     <artifactId>vexelray-sim-fluid-demo</artifactId>
 
     <description>
-        The simulation's demo: piloting a pirate ship.
+        The experiments, on screen. A framework application shaped like the project builder's template: one
+        window, a debug view of a patch, the readings beside it, and the scenarios on keys. Driveable through
+        the automation socket under --automation, so screenshots are taken of the live window.
     </description>
+
+    <properties>
+        <app.mainClass>dev.vexelray.sim.fluid.demo.FluidDemo</app.mainClass>
+        <!-- Program arguments for exec:exec, split on whitespace. Empty is the interactive run. -->
+        <app.args></app.args>
+        <!-- The automation driver: "off", "on" for the default port, or a port number; 0 is a free one. -->
+        <automation>off</automation>
+        <app.jvmArgs></app.jvmArgs>
+    </properties>
 
     <dependencies>
         <dependency>
             <groupId>dev.vexelray.sim</groupId>
             <artifactId>vexelray-sim-fluid-gui</artifactId>
         </dependency>
+        <!-- The application edge: input, clipboard, window memory, clock, frame loop, shutdown. -->
+        <dependency>
+            <groupId>dev.vexelray.framework</groupId>
+            <artifactId>vexelray-framework-shell</artifactId>
+            <version>${vexelray.framework.version}</version>
+        </dependency>
+        <!-- The driving socket, off unless asked for. -->
+        <dependency>
+            <groupId>dev.vexelray.framework</groupId>
+            <artifactId>vexelray-framework-automation</artifactId>
+            <version>${vexelray.framework.version}</version>
+        </dependency>
+        <!-- The title bar, which the framework hands over and this application places. -->
+        <dependency>
+            <groupId>dev.vexelray.gui</groupId>
+            <artifactId>vexelray-gui-widget</artifactId>
+            <version>${vexelray.gui.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.vexelray.gui</groupId>
+            <artifactId>vexelray-gui-automation</artifactId>
+            <version>${vexelray.gui.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>sibarum.tactroller</groupId>
+            <artifactId>tactroller-atchung</artifactId>
+            <version>${tactroller.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>sibarum.tactroller</groupId>
+            <artifactId>tactroller-clipboard</artifactId>
+            <version>${tactroller.version}</version>
+        </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                </configuration>
+            </plugin>
+            <!-- Run in a fresh JVM, so native access can be enabled for Panama:  mvn exec:exec
+                 One command line split on whitespace, as the template does it, so a multi-word app.args is
+                 several arguments. -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <configuration>
+                    <executable>${java.home}/bin/java</executable>
+                    <classpathScope>runtime</classpathScope>
+                    <commandlineArgs>--enable-native-access=ALL-UNNAMED -Dstdout.encoding=UTF-8 -Dautomation=${automation} ${app.jvmArgs} -classpath %classpath ${app.mainClass} ${app.args}</commandlineArgs>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!-- Exactly one activates from the host OS: VexelRay's provider and tactroller's input backend. -->
+        <profile>
+            <id>platform-windows</id>
+            <activation><os><family>windows</family></os></activation>
+            <dependencies>
+                <dependency>
+                    <groupId>dev.vexelray</groupId>
+                    <artifactId>vexelray-os-windows</artifactId>
+                    <version>${vexelray.version}</version>
+                    <scope>runtime</scope>
+                </dependency>
+                <dependency>
+                    <groupId>sibarum.tactroller</groupId>
+                    <artifactId>tactroller-windows</artifactId>
+                    <version>${tactroller.version}</version>
+                    <scope>runtime</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>platform-linux</id>
+            <activation><os><family>unix</family><name>linux</name></os></activation>
+            <dependencies>
+                <dependency>
+                    <groupId>dev.vexelray</groupId>
+                    <artifactId>vexelray-os-linux</artifactId>
+                    <version>${vexelray.version}</version>
+                    <scope>runtime</scope>
+                </dependency>
+                <dependency>
+                    <groupId>sibarum.tactroller</groupId>
+                    <artifactId>tactroller-linux</artifactId>
+                    <version>${tactroller.version}</version>
+                    <scope>runtime</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>platform-macos</id>
+            <activation><os><family>mac</family></os></activation>
+            <dependencies>
+                <dependency>
+                    <groupId>dev.vexelray</groupId>
+                    <artifactId>vexelray-os-macos</artifactId>
+                    <version>${vexelray.version}</version>
+                    <scope>runtime</scope>
+                </dependency>
+                <dependency>
+                    <groupId>sibarum.tactroller</groupId>
+                    <artifactId>tactroller-macos</artifactId>
+                    <version>${tactroller.version}</version>
+                    <scope>runtime</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+    </profiles>
 </project>

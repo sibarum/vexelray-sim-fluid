@@ -187,6 +187,7 @@ class ShallowWaterTest {
             System.out.printf("[box] %s: mass %.6f -> %.6f (drift %.2e) over %.2f s%n", backend, before, after,
                     Math.abs(after - before) / before, stepper.time());
             assertEquals(before, after, before * 1e-5, backend + ": the box gained or lost water");
+            assertEquals(0, stepper.clamped(), backend + ": a stable run clamped depths, so it created water");
         }
     }
 

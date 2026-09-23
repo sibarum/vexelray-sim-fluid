@@ -13,8 +13,9 @@
     <artifactId>vexelray-sim-fluid-gui</artifactId>
 
     <description>
-        The simulation on the VexelRay stack: the engine that runs and draws the field, and the GUI that
-        shows and drives it. Everything Vulkan-aware lives here and nowhere below it.
+        The simulation on the VexelRay stack: a runner that steps a patch on resident buffers and keeps its
+        clock, and a debug view that shows what the state holds and makes an unhealthy one obvious. Everything
+        Vulkan-aware lives here and nowhere below it.
     </description>
 
     <dependencies>
@@ -22,13 +23,21 @@
             <groupId>dev.vexelray.sim</groupId>
             <artifactId>vexelray-sim-fluid-core</artifactId>
         </dependency>
+        <!-- The simulation's device: Accelerator, resident buffers, and the fullscreen vertex stage the view
+             draws with. It is a device of its own, separate from the GUI's, until the engine can run compute
+             inside a frame. -->
         <dependency>
-            <groupId>dev.vexelray</groupId>
-            <artifactId>vexelray-engine-api</artifactId>
+            <groupId>dev.supirvast</groupId>
+            <artifactId>vastir-tools</artifactId>
         </dependency>
+        <!-- The window's side: the node the view is shown in, and GuiApp, which mints its target and buffer. -->
         <dependency>
             <groupId>dev.vexelray.gui</groupId>
             <artifactId>vexelray-gui-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vexelray</groupId>
+            <artifactId>vexelray-vulkan</artifactId>
         </dependency>
     </dependencies>
 </project>

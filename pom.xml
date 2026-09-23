@@ -35,6 +35,8 @@
         <supirvast.version>0.2.0-SNAPSHOT</supirvast.version>
         <vexelray.version>0.1.0-SNAPSHOT</vexelray.version>
         <vexelray.gui.version>0.1.0-SNAPSHOT</vexelray.gui.version>
+        <vexelray.framework.version>0.1.0-SNAPSHOT</vexelray.framework.version>
+        <tactroller.version>1.0-SNAPSHOT</tactroller.version>
 
         <junit.version>5.11.4</junit.version>
     </properties>
@@ -72,10 +74,10 @@
                 <version>${supirvast.version}</version>
             </dependency>
 
-            <!-- The engine's front door: the pipeline DSL and the RenderTechnique SPI. -->
+            <!-- The render target, storage buffer and pipeline the debug view draws through. -->
             <dependency>
                 <groupId>dev.vexelray</groupId>
-                <artifactId>vexelray-engine-api</artifactId>
+                <artifactId>vexelray-vulkan</artifactId>
                 <version>${vexelray.version}</version>
             </dependency>
             <dependency>

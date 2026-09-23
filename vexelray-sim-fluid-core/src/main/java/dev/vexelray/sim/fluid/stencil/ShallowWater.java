@@ -6,33 +6,34 @@ import dev.supirvast.vastir.core.Expr;
 import dev.supirvast.vastir.core.Function;
 import dev.supirvast.vastir.core.LocalVar;
 import dev.supirvast.vastir.type.Type;
+import dev.vexelray.sim.fluid.ir.Body;
 
 import java.util.List;
 
-import static dev.vexelray.sim.fluid.stencil.Body.F32;
-import static dev.vexelray.sim.fluid.stencil.Body.I32;
-import static dev.vexelray.sim.fluid.stencil.Body.abs;
-import static dev.vexelray.sim.fluid.stencil.Body.bitsOf;
-import static dev.vexelray.sim.fluid.stencil.Body.floatOf;
-import static dev.vexelray.sim.fluid.stencil.Body.add;
-import static dev.vexelray.sim.fluid.stencil.Body.div;
-import static dev.vexelray.sim.fluid.stencil.Body.eq;
-import static dev.vexelray.sim.fluid.stencil.Body.f;
-import static dev.vexelray.sim.fluid.stencil.Body.gt;
-import static dev.vexelray.sim.fluid.stencil.Body.i;
-import static dev.vexelray.sim.fluid.stencil.Body.load;
-import static dev.vexelray.sim.fluid.stencil.Body.lt;
-import static dev.vexelray.sim.fluid.stencil.Body.max;
-import static dev.vexelray.sim.fluid.stencil.Body.min;
-import static dev.vexelray.sim.fluid.stencil.Body.mod;
-import static dev.vexelray.sim.fluid.stencil.Body.mul;
-import static dev.vexelray.sim.fluid.stencil.Body.neg;
-import static dev.vexelray.sim.fluid.stencil.Body.not;
-import static dev.vexelray.sim.fluid.stencil.Body.sqrt;
-import static dev.vexelray.sim.fluid.stencil.Body.sub;
-import static dev.vexelray.sim.fluid.stencil.Body.toFloat;
-import static dev.vexelray.sim.fluid.stencil.Body.toInt;
-import static dev.vexelray.sim.fluid.stencil.Body.v;
+import static dev.vexelray.sim.fluid.ir.Body.F32;
+import static dev.vexelray.sim.fluid.ir.Body.I32;
+import static dev.vexelray.sim.fluid.ir.Body.abs;
+import static dev.vexelray.sim.fluid.ir.Body.bitsOf;
+import static dev.vexelray.sim.fluid.ir.Body.floatOf;
+import static dev.vexelray.sim.fluid.ir.Body.add;
+import static dev.vexelray.sim.fluid.ir.Body.div;
+import static dev.vexelray.sim.fluid.ir.Body.eq;
+import static dev.vexelray.sim.fluid.ir.Body.f;
+import static dev.vexelray.sim.fluid.ir.Body.gt;
+import static dev.vexelray.sim.fluid.ir.Body.i;
+import static dev.vexelray.sim.fluid.ir.Body.load;
+import static dev.vexelray.sim.fluid.ir.Body.lt;
+import static dev.vexelray.sim.fluid.ir.Body.max;
+import static dev.vexelray.sim.fluid.ir.Body.min;
+import static dev.vexelray.sim.fluid.ir.Body.mod;
+import static dev.vexelray.sim.fluid.ir.Body.mul;
+import static dev.vexelray.sim.fluid.ir.Body.neg;
+import static dev.vexelray.sim.fluid.ir.Body.not;
+import static dev.vexelray.sim.fluid.ir.Body.sqrt;
+import static dev.vexelray.sim.fluid.ir.Body.sub;
+import static dev.vexelray.sim.fluid.ir.Body.toFloat;
+import static dev.vexelray.sim.fluid.ir.Body.toInt;
+import static dev.vexelray.sim.fluid.ir.Body.v;
 
 /**
  * One explicit step of the shallow-water equations over one bounded patch — the first kernel, written by
@@ -49,8 +50,8 @@ import static dev.vexelray.sim.fluid.stencil.Body.v;
  *
  * <h2>How</h2>
  * First-order finite volume. One invocation per cell, and each cell gathers: it reads its four neighbours,
- * computes the flux through each of its four faces, and writes only its own state — no scatter; the one atomic
- * is the step-size reduction below, and it touches no state. A face's
+ * computes the flux through each of its four faces, and writes only its own state — no scatter. The two atomics
+ * touch no state: the step-size reduction below, and a count of depth clamps (see {@link #CLAMPED}). A face's
  * flux is computed by both cells that share it, from the same two states by the same code, so what leaves one
  * cell is what enters the other and water is conserved by construction rather than by care.
  *
@@ -108,7 +109,7 @@ import static dev.vexelray.sim.fluid.stencil.Body.v;
  */
 public final class ShallowWater {
 
-    // Bindings, in slot order: the state out, the state in, the parameters, the speeds, the budget.
+    // Bindings, in slot order: the state out, the state in, the parameters, the speeds, the budget, the clamps.
     public static final Buffer OUT_H = new Buffer("outH", 0, F32);
     public static final Buffer OUT_HU = new Buffer("outHu", 1, F32);
     public static final Buffer OUT_HV = new Buffer("outHv", 2, F32);
@@ -127,10 +128,16 @@ public final class ShallowWater {
     public static final Buffer BUDGET_IN = new Buffer("budgetIn", 10, I32);
     /** One element: the ticks left after it. */
     public static final Buffer BUDGET_OUT = new Buffer("budgetOut", 11, I32);
+    /**
+     * One element: how many times a depth has been clamped to zero since the host last cleared it. Every clamp
+     * creates water, so this is the count of the scheme's silent repairs -- zero in a stable run, and the
+     * first thing to rise when the step is too large.
+     */
+    public static final Buffer CLAMPED = new Buffer("clamped", 12, I32);
 
     /** Every buffer, in binding order. */
     public static final List<Buffer> BUFFERS = List.of(OUT_H, OUT_HU, OUT_HV, IN_H, IN_HU, IN_HV, PARAMS,
-            SPEED_IN, SPEED_OUT, SPEED_CLEAR, BUDGET_IN, BUDGET_OUT);
+            SPEED_IN, SPEED_OUT, SPEED_CLEAR, BUDGET_IN, BUDGET_OUT, CLAMPED);
 
     /** How many elements {@link #PARAMS} holds. */
     public static final int PARAM_COUNT = 5;
@@ -203,8 +210,13 @@ public final class ShallowWater {
                 mul(v(ry), sub(v(fn.normal()), v(fs.normal()))));
 
         // At a stable step depth stays non-negative in exact arithmetic; the clamp is for the last rounding,
-        // because a depth of -1e-9 would make the next step's √(gh) a NaN.
-        LocalVar newH = b.let("newH", max(h, f(0)));
+        // because a depth of -1e-9 would make the next step's √(gh) a NaN. But a clamp creates water, and past
+        // the stable limit it stops being a rounding repair and starts hiding the failure -- so every clamp is
+        // counted, and a diagnostic that reads the state alone, which the clamp has already made look healthy,
+        // is not the only witness.
+        LocalVar rawH = b.let("rawH", h);
+        b.when(lt(v(rawH), f(0)), t -> t.atomic(AtomicOp.ADD, CLAMPED, i(0), i(1)));
+        LocalVar newH = b.let("newH", max(v(rawH), f(0)));
         LocalVar newHu = b.let("newHu", hu);
         LocalVar newHv = b.let("newHv", hv);
         b.store(OUT_H, v(cell), v(newH));
@@ -236,6 +248,18 @@ public final class ShallowWater {
         if (!(courant > 0 && courant <= 0.5)) {
             throw new IllegalArgumentException("a first-order 2D step needs a Courant number in (0, 1/2], got "
                     + courant);
+        }
+        return paramsAllowingInstability(g, courant, dx, dy, dry);
+    }
+
+    /**
+     * As {@link #params}, without refusing a Courant number above ½ — for an experiment that wants to watch the
+     * scheme fail. That is half of what a debug view is for: an instability you have never seen is one you will
+     * not recognise when it turns up for a reason you did not choose.
+     */
+    public static int[] paramsAllowingInstability(double g, double courant, double dx, double dy, double dry) {
+        if (!(courant > 0)) {
+            throw new IllegalArgumentException("a Courant number must be positive, got " + courant);
         }
         return new int[] {
                 Float.floatToRawIntBits((float) g),
