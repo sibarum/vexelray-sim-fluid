@@ -1,6 +1,5 @@
 package dev.vexelray.sim.fluid.particle;
 
-import com.oracle.truffle.api.CallTarget;
 import dev.supirvast.vast.CoreToTruffle;
 import dev.supirvast.vastir.core.Buffer;
 import dev.supirvast.vastir.core.Function;
@@ -37,18 +36,28 @@ class ScatterTest {
     // --- correctness ------------------------------------------------------------------------------------
 
     /**
-     * Four particles a cell in random order over a 64 × 64 grid. The weights around a particle sum to one, so
-     * the grid holds exactly the particles' mass and momentum, and each node what a double-precision reference
-     * says it should.
+     * Four particles a cell over a 64 × 64 grid. The weights around a particle sum to one, so the grid holds
+     * exactly the particles' mass and momentum, and each node what a double-precision reference says it should.
+     *
+     * <p>Both schedules, in both orders. In cell order the pre-reduction's windows catch most deposits, and a
+     * workgroup's 64 cells wrap onto the next of these 63-cell rows in nearly every workgroup, so its fallback to
+     * the grid runs too; in random order almost everything falls back. Either way the answer must be the same.
      */
     @ParameterizedTest
     @EnumSource(Backend.class)
     void theGridHoldsWhatTheParticlesDid(Backend backend) {
         int n = 64;
-        Particles particles = Particles.jittered(n - 1, 4, new Random(7)).shuffled(new Random(8));
-        float[][] grid = scatter(backend, n, particles, Scatter.Mode.GRID);
-        double[][] expected = reference(n, particles);
+        Particles sorted = Particles.jittered(n - 1, 4, new Random(7));
+        for (Scatter.Mode mode : new Scatter.Mode[] {Scatter.Mode.GRID, Scatter.Mode.PRE_REDUCED}) {
+            for (Particles particles : new Particles[] {sorted, sorted.shuffled(new Random(8))}) {
+                holdsWhatTheParticlesDid(backend + " " + mode + (particles == sorted ? " sorted" : " random"), n,
+                        particles, scatter(backend, n, particles, mode));
+            }
+        }
+    }
 
+    private static void holdsWhatTheParticlesDid(String backend, int n, Particles particles, float[][] grid) {
+        double[][] expected = reference(n, particles);
         double mass = 0;
         double momentumX = 0;
         double momentumY = 0;
@@ -138,48 +147,69 @@ class ScatterTest {
 
     /**
      * Not an assertion: 2²⁰ particles scattered at 1, 4, 16 and 64 particles a cell, in cell order and in random
-     * order, against the two controls — private slots (the same atomics, no collisions) and plain stores (the
-     * same addresses, no atomicity). The gap between the scatter and private slots is what contention costs,
-     * and so the most any pre-reduction — workgroup memory, subgroup operations — could win back.
+     * order — directly, pre-reduced in workgroup memory, and against the two controls, private slots (the same
+     * atomics, no collisions) and plain stores (the same addresses, no atomicity). The gap between the direct
+     * scatter and plain stores in cell order is what contention costs, and so what the pre-reduction is for.
      *
      * <p>Particles in cell order are the case a FLIP solver actually has, since it sorts them for locality; it
      * is also the worst case for contention, because neighbouring invocations hit the same nodes. Random order
-     * spreads the collisions out and pays for it in cache misses.
+     * spreads the collisions out and pays for it in cache misses. Every mode runs at {@link Scatter#WORKGROUP},
+     * so the comparison is like for like. A mode the device cannot run is reported, not timed on the CPU.
      */
     @Test
     void gpuScatterCost() {
         int count = 1 << 20;
         try (Accelerator accelerator = new Accelerator()) {
             assumeGpu(accelerator);
-            System.out.println("[scatter] 2^20 particles, 2D bilinear, 12 f32 atomic adds each; ms per scatter");
-            System.out.println("[scatter]   ppc   grid       sorted   random   plain(sorted)   plain(random)");
-            double privateMs = 0;
+            System.out.println("[scatter] 2^20 particles, 2D bilinear, workgroup " + Scatter.WORKGROUP
+                    + "; ms per scatter");
+            System.out.println("[scatter]   ppc   grid      direct(sorted)  pre-reduced(sorted)  direct(random)"
+                    + "  plain(sorted)  plain(random)");
+            double privateMs = Double.NaN;
+            boolean preReducedRan = false;
             for (int ppc : new int[] {1, 4, 16, 64}) {
                 int cells = (int) Math.round(Math.sqrt(count / (double) ppc));
                 int n = cells + 1;
                 Particles sorted = Particles.jittered(cells, ppc, new Random(ppc));
                 Particles random = sorted.shuffled(new Random(ppc + 1));
                 double gridSorted = time(accelerator, n, sorted, Scatter.Mode.GRID);
+                double preSorted = time(accelerator, n, sorted, Scatter.Mode.PRE_REDUCED);
+                preReducedRan |= !Double.isNaN(preSorted);
                 double gridRandom = time(accelerator, n, random, Scatter.Mode.GRID);
                 double plainSorted = time(accelerator, n, sorted, Scatter.Mode.PLAIN);
                 double plainRandom = time(accelerator, n, random, Scatter.Mode.PLAIN);
                 if (ppc == 4) {
                     privateMs = time(accelerator, n, sorted, Scatter.Mode.PRIVATE);
                 }
-                System.out.printf("[scatter]   %3d   %4d^2    %6.3f   %6.3f   %6.3f          %6.3f%n", ppc, n,
-                        gridSorted, gridRandom, plainSorted, plainRandom);
+                System.out.printf("[scatter]   %3d   %4d^2   %8s        %8s             %8s        %8s       %8s%n",
+                        ppc, n, ms(gridSorted), ms(preSorted), ms(gridRandom), ms(plainSorted), ms(plainRandom));
             }
-            System.out.printf("[scatter]   private slots (no collisions, 4 * 2^20 per field): %.3f ms%n", privateMs);
+            System.out.printf("[scatter]   private slots (no collisions, 4 * 2^20 per field): %s ms%n", ms(privateMs));
+            if (!preReducedRan) {
+                System.out.println("[scatter]   pre-reduced: n/a -- this device has no f32 atomic add on workgroup"
+                        + " memory, so it registers CPU-only");
+            }
         }
+    }
+
+    private static String ms(double value) {
+        return Double.isNaN(value) ? "n/a" : String.format("%.3f", value);
     }
 
     private static final int WARM = 5;
     private static final int TIMED = 100;
 
-    /** Milliseconds per scatter, with the readback that drains the queue timed separately and taken off. */
+    /**
+     * Milliseconds per scatter, with the readback that drains the queue timed separately and taken off; NaN if
+     * the kernel registered CPU-only, which would time the fallback rather than the device.
+     */
     private static double time(Accelerator accelerator, int n, Particles particles, Scatter.Mode mode) {
         int elements = Scatter.gridElements(n, n, particles.count(), mode);
         KernelHandle handle = register(accelerator, Scatter.kernel(n, n, mode), elements);
+        if (handle.preferredBackend() != KernelHandle.Backend.GPU) {
+            accelerator.release(handle);
+            return Double.NaN;
+        }
         List<ResidentBuffer> buffers = upload(accelerator, particles, elements);
         try {
             for (int s = 0; s < WARM; s++) {
@@ -204,22 +234,26 @@ class ScatterTest {
 
     // --- running it -------------------------------------------------------------------------------------
 
-    /** One scatter onto a zeroed {@code n × n} grid; returns {@code {m, mu, mv}}. */
+    /**
+     * One scatter onto a zeroed {@code n × n} grid; returns {@code {m, mu, mv}}. On the GPU a mode the device
+     * cannot run falls back to the CPU inside the handle, which is still a check of the answer, and says so.
+     */
     private static float[][] scatter(Backend backend, int n, Particles particles, Scatter.Mode mode) {
         Function kernel = Scatter.kernel(n, n, mode);
         int elements = Scatter.gridElements(n, n, particles.count(), mode);
         if (backend == Backend.CPU) {
-            CallTarget target = new CoreToTruffle().lowerKernel(kernel, Scatter.BUFFERS);
             int[][] slots = {new int[elements], new int[elements], new int[elements], bits(particles.x),
                     bits(particles.y), bits(particles.u), bits(particles.v), bits(particles.m)};
-            for (int p = 0; p < particles.count(); p++) {
-                target.call(p, slots);
-            }
+            new CoreToTruffle().lowerDispatch(kernel, Scatter.BUFFERS, Scatter.WORKGROUP)
+                    .dispatch(slots, particles.count());
             return new float[][] {floats(slots[0]), floats(slots[1]), floats(slots[2])};
         }
         try (Accelerator accelerator = new Accelerator()) {
             assumeGpu(accelerator);
             KernelHandle handle = register(accelerator, kernel, elements);
+            if (handle.preferredBackend() != KernelHandle.Backend.GPU) {
+                System.out.println("[scatter] " + mode + " registered CPU-only on this device; checked there");
+            }
             List<ResidentBuffer> buffers = upload(accelerator, particles, elements);
             handle.dispatch(buffers, particles.count());
             return new float[][] {floats(buffers.get(0).read()), floats(buffers.get(1).read()),
@@ -234,12 +268,10 @@ class ScatterTest {
         }
     }
 
-    /** Registers on the GPU, skipping — not failing — where the device has no float atomic add. */
+    /** Registers at {@link Scatter#WORKGROUP}, which the pre-reduction requires and the rest run at to compare. */
     private static KernelHandle register(Accelerator accelerator, Function kernel, int gridElements) {
-        KernelHandle handle = accelerator.register(new KernelSpec(kernel, columns(gridElements))).orElseThrow();
-        assumeTrue(handle.preferredBackend() == KernelHandle.Backend.GPU,
-                "the device has no f32 atomic add, so the scatter registered CPU-only");
-        return handle;
+        return accelerator.register(new KernelSpec(kernel, columns(gridElements))
+                .withWorkgroupSize(Scatter.WORKGROUP)).orElseThrow();
     }
 
     private static List<ResidentBuffer> upload(Accelerator accelerator, Particles particles, int gridElements) {

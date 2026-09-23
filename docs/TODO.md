@@ -67,6 +67,11 @@ cannot be fixed from here at all.
       Random order avoids the collisions and pays in cache misses (17.5 ms at 1 ppc, where the grid is
       12 MB). A pre-reduction within a workgroup or subgroup is what removes them, so this is the
       measurement that entry below was waiting for. 3D is worse: eight nodes a particle, and more ppc.
+      *The pre-reduction exists* (`Scatter.preReduced`: an f32 window of two node rows per workgroup of
+      256, flushed once per touched node, falling back to the grid past it) and is checked on the CPU in
+      both orders. It is untimed: the Intel has no shared-memory f32 add, so the benchmark prints n/a
+      until device selection reaches the RTX. Rerunning at workgroup 256 moved the direct numbers by
+      under 10%.
 
 ## Upstream
 

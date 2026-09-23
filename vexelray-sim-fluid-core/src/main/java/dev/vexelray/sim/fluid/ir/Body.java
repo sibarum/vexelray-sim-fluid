@@ -9,6 +9,7 @@ import dev.supirvast.vastir.core.LocalVar;
 import dev.supirvast.vastir.core.MathFn;
 import dev.supirvast.vastir.core.PushConstants;
 import dev.supirvast.vastir.core.Region;
+import dev.supirvast.vastir.core.SharedArray;
 import dev.supirvast.vastir.core.Statement;
 import dev.supirvast.vastir.core.UnaryOp;
 import dev.supirvast.vastir.type.Type;
@@ -62,6 +63,24 @@ public final class Body {
         statements.add(new Statement.AtomicUpdate(op, buffer, index, value));
     }
 
+    /** Writes an element of workgroup memory. */
+    public void sharedStore(SharedArray array, Expr index, Expr value) {
+        statements.add(new Statement.SharedStore(array, index, value));
+    }
+
+    /** {@code array[index] = op(array[index], value)}, indivisibly within the workgroup. */
+    public void sharedAtomic(AtomicOp op, SharedArray array, Expr index, Expr value) {
+        statements.add(new Statement.SharedAtomicUpdate(op, array, index, value));
+    }
+
+    /**
+     * Waits for the whole workgroup, and makes every write before it visible after it. Only at the top level of
+     * a kernel, never in a branch: every invocation must reach it.
+     */
+    public void barrier() {
+        statements.add(new Statement.Barrier());
+    }
+
     /** Writes a stage output, such as a fragment's colour. */
     public void write(InterfaceVar output, Expr value) {
         statements.add(new Statement.InterfaceWrite(output, value));
@@ -110,6 +129,10 @@ public final class Body {
 
     public static Expr load(Buffer buffer, Expr index) {
         return new Expr.BufferLoad(buffer, index);
+    }
+
+    public static Expr sharedLoad(SharedArray array, Expr index) {
+        return new Expr.SharedLoad(array, index);
     }
 
     public static Expr add(Expr a, Expr b) {
