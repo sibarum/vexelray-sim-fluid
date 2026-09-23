@@ -9,6 +9,10 @@ import dev.vexelray.sim.fluid.gui.View;
  * records a request here and the frame acts on it: no handler touches the GPU, and no request is acted on
  * halfway through a frame. Requests that are events — reset, step — are flags the frame clears; settings — the
  * view, the speed — are values it reads.
+ *
+ * <p>Handlers run on a pool, so two presses in quick succession can run at once. Every read-modify-write —
+ * advancing the scenario, a toggle, a speed change, taking a request — is therefore synchronized: volatile alone
+ * lets both presses read the same value, and one of them is lost.
  */
 final class Controls {
 
@@ -30,34 +34,34 @@ final class Controls {
         this.view = view;
     }
 
-    void nextScenario() {
+    synchronized void nextScenario() {
         scenario = scenario.next();
         resetRequested = true;
     }
 
-    void reset() {
+    synchronized void reset() {
         resetRequested = true;
     }
 
-    void togglePause() {
+    synchronized void togglePause() {
         paused = !paused;
     }
 
     /** One step, when paused; while running it would be lost among the others, so it pauses first. */
-    void step() {
+    synchronized void step() {
         paused = true;
         stepRequested = true;
     }
 
-    void toggleStability() {
+    synchronized void toggleStability() {
         unstable = !unstable;
     }
 
-    void faster() {
+    synchronized void faster() {
         timeScale = Math.min(timeScale * 2, 16);
     }
 
-    void slower() {
+    synchronized void slower() {
         timeScale = Math.max(timeScale / 2, 1.0 / 16);
     }
 
@@ -84,14 +88,14 @@ final class Controls {
     }
 
     /** Whether a reset was asked for since the last call — which clears it. */
-    boolean takeReset() {
+    synchronized boolean takeReset() {
         boolean asked = resetRequested;
         resetRequested = false;
         return asked;
     }
 
     /** Whether a single step was asked for since the last call — which clears it. */
-    boolean takeStep() {
+    synchronized boolean takeStep() {
         boolean asked = stepRequested;
         stepRequested = false;
         return asked;

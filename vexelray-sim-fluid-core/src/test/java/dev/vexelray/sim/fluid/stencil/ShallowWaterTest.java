@@ -73,6 +73,9 @@ class ShallowWaterTest {
             stepper.runUntil(32, 100_000);
             assertEquals(ShallowWater.ticks(T), stepper.ticks(),
                     backend + ": the clock is an integer, so it lands on the end exactly");
+            // The front is where a depth goes negative if anything does, and a clamp hides it from the state.
+            assertEquals(0, stepper.clamped(), backend + ": depths were clamped at " + cells + " cells, so the "
+                    + "front created water");
             float[] depth = stepper.read()[0];
             double error = 0;
             double water = 0;
