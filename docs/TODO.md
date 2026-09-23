@@ -22,8 +22,10 @@ cannot be fixed from here at all.
 
 - [ ] **Two keys in quick succession lost one.** Driving the demo, `key N` twice in a row advanced the scenario
       once; with an `await` between them, twice. Either the automation's press-release is too quick for the
-      shortcut path, or shortcuts drop a press that arrives before the previous one's release is handled. Not
-      yet looked at; the fix is likely in `vexelray-gui` or its automation, not here.
+      shortcut path, or shortcuts drop a press that arrives before the previous one's release is handled.
+      *Likely found, here:* shortcut commands run on a cached thread pool, and `Controls.nextScenario` was
+      an unsynchronized read-modify-write, so two concurrent presses could advance once. Now synchronized;
+      delete this entry once the double `key N` is seen to advance twice.
 
 - [ ] **The debug view's box is a fixed 720 dp and its target a fixed 1024 px.** Square and legible, but it
       neither fills a larger window nor re-mints the target to the box's real pixels, so cells are
@@ -38,11 +40,27 @@ cannot be fixed from here at all.
 
 - [ ] **FLIP.** A fluid library without one is not taken seriously, and it suits the shared core:
       particles carry the fluid and a patch grid does the solve. Particle-to-grid is a `⊕`-sum per node,
-      so any schedule is correct ([architecture.md](architecture.md#conserved-pairs)). SupirVast now has
-      atomics, including `f32` add, so the direct scatter is available and is the baseline to beat;
-      colouring by cell parity, sort-and-reduce and gather-after-sort remain the alternatives to measure
-      against it. A grid column is a fixed-length `KernelColumn` (`withLength`). Open: incompressible
-      projection or weakly compressible (local, no global solve, smaller time step); 2D or 3D first.
+      so any schedule is correct ([architecture.md](architecture.md#conserved-pairs)). The direct scatter
+      exists (`particle.Scatter`, 2D bilinear, `f32` atomic add) and is measured; grid-to-particle, advection,
+      the grid solve and clearing the grid between steps do not. Open: incompressible projection or weakly
+      compressible (local, no global solve, smaller time step); 2D or 3D first.
+
+- [ ] **The scatter is contention-bound in cell order.** `ScatterTest.gpuScatterCost`, 2²⁰ particles, ms
+      per scatter against plain non-atomic stores to the same addresses:
+
+      | ppc | sorted | plain, sorted | random |
+      | --- | --- | --- | --- |
+      | 1 | 1.3 | 1.0 | 17.5 |
+      | 4 | 2.5 | 0.6 | 4.1 |
+      | 16 | 5.9 | 0.5 | 4.1 |
+      | 64 | 18.0 | 0.5 | 4.0 |
+
+      Sorted grows linearly with particles per cell while plain stays flat, so the cost is collisions,
+      not the atomic instruction (0.3 ms of premium at 1 ppc). At a typical 4 ppc about three quarters
+      of the scatter is contention, and the scatter alone is about 3× a whole shallow-water step at 2²⁰ cells.
+      Random order avoids the collisions and pays in cache misses (17.5 ms at 1 ppc, where the grid is
+      12 MB). A pre-reduction within a workgroup or subgroup is what removes them, so this is the
+      measurement that entry below was waiting for. 3D is worse: eight nodes a particle, and more ppc.
 
 ## Upstream
 
@@ -54,8 +72,10 @@ matters depends on the approach.
       is what makes a contended scatter fast, needs these two. **First measurement:** the step-size
       reduction fused into `ShallowWater`, at 2²⁰ cells — 0.69 ms per step without it, 0.70–0.83 with the
       filtered atomic it ships with, 1.17 with every cell taking the atomic. The filter recovers most of it;
-      a workgroup pre-reduction would take the remaining 10–20%. Real, not yet urgent; FLIP's scatter is
-      the case that will decide it.
+      a workgroup pre-reduction would take the remaining 10–20%. **FLIP's scatter has now decided it**
+      (entry above): up to ~4× at 4 ppc in cell order, more at higher densities. In progress in `supirvast`
+      (step 2 of its workgroup build order); once it lands, a pre-reducing scatter is a fourth `Scatter.Mode`
+      in the same benchmark.
 
 - [ ] **The engine cannot dispatch compute inside a frame** (fix belongs in `vexelray`).
       `TechniqueContext` names pure compute only as a future technique kind, so the demo runs the simulation
