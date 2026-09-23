@@ -31,6 +31,9 @@ abstract class Stepper implements AutoCloseable {
     final int cells;
     /** Steps dispatched since {@link #set} — including any that moved nothing because the end was reached. */
     int dispatched;
+    /** The absolute time, which only the host keeps; the kernel is granted budgets from it. */
+    private Clock clock;
+    private long end;
 
     Stepper(int nx, int ny) {
         this.nx = nx;
@@ -50,11 +53,20 @@ abstract class Stepper implements AutoCloseable {
     final void set(float[] h, float[] hu, float[] hv, int[] params, double end) {
         double g = Float.intBitsToFloat(params[0]);
         double dry = Float.intBitsToFloat(params[4]);
-        load(h, hu, hv, params, ShallowWater.fastestWave(h, hu, hv, g, dry), ShallowWater.ticks(end));
+        load(h, hu, hv, params, ShallowWater.fastestWave(h, hu, hv, g, dry));
         dispatched = 0;
+        this.clock = new Clock();
+        this.end = ShallowWater.ticks(end);
+        writeBudget(0, clock.grant(this.end));
     }
 
-    abstract void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed, long end);
+    abstract void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed);
+
+    /** Writes {@code ticks} into budget slot {@code slot}. */
+    abstract void writeBudget(int slot, int ticks);
+
+    /** The ticks in budget slot {@code slot}. */
+    abstract int readBudget(int slot);
 
     final void step(int steps) {
         for (int s = 0; s < steps; s++) {
@@ -63,11 +75,19 @@ abstract class Stepper implements AutoCloseable {
         }
     }
 
-    /** Steps in batches until the clock reaches {@code end}; the steps after it are no-ops, by the kernel. */
-    final void runUntil(double end, int batch, int limit) {
-        while (ticks() < ShallowWater.ticks(end)) {
+    /**
+     * Steps in batches until the clock reaches the end; the steps after it are no-ops, by the kernel. A run
+     * longer than one grant settles and grants again whenever the budget runs dry.
+     */
+    final void runUntil(int batch, int limit) {
+        while (ticks() < end) {
+            int left = readBudget(slots(dispatched).budgetIn());
+            if (left == 0) {
+                clock.settle(0);
+                writeBudget(slots(dispatched).budgetIn(), clock.grant(end));
+            }
             if (dispatched >= limit) {
-                throw new AssertionError("the clock is at " + time() + " of " + end + " after " + limit
+                throw new AssertionError("the clock is at " + time() + " of " + ShallowWater.seconds(end) + " after " + limit
                         + " steps -- the step is not growing as it should");
             }
             step(batch);
@@ -76,8 +96,10 @@ abstract class Stepper implements AutoCloseable {
 
     abstract void dispatch(Slots slots);
 
-    /** The simulated time after the steps dispatched so far, in ticks. */
-    abstract long ticks();
+    /** The simulated time after the steps dispatched so far, in ticks: settled, plus what the grant has spent. */
+    final long ticks() {
+        return clock.now() + clock.outstanding() - readBudget(slots(dispatched).budgetIn());
+    }
 
     /** The same, in seconds. */
     final double time() {
@@ -92,10 +114,25 @@ abstract class Stepper implements AutoCloseable {
     }
 
     /** Which of the rotating buffers step {@code k} binds where. */
-    record Slots(int stateIn, int stateOut, int speedIn, int speedOut, int speedClear, int clockIn, int clockOut) {}
+    record Slots(int stateIn, int stateOut, int speedIn, int speedOut, int speedClear, int budgetIn, int budgetOut) {}
 
     static Slots slots(int k) {
         return new Slots(k % 2, (k + 1) % 2, k % 3, (k + 1) % 3, (k + 2) % 3, k % 2, (k + 1) % 2);
+    }
+
+    /** The kernel's interface for {@link Accelerator}: what it writes, and the lengths of the one-element buffers. */
+    static List<KernelColumn> columns() {
+        List<KernelColumn> columns = new ArrayList<>();
+        for (Buffer buffer : ShallowWater.BUFFERS) {
+            boolean written = buffer.binding() < 3 || buffer == ShallowWater.SPEED_OUT
+                    || buffer == ShallowWater.SPEED_CLEAR || buffer == ShallowWater.BUDGET_OUT;
+            KernelColumn column = written
+                    ? KernelColumn.output(buffer.name(), buffer.binding(), buffer.element())
+                    : KernelColumn.input(buffer.name(), buffer.binding(), buffer.element());
+            int length = buffer == ShallowWater.PARAMS ? ShallowWater.PARAM_COUNT : buffer.binding() > 6 ? 1 : 0;
+            columns.add(length > 0 ? column.withLength(length) : column);
+        }
+        return columns;
     }
 
     static int[] bits(float[] values) {
@@ -119,9 +156,8 @@ abstract class Stepper implements AutoCloseable {
         private final CallTarget target;
         private final int[][][] state = new int[2][3][];
         private final int[][] speed = new int[3][];
-        private final int[][] clock = new int[2][];
+        private final int[][] budget = {new int[1], new int[1]};
         private int[] params;
-        private int[] end;
 
         Cpu(Function kernel, int nx, int ny) {
             super(nx, ny);
@@ -129,16 +165,13 @@ abstract class Stepper implements AutoCloseable {
         }
 
         @Override
-        void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed, long end) {
+        void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed) {
             state[0] = new int[][] {bits(h), bits(hu), bits(hv)};
             state[1] = new int[][] {new int[cells], new int[cells], new int[cells]};
             speed[0] = new int[] {firstSpeed};
             speed[1] = new int[1];
             speed[2] = new int[1];
-            clock[0] = new int[2];
-            clock[1] = new int[2];
             this.params = params;
-            this.end = ShallowWater.words(end);
         }
 
         @Override
@@ -147,15 +180,20 @@ abstract class Stepper implements AutoCloseable {
             int[][] in = state[s.stateIn()];
             int[][] slots = {out[0], out[1], out[2], in[0], in[1], in[2], params,
                     speed[s.speedIn()], speed[s.speedOut()], speed[s.speedClear()],
-                    clock[s.clockIn()], clock[s.clockOut()], end};
+                    budget[s.budgetIn()], budget[s.budgetOut()]};
             for (int c = 0; c < cells; c++) {
                 target.call(c, slots);
             }
         }
 
         @Override
-        long ticks() {
-            return ShallowWater.fromWords(clock[slots(dispatched).clockIn()]);
+        void writeBudget(int slot, int ticks) {
+            budget[slot][0] = ticks;
+        }
+
+        @Override
+        int readBudget(int slot) {
+            return budget[slot][0];
         }
 
         @Override
@@ -171,9 +209,8 @@ abstract class Stepper implements AutoCloseable {
         private final KernelHandle handle;
         private final List<List<ResidentBuffer>> state = new ArrayList<>();
         private final List<ResidentBuffer> speed = new ArrayList<>();
-        private final List<ResidentBuffer> clock = new ArrayList<>();
+        private final List<ResidentBuffer> budget = new ArrayList<>();
         private final ResidentBuffer params;
-        private final ResidentBuffer end;
 
         Gpu(Function kernel, int nx, int ny) {
             super(nx, ny);
@@ -182,17 +219,7 @@ abstract class Stepper implements AutoCloseable {
                 assumeTrue(Boolean.getBoolean("supirvast.requireGpu"), "no Vulkan device");
                 throw new IllegalStateException("-Dsupirvast.requireGpu=true but no Vulkan device");
             }
-            List<KernelColumn> columns = new ArrayList<>();
-            for (Buffer buffer : ShallowWater.BUFFERS) {
-                boolean written = buffer.binding() < 3 || buffer == ShallowWater.SPEED_OUT
-                        || buffer == ShallowWater.SPEED_CLEAR || buffer == ShallowWater.CLOCK_OUT;
-                KernelColumn column = written
-                        ? KernelColumn.output(buffer.name(), buffer.binding(), buffer.element())
-                        : KernelColumn.input(buffer.name(), buffer.binding(), buffer.element());
-                int length = buffer == ShallowWater.PARAMS ? ShallowWater.PARAM_COUNT : buffer.binding() > 6 ? 1 : 0;
-                columns.add(length > 0 ? column.withLength(length) : column);
-            }
-            handle = accelerator.register(new KernelSpec(kernel, columns)).orElseThrow();
+            handle = accelerator.register(new KernelSpec(kernel, columns())).orElseThrow();
             if (handle.preferredBackend() != KernelHandle.Backend.GPU) {
                 throw new IllegalStateException("a GPU is present but the kernel registered CPU-only");
             }
@@ -202,27 +229,23 @@ abstract class Stepper implements AutoCloseable {
                     fields.add(accelerator.allocate(ShallowWater.OUT_H.element(), cells));
                 }
                 state.add(fields);
-                clock.add(accelerator.allocate(ShallowWater.CLOCK_IN.element(), 1));
+                budget.add(accelerator.allocate(ShallowWater.BUDGET_IN.element(), 1));
             }
             for (int k = 0; k < 3; k++) {
                 speed.add(accelerator.allocate(ShallowWater.SPEED_IN.element(), 1));
             }
             params = accelerator.allocate(ShallowWater.PARAMS.element(), ShallowWater.PARAM_COUNT);
-            end = accelerator.allocate(ShallowWater.END.element(), 1);
         }
 
         @Override
-        void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed, long end) {
+        void load(float[] h, float[] hu, float[] hv, int[] params, int firstSpeed) {
             state.get(0).get(0).write(bits(h));
             state.get(0).get(1).write(bits(hu));
             state.get(0).get(2).write(bits(hv));
             speed.get(0).write(new int[] {firstSpeed});
             speed.get(1).write(new int[1]);
             speed.get(2).write(new int[1]);
-            clock.get(0).write(new int[2]);
-            clock.get(1).write(new int[2]);
             this.params.write(params);
-            this.end.write(ShallowWater.words(end));
         }
 
         @Override
@@ -231,12 +254,17 @@ abstract class Stepper implements AutoCloseable {
             List<ResidentBuffer> in = state.get(s.stateIn());
             handle.dispatch(List.of(out.get(0), out.get(1), out.get(2), in.get(0), in.get(1), in.get(2), params,
                     speed.get(s.speedIn()), speed.get(s.speedOut()), speed.get(s.speedClear()),
-                    clock.get(s.clockIn()), clock.get(s.clockOut()), end), cells);
+                    budget.get(s.budgetIn()), budget.get(s.budgetOut())), cells);
         }
 
         @Override
-        long ticks() {
-            return ShallowWater.fromWords(clock.get(slots(dispatched).clockIn()).read());
+        void writeBudget(int slot, int ticks) {
+            budget.get(slot).write(new int[] {ticks});
+        }
+
+        @Override
+        int readBudget(int slot) {
+            return budget.get(slot).read()[0];
         }
 
         @Override

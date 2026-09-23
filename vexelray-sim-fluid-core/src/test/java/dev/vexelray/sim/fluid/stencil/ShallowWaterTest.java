@@ -1,10 +1,16 @@
 package dev.vexelray.sim.fluid.stencil;
 
+import dev.supirvast.vastir.lower.SpirvTarget;
+import dev.supirvast.vastir.tools.Accelerator;
+import dev.supirvast.vastir.tools.KernelSpec;
+import dev.supirvast.vastir.tools.Registration;
+import dev.supirvast.vastir.tools.Rejection;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import java.util.Arrays;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -64,7 +70,7 @@ class ShallowWaterTest {
         try (Stepper stepper = Stepper.on(backend, cells, 1, Edges.all(Edge.WALL))) {
             stepper.set(damBreak(cells), new float[cells], new float[cells],
                     ShallowWater.params(G, COURANT, dx, dx, ShallowWater.DEFAULT_DRY), T);
-            stepper.runUntil(T, 32, 100_000);
+            stepper.runUntil(32, 100_000);
             assertEquals(ShallowWater.ticks(T), stepper.ticks(),
                     backend + ": the clock is an integer, so it lands on the end exactly");
             float[] depth = stepper.read()[0];
@@ -111,7 +117,7 @@ class ShallowWaterTest {
                     ShallowWater.params(G, COURANT, dx, dx, ShallowWater.DEFAULT_DRY), FOREVER);
             stepper.step(1);
             double first = stepper.time();
-            assertEquals(COURANT * dx / c0, first, first * 1e-5, backend + ": the first step is not C·dx/c0");
+            assertEquals(COURANT * dx / c0, first, 1.5e-6, backend + ": the first step is not C·dx/c0");
 
             stepper.step(99);
             double before = stepper.time();
@@ -134,7 +140,7 @@ class ShallowWaterTest {
         try (Stepper stepper = Stepper.on(backend, cells, 1, Edges.all(Edge.WALL))) {
             stepper.set(damBreak(cells), new float[cells], new float[cells],
                     ShallowWater.params(G, COURANT, dx, dx, ShallowWater.DEFAULT_DRY), end);
-            stepper.runUntil(end, 16, 10_000);
+            stepper.runUntil(16, 10_000);
             float[][] atEnd = stepper.read();
             long clock = stepper.ticks();
             assertEquals(ShallowWater.ticks(end), clock, backend + ": the clock is an integer, so it lands on the end");
@@ -214,6 +220,23 @@ class ShallowWaterTest {
                 assertTrue(depth < 1e-6, backend + ": depth moved by " + depth);
                 assertTrue(momentum < 1e-6, backend + ": a current of " + momentum + " appeared in still water");
             }
+        }
+    }
+
+    // --- portability ------------------------------------------------------------------------------------
+
+    /**
+     * The kernel asks for no optional device capability — no 64-bit integers, no float atomics — so no GPU
+     * that can run a compute shader at all falls back to the CPU for it. Registered under a budget that allows
+     * none, it must still lower. This is the reason the clock is the host's and the device holds only a delta.
+     */
+    @Test
+    void theKernelNeedsNoOptionalCapability() {
+        try (Accelerator accelerator = new Accelerator(SpirvTarget.restrictedTo(Set.of()))) {
+            Registration registration = accelerator.register(
+                    new KernelSpec(ShallowWater.kernel(64, 64, Edges.all(Edge.WALL)), Stepper.columns()));
+            assertTrue(registration.succeeded(), () -> "the kernel needs a capability: "
+                    + ((Rejection) registration).detail());
         }
     }
 
