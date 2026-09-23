@@ -45,8 +45,14 @@ cannot be fixed from here at all.
       the grid solve and clearing the grid between steps do not. Open: incompressible projection or weakly
       compressible (local, no global solve, smaller time step); 2D or 3D first.
 
+- [ ] **Every GPU number here is the Intel iGPU's.** `supirvast`'s `GpuContext` takes the first Vulkan
+      device with a compute queue, which on the development laptop is the integrated Intel GPU, not the
+      RTX 5070 Ti. The Intel has no shared-memory f32 atomic add either, so a pre-reducing scatter would
+      register CPU-only there. Rerun the measurements once device selection prefers the discrete GPU
+      (fix belongs in `supirvast`; raised in that session).
+
 - [ ] **The scatter is contention-bound in cell order.** `ScatterTest.gpuScatterCost`, 2²⁰ particles, ms
-      per scatter against plain non-atomic stores to the same addresses:
+      per scatter against plain non-atomic stores to the same addresses (Intel iGPU; see above):
 
       | ppc | sorted | plain, sorted | random |
       | --- | --- | --- | --- |
