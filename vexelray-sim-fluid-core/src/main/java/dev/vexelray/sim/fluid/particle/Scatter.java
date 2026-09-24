@@ -195,7 +195,7 @@ public final class Scatter {
         LocalVar p = b.let("p", new Expr.InvocationId());
         // The first particle of every workgroup exists, since a workgroup is only dispatched to cover one.
         LocalVar anchor = b.let("anchor", mul(new Expr.WorkgroupId(), i(WORKGROUP)));
-        Cell origin = Cell.of(b, "origin", v(anchor), nx, ny);
+        Cell origin = Cell.of(b, "origin", v(anchor), nx, ny, PX, PY);
 
         forEachSlot(b, lid, (t, slot) -> {
             for (SharedArray window : windows) {
@@ -366,10 +366,10 @@ public final class Scatter {
      * {@code (nx−2, ny−2)} — so a particle on the far edge weighs fully on the last node, and the weights stay in
      * {@code [0, 1]} and sum to one wherever the particle is.
      */
-    private record Cell(LocalVar x, LocalVar y, LocalVar col, LocalVar row) {
-        static Cell of(Body b, String name, Expr index, int nx, int ny) {
-            LocalVar x = b.let(name + "X", clamp(load(PX, index), f(0), f(nx - 1)));
-            LocalVar y = b.let(name + "Y", clamp(load(PY, index), f(0), f(ny - 1)));
+    record Cell(LocalVar x, LocalVar y, LocalVar col, LocalVar row) {
+        static Cell of(Body b, String name, Expr index, int nx, int ny, Buffer px, Buffer py) {
+            LocalVar x = b.let(name + "X", clamp(load(px, index), f(0), f(nx - 1)));
+            LocalVar y = b.let(name + "Y", clamp(load(py, index), f(0), f(ny - 1)));
             return new Cell(x, y, b.let(name + "Col", toInt(min(v(x), f(nx - 2)))),
                     b.let(name + "Row", toInt(min(v(y), f(ny - 2)))));
         }
@@ -379,7 +379,7 @@ public final class Scatter {
     private record Particle(Cell cell, LocalVar fx, LocalVar fy, LocalVar m, LocalVar mu, LocalVar mv,
                             LocalVar corner) {
         static Particle load(Body b, Expr p, int nx, int ny) {
-            Cell cell = Cell.of(b, "", p, nx, ny);
+            Cell cell = Cell.of(b, "", p, nx, ny, PX, PY);
             LocalVar fx = b.let("fx", sub(v(cell.x()), toFloat(v(cell.col()))));
             LocalVar fy = b.let("fy", sub(v(cell.y()), toFloat(v(cell.row()))));
             LocalVar m = b.let("m", Body.load(PM, p));

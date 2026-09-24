@@ -41,8 +41,9 @@ cannot be fixed from here at all.
 - [ ] **FLIP.** A fluid library without one is not taken seriously, and it suits the shared core:
       particles carry the fluid and a patch grid does the solve. Particle-to-grid is a `⊕`-sum per node,
       so any schedule is correct ([architecture.md](architecture.md#conserved-pairs)). Particle-to-grid
-      exists in three schedules (`particle.Scatter`, 2D bilinear) and is measured; the GPU sort and scan the
-      gather needs, grid-to-particle, advection, the grid solve and clearing the grid between steps do not. Open: incompressible projection or weakly
+      exists in three schedules (`particle.Scatter`, 2D bilinear), and so does the device sort by cell the
+      gather needs (`particle.Sort`); both are measured. Grid-to-particle, advection, the grid solve and
+      clearing the grid between steps do not exist. Open: incompressible projection or weakly
       compressible (local, no global solve, smaller time step); 2D or 3D first.
 
 - [ ] **The scatter: gather per node, not atomics per particle.** `ScatterTest.gpuScatterCost`, 2²⁰
@@ -66,15 +67,45 @@ cannot be fixed from here at all.
       invocation per node means fewer invocations as ppc rises (16K at 64 ppc), each looping over more
       particles, so the device runs short of parallelism; a subgroup-wide segmented sum over particles is
       the schedule that would keep it. Its costs: the particles must be sorted by cell (not timed here —
-      every sorted column assumes it) and `Scatter.cellStarts` is a host pass; a FLIP step needs a GPU
-      sort and a scan to build it. Random order is 4–10× the sorted schedules until very high densities.
+      every sorted column assumes it) and needs its cell starts, which `Scatter.cellStarts` builds on the
+      host and `particle.Sort` on the device (entry below). Random order is 4–10× the sorted schedules until very high densities.
       *An earlier table here was twice as slow at 1 and 4 ppc: the GPU was still at idle clocks when those
       rows ran first. Measured on the Intel iGPU the shape was the same, ~10–20× slower.*
+
+- [ ] **Sorting to gather does not pay for itself every step — yet.** `particle.Sort` is a five-pass
+      counting sort (count and rank by integer atomic, a three-pass workgroup-memory scan, permute), exact
+      against the host's sort on both backends and needing no optional capability. `SortTest.gpuSortCost`,
+      2²⁰ particles, RTX, ms per step, typical of three runs:
+
+      | ppc | input | sort | gather | sort + gather | direct scatter |
+      | --- | --- | --- | --- | --- | --- |
+      | 4 | nearly sorted | 0.16 | 0.04 | 0.20 | 0.095 |
+      | 4 | random | 0.34 | 0.04 | 0.38 | 0.36 |
+      | 16 | nearly sorted | 0.18 | 0.11 | 0.30 | 0.25 |
+      | 64 | nearly sorted | 0.13 | 0.26 | 0.39 | 0.62 |
+
+      Per step on the input a solver actually has — nearly sorted, since advection moves a particle a
+      fraction of a cell — the direct scatter wins at 4 and 16 ppc; sort + gather only at 64. But about
+      0.1 ms of the sort is the dispatch floor, five passes at 0.021 ms each (upstream entry below), and
+      the scan passes run at that floor, so their work is nothing. What is left is the permute, 0.07 ms
+      nearly sorted and 0.16–0.2 random, where its writes scatter. With the floor gone, sort + gather
+      would be about level with the direct scatter at 4 ppc and ahead above it. Until then: scatter
+      directly every step, and sort every few steps to keep the order — the direct scatter from random
+      order is 4× slower, so letting it decay costs more than the sort. The sort is not stable, so the
+      gather's bit-for-bit repeatability does not survive it.
 
 ## Upstream
 
 Limits of the stack that `-core`'s IR runs on, found while setting this project up. Whether each one
 matters depends on the approach.
+
+- [ ] **Every dispatch costs 0.021 ms, whatever it does** (fix belongs in `supirvast`). Measured by
+      `SortTest.gpuSortCost` with an empty kernel on the RTX. A pass that does little — each of the sort's
+      three scans over 262K counts — costs exactly that, so a five-pass sort pays ~0.1 ms before its work
+      begins, and the shallow-water step (0.045 ms) is half floor. `supirvast`'s own TODO names the likely
+      cause: a descriptor pool and set allocated per dispatch, and one submission each. Caching descriptor
+      sets per buffer tuple, or recording several dispatches into one command buffer, is what would remove
+      it; the second is what a multi-pass step like the sort wants.
 
 - [ ] **Workgroup memory, barriers and device selection are in `supirvast` uncommitted** (fix belongs in
       `supirvast`). This repo already builds against them through the local `.m2`, so a fresh clone cannot

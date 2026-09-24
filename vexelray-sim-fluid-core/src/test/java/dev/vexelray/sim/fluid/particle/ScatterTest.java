@@ -93,7 +93,7 @@ class ScatterTest {
         }
     }
 
-    private static void holdsWhatTheParticlesDid(String backend, int n, Particles particles, float[][] grid) {
+    static void holdsWhatTheParticlesDid(String backend, int n, Particles particles, float[][] grid) {
         double[][] expected = reference(n, particles);
         double mass = 0;
         double momentumX = 0;
@@ -249,7 +249,7 @@ class ScatterTest {
      * clock ramp rather than the kernel — which is how an earlier table here came out twice as slow at 1 and
      * 4 ppc as every run after it.
      */
-    private static void warmUp(Accelerator accelerator) {
+    static void warmUp(Accelerator accelerator) {
         Job job = Job.of(513, Particles.jittered(512, 4, new Random(0)), Scatter.Mode.GRID);
         KernelHandle handle = job.register(accelerator);
         List<ResidentBuffer> buffers = job.upload(accelerator);
@@ -327,7 +327,7 @@ class ScatterTest {
         }
     }
 
-    private static void assumeGpu(Accelerator accelerator) {
+    static void assumeGpu(Accelerator accelerator) {
         if (!accelerator.capabilities().gpuAvailable()) {
             assumeTrue(Boolean.getBoolean("supirvast.requireGpu"), "no Vulkan device");
             throw new IllegalStateException("-Dsupirvast.requireGpu=true but no Vulkan device");
@@ -379,7 +379,7 @@ class ScatterTest {
     }
 
     /** Every column at the fixed length of its words, since no buffer here has one element per invocation. */
-    private static List<KernelColumn> columns(List<Buffer> bindings, int[][] words) {
+    static List<KernelColumn> columns(List<Buffer> bindings, int[][] words) {
         List<KernelColumn> columns = new ArrayList<>();
         for (int k = 0; k < bindings.size(); k++) {
             Buffer buffer = bindings.get(k);
@@ -394,7 +394,7 @@ class ScatterTest {
     // --- the answer, and the particles ------------------------------------------------------------------
 
     /** The same deposit in double precision, one particle after another. */
-    private static double[][] reference(int n, Particles particles) {
+    static double[][] reference(int n, Particles particles) {
         double[][] grid = new double[3][n * n];
         for (int p = 0; p < particles.count(); p++) {
             double x = Math.clamp(particles.x[p], 0, n - 1);
@@ -493,7 +493,7 @@ class ScatterTest {
         return total;
     }
 
-    private static int[] bits(float[] values) {
+    static int[] bits(float[] values) {
         int[] words = new int[values.length];
         for (int k = 0; k < values.length; k++) {
             words[k] = Float.floatToRawIntBits(values[k]);
@@ -501,7 +501,7 @@ class ScatterTest {
         return words;
     }
 
-    private static float[] floats(int[] words) {
+    static float[] floats(int[] words) {
         float[] values = new float[words.length];
         for (int k = 0; k < words.length; k++) {
             values[k] = Float.intBitsToFloat(words[k]);

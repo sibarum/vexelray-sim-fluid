@@ -63,6 +63,13 @@ public final class Body {
         statements.add(new Statement.AtomicUpdate(op, buffer, index, value));
     }
 
+    /** {@link #atomic}, keeping the element's value from before the update in a new local. */
+    public LocalVar fetchAtomic(String name, AtomicOp op, Buffer buffer, Expr index, Expr value) {
+        LocalVar previous = new LocalVar(names.fresh(name), buffer.element());
+        statements.add(new Statement.AtomicUpdate(previous, op, buffer, index, value));
+        return previous;
+    }
+
     /** Writes an element of workgroup memory. */
     public void sharedStore(SharedArray array, Expr index, Expr value) {
         statements.add(new Statement.SharedStore(array, index, value));
