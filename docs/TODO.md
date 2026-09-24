@@ -33,7 +33,7 @@ cannot be fixed from here at all.
 
 ## Later
 
-- [ ] **Second order.** The first kernel is first-order: Ritter's L1 error goes 1.32% → 0.84% from 200 to
+- [ ] **Second order.** The first kernel is first-order: Ritter's L1 error goes 1.28% → 0.80% from 200 to
       400 cells. A MUSCL reconstruction with a limiter sharpens fronts at the same resolution, and is the
       first change that is a *second scheme* — the point at which the discretisation level of the tower
       earns its place ([architecture.md](architecture.md#built-from-the-bottom-up-with-the-output-written-by-hand-first)).
@@ -45,48 +45,44 @@ cannot be fixed from here at all.
       the grid solve and clearing the grid between steps do not. Open: incompressible projection or weakly
       compressible (local, no global solve, smaller time step); 2D or 3D first.
 
-- [ ] **Every GPU number here is the Intel iGPU's.** `supirvast`'s `GpuContext` takes the first Vulkan
-      device with a compute queue, which on the development laptop is the integrated Intel GPU, not the
-      RTX 5070 Ti. The Intel has no shared-memory f32 atomic add either, so a pre-reducing scatter would
-      register CPU-only there. Rerun the measurements once device selection prefers the discrete GPU
-      (fix belongs in `supirvast`; raised in that session).
+- [ ] **The scatter is contention-bound in cell order, and shared memory does not fix it.**
+      `ScatterTest.gpuScatterCost`, 2²⁰ particles, workgroup 256, RTX 5070 Ti, ms per scatter:
 
-- [ ] **The scatter is contention-bound in cell order.** `ScatterTest.gpuScatterCost`, 2²⁰ particles, ms
-      per scatter against plain non-atomic stores to the same addresses (Intel iGPU; see above):
+      | ppc | direct, sorted | pre-reduced, sorted | plain, sorted | direct, random |
+      | --- | --- | --- | --- | --- |
+      | 1 | 0.14 | 0.11 | 0.13 | 0.89 |
+      | 4 | 0.20 | 0.17 | 0.07 | 0.76 |
+      | 16 | 0.26 | 0.23 | 0.03 | 0.36 |
+      | 64 | 0.61 | 0.51 | 0.03 | 0.37 |
 
-      | ppc | sorted | plain, sorted | random |
-      | --- | --- | --- | --- |
-      | 1 | 1.3 | 1.0 | 17.5 |
-      | 4 | 2.5 | 0.6 | 4.1 |
-      | 16 | 5.9 | 0.5 | 4.1 |
-      | 64 | 18.0 | 0.5 | 4.0 |
-
-      Sorted grows linearly with particles per cell while plain stays flat, so the cost is collisions,
-      not the atomic instruction (0.3 ms of premium at 1 ppc). At a typical 4 ppc about three quarters
-      of the scatter is contention, and the scatter alone is about 3× a whole shallow-water step at 2²⁰ cells.
-      Random order avoids the collisions and pays in cache misses (17.5 ms at 1 ppc, where the grid is
-      12 MB). A pre-reduction within a workgroup or subgroup is what removes them, so this is the
-      measurement that entry below was waiting for. 3D is worse: eight nodes a particle, and more ppc.
-      *The pre-reduction exists* (`Scatter.preReduced`: an f32 window of two node rows per workgroup of
-      256, flushed once per touched node, falling back to the grid past it) and is checked on the CPU in
-      both orders. It is untimed: the Intel has no shared-memory f32 add, so the benchmark prints n/a
-      until device selection reaches the RTX. Rerunning at workgroup 256 moved the direct numbers by
-      under 10%.
+      Sorted grows with particles per cell while plain stores to the same addresses fall, so the cost is
+      collisions: at a typical 4 ppc about two thirds of the scatter, which alone is ~4.5× a whole
+      shallow-water step at 2²⁰ cells (0.043 ms). The workgroup pre-reduction (`Scatter.preReduced`) takes
+      only 10–20% off, and grows with ppc exactly as the direct scatter does — the same-address
+      serialisation has moved into workgroup memory rather than gone, since every particle of a cell still
+      does an atomic on the same slot. What removes it is not taking the atomic per particle: a segmented
+      reduction across the lanes of a subgroup (sorted particles of one cell are neighbouring lanes), or one
+      invocation per cell summing its particles after the sort. Random order avoids the collisions and
+      pays in cache misses; at 64 ppc it already beats every sorted schedule. 3D is worse: eight nodes a
+      particle, and more ppc. *The Intel iGPU measured the same shape ~10–20× slower, and cannot run the
+      pre-reduction (no shared-memory f32 add); `-Dsupirvast.gpu=integrated` still selects it.*
 
 ## Upstream
 
 Limits of the stack that `-core`'s IR runs on, found while setting this project up. Whether each one
 matters depends on the approach.
 
-- [ ] **`core` IR has no workgroup shared memory and no barriers** (fix belongs in `supirvast`).
-      Atomics on storage buffers exist; reducing within a workgroup before touching global memory, which
-      is what makes a contended scatter fast, needs these two. **First measurement:** the step-size
-      reduction fused into `ShallowWater`, at 2²⁰ cells — 0.69 ms per step without it, 0.70–0.83 with the
-      filtered atomic it ships with, 1.17 with every cell taking the atomic. The filter recovers most of it;
-      a workgroup pre-reduction would take the remaining 10–20%. **FLIP's scatter has now decided it**
-      (entry above): up to ~4× at 4 ppc in cell order, more at higher densities. In progress in `supirvast`
-      (step 2 of its workgroup build order); once it lands, a pre-reducing scatter is a fourth `Scatter.Mode`
-      in the same benchmark.
+- [ ] **Workgroup memory, barriers and device selection are in `supirvast` uncommitted** (fix belongs in
+      `supirvast`). This repo already builds against them through the local `.m2`, so a fresh clone cannot
+      build until `supirvast` commits and installs them. Measured with them (entry above): a workgroup
+      pre-reduction of the scatter is worth 10–20% on the RTX, not the ~3× the contention suggested.
+
+- [ ] **No subgroup operations** (fix belongs in `supirvast`, step 3 of its workgroup build order). A
+      segmented sum across a subgroup's lanes is the cheapest way to take one atomic per node rather than
+      per particle, and the scatter entry above is now the measured need for it. The alternative that needs
+      nothing upstream is a per-cell gather after a sort, which the scatter benchmark can take as a fifth
+      mode. The step-size reduction in `ShallowWater` would use it too, though at 0.043 ms a step there is
+      little left there to win.
 
 - [ ] **The engine cannot dispatch compute inside a frame** (fix belongs in `vexelray`).
       `TechniqueContext` names pure compute only as a future technique kind, so the demo runs the simulation

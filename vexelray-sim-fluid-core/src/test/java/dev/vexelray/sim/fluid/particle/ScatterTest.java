@@ -162,7 +162,7 @@ class ScatterTest {
         try (Accelerator accelerator = new Accelerator()) {
             assumeGpu(accelerator);
             System.out.println("[scatter] 2^20 particles, 2D bilinear, workgroup " + Scatter.WORKGROUP
-                    + "; ms per scatter");
+                    + ", on " + accelerator.capabilities().deviceName() + "; ms per scatter");
             System.out.println("[scatter]   ppc   grid      direct(sorted)  pre-reduced(sorted)  direct(random)"
                     + "  plain(sorted)  plain(random)");
             double privateMs = Double.NaN;

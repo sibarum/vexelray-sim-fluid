@@ -269,8 +269,8 @@ class ShallowWaterTest {
             stepper.step(100);
             double clock = stepper.time();
             double ms = (System.nanoTime() - start) / 1e6;
-            System.out.printf("[cost] 2^20 cells: %.3f ms per step, fused step-size reduction included "
-                    + "(clock %.2f s)%n", ms / 100, clock);
+            System.out.printf("[cost] 2^20 cells on %s: %.3f ms per step, fused step-size reduction included "
+                    + "(clock %.2f s)%n", stepper.device(), ms / 100, clock);
         }
     }
 

@@ -109,6 +109,11 @@ abstract class Stepper implements AutoCloseable {
     /** {@code {h, hu, hv}}. */
     abstract float[][] read();
 
+    /** The device the steps run on, as its driver names it, for a measurement to say where it was taken. */
+    String device() {
+        return "CPU";
+    }
+
     /** Depths the kernel has clamped to zero since {@link #set}: the water its repairs created. */
     abstract int clamped();
 
@@ -265,6 +270,11 @@ abstract class Stepper implements AutoCloseable {
         @Override
         int clamped() {
             return clamped.read()[0];
+        }
+
+        @Override
+        String device() {
+            return accelerator.capabilities().deviceName();
         }
 
         @Override
