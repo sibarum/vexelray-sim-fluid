@@ -93,6 +93,13 @@ public final class Body {
         statements.add(new Statement.If(condition, branch.region(), Region.of()));
     }
 
+    /** {@code while (condition) { body }} — the condition is evaluated before every pass. */
+    public void loop(Expr condition, Consumer<Body> body) {
+        Body pass = new Body(names);
+        body.accept(pass);
+        statements.add(new Statement.While(condition, pass.region()));
+    }
+
     public Region region() {
         return new Region(List.copyOf(statements));
     }

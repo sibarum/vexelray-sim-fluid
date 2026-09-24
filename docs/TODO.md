@@ -40,32 +40,36 @@ cannot be fixed from here at all.
 
 - [ ] **FLIP.** A fluid library without one is not taken seriously, and it suits the shared core:
       particles carry the fluid and a patch grid does the solve. Particle-to-grid is a `⊕`-sum per node,
-      so any schedule is correct ([architecture.md](architecture.md#conserved-pairs)). The direct scatter
-      exists (`particle.Scatter`, 2D bilinear, `f32` atomic add) and is measured; grid-to-particle, advection,
-      the grid solve and clearing the grid between steps do not. Open: incompressible projection or weakly
+      so any schedule is correct ([architecture.md](architecture.md#conserved-pairs)). Particle-to-grid
+      exists in three schedules (`particle.Scatter`, 2D bilinear) and is measured; the GPU sort and scan the
+      gather needs, grid-to-particle, advection, the grid solve and clearing the grid between steps do not. Open: incompressible projection or weakly
       compressible (local, no global solve, smaller time step); 2D or 3D first.
 
-- [ ] **The scatter is contention-bound in cell order, and shared memory does not fix it.**
-      `ScatterTest.gpuScatterCost`, 2²⁰ particles, workgroup 256, RTX 5070 Ti, ms per scatter:
+- [ ] **The scatter: gather per node, not atomics per particle.** `ScatterTest.gpuScatterCost`, 2²⁰
+      particles, workgroup 256, RTX 5070 Ti, ms per scatter, typical of five runs after a half-second warm-up
+      (the 1 ppc row varies ±20%, the rest a few percent):
 
-      | ppc | direct, sorted | pre-reduced, sorted | plain, sorted | direct, random |
-      | --- | --- | --- | --- | --- |
-      | 1 | 0.14 | 0.11 | 0.13 | 0.89 |
-      | 4 | 0.20 | 0.17 | 0.07 | 0.76 |
-      | 16 | 0.26 | 0.23 | 0.03 | 0.36 |
-      | 64 | 0.61 | 0.51 | 0.03 | 0.37 |
+      | ppc | direct, sorted | pre-reduced, sorted | gather, sorted | plain stores, sorted | direct, random |
+      | --- | --- | --- | --- | --- | --- |
+      | 1 | 0.07 | 0.07 | 0.05 | 0.06 | 0.36 |
+      | 4 | 0.095 | 0.08 | 0.05 | 0.03 | 0.36 |
+      | 16 | 0.26 | 0.23 | 0.11 | 0.05 | 0.36 |
+      | 64 | 0.62 | 0.51 | 0.27 | 0.03 | 0.37 |
 
-      Sorted grows with particles per cell while plain stores to the same addresses fall, so the cost is
-      collisions: at a typical 4 ppc about two thirds of the scatter, which alone is ~4.5× a whole
-      shallow-water step at 2²⁰ cells (0.043 ms). The workgroup pre-reduction (`Scatter.preReduced`) takes
-      only 10–20% off, and grows with ppc exactly as the direct scatter does — the same-address
-      serialisation has moved into workgroup memory rather than gone, since every particle of a cell still
-      does an atomic on the same slot. What removes it is not taking the atomic per particle: a segmented
-      reduction across the lanes of a subgroup (sorted particles of one cell are neighbouring lanes), or one
-      invocation per cell summing its particles after the sort. Random order avoids the collisions and
-      pays in cache misses; at 64 ppc it already beats every sorted schedule. 3D is worse: eight nodes a
-      particle, and more ppc. *The Intel iGPU measured the same shape ~10–20× slower, and cannot run the
-      pre-reduction (no shared-memory f32 add); `-Dsupirvast.gpu=integrated` still selects it.*
+      In cell order the direct scatter is contention-bound: it grows with particles per cell while plain
+      stores to the same addresses do not — two thirds of it at 4 ppc. The workgroup pre-reduction
+      (`Scatter.preReduced`) takes only 10–20% off and grows the same way, because each particle of a cell
+      still takes an atomic on one slot, now in workgroup memory. The gather (`Scatter.gather`, one
+      invocation per node, no atomics) is fastest at every density: at 4 ppc about half the direct scatter
+      and near the plain-store floor — about one shallow-water step at 2²⁰ cells (0.045 ms). It is also
+      the same to the bit on every run. Its time still grows with ppc, but for another reason: one
+      invocation per node means fewer invocations as ppc rises (16K at 64 ppc), each looping over more
+      particles, so the device runs short of parallelism; a subgroup-wide segmented sum over particles is
+      the schedule that would keep it. Its costs: the particles must be sorted by cell (not timed here —
+      every sorted column assumes it) and `Scatter.cellStarts` is a host pass; a FLIP step needs a GPU
+      sort and a scan to build it. Random order is 4–10× the sorted schedules until very high densities.
+      *An earlier table here was twice as slow at 1 and 4 ppc: the GPU was still at idle clocks when those
+      rows ran first. Measured on the Intel iGPU the shape was the same, ~10–20× slower.*
 
 ## Upstream
 
@@ -77,12 +81,12 @@ matters depends on the approach.
       build until `supirvast` commits and installs them. Measured with them (entry above): a workgroup
       pre-reduction of the scatter is worth 10–20% on the RTX, not the ~3× the contention suggested.
 
-- [ ] **No subgroup operations** (fix belongs in `supirvast`, step 3 of its workgroup build order). A
-      segmented sum across a subgroup's lanes is the cheapest way to take one atomic per node rather than
-      per particle, and the scatter entry above is now the measured need for it. The alternative that needs
-      nothing upstream is a per-cell gather after a sort, which the scatter benchmark can take as a fifth
-      mode. The step-size reduction in `ShallowWater` would use it too, though at 0.043 ms a step there is
-      little left there to win.
+- [ ] **No subgroup operations** (fix belongs in `supirvast`, step 3 of its workgroup build order). The
+      gather needs nothing upstream and is fastest at typical densities (scatter entry above), so this is no
+      longer on the scatter's critical path. It is where the gather runs out: at high particles per cell, or
+      in 3D with eight nodes a particle, a segmented sum across a subgroup's lanes keeps one invocation per
+      particle and still takes one atomic per node. A GPU sort and scan, which the gather needs, would use it
+      too.
 
 - [ ] **The engine cannot dispatch compute inside a frame** (fix belongs in `vexelray`).
       `TechniqueContext` names pure compute only as a future technique kind, so the demo runs the simulation

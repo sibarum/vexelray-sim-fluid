@@ -49,12 +49,15 @@ import static dev.vexelray.sim.fluid.ir.Body.v;
  * the hardware happens to choose. On f32 the sum is not associative, so two runs can differ in the last bits;
  * the conservation is what survives, not the bits.
  *
- * <h2>Two schedules</h2>
+ * <h2>Three schedules</h2>
  * {@link #kernel} is the direct scatter: every deposit is an atomic on the grid. In cell order that is where
  * the time goes — neighbouring invocations hit the same nodes, and the atomics on one address serialise.
  * {@link #preReduced} is the same transfer with a workgroup's deposits summed in workgroup memory first, so the
- * grid sees one atomic per node the workgroup touched instead of one per deposit. Same answer, to rounding, in
- * any order; faster only when the particles are in cell order, which is the order a FLIP solver keeps them in.
+ * grid sees one atomic per node the workgroup touched instead of one per deposit — but each particle still
+ * takes an atomic, now on a shared slot, so the serialisation moves rather than goes. {@link #gather} turns the
+ * transfer around, one invocation per node summing its particles with no atomics at all, which needs the
+ * particles sorted by cell and is the fastest of the three at every density measured; see
+ * {@code docs/TODO.md} for the numbers.
  *
  * <h2>Positions</h2>
  * In node units: node {@code (i, j)} is at {@code (i, j)}, and the grid is {@code nx × ny} nodes, row-major. A
@@ -79,8 +82,18 @@ public final class Scatter {
     public static final Buffer PV = new Buffer("pv", 6, F32);
     public static final Buffer PM = new Buffer("pm", 7, F32);
 
-    /** Every buffer, in binding order. */
+    /**
+     * {@link #gather}'s one extra input: where each cell's particles start in the sorted order, {@code cells + 1}
+     * words, so cell {@code c} holds particles {@code [start[c], start[c + 1])}. See {@link #cellStarts}.
+     */
+    public static final Buffer CELL_START = new Buffer("cellStart", 8, Body.I32);
+
+    /** Every buffer the scatters bind, in binding order. */
     public static final List<Buffer> BUFFERS = List.of(GRID_M, GRID_MU, GRID_MV, PX, PY, PU, PV, PM);
+
+    /** Every buffer {@link #gather} binds, in binding order: the scatters', and the cell starts. */
+    public static final List<Buffer> GATHER_BUFFERS = List.of(GRID_M, GRID_MU, GRID_MV, PX, PY, PU, PV, PM,
+            CELL_START);
 
     private static final List<Buffer> GRID = List.of(GRID_M, GRID_MU, GRID_MV);
 
@@ -106,6 +119,8 @@ public final class Scatter {
         GRID,
         /** Summed per workgroup in workgroup memory, then one atomic per touched node: {@link #preReduced}. */
         PRE_REDUCED,
+        /** One invocation per node summing the particles around it, no atomics: {@link #gather}. */
+        GATHER,
         /**
          * Atomic adds into four slots of the particle's own, {@code 4p + k}: the same atomics and arithmetic,
          * with no two invocations ever touching one address. Against {@link #GRID}, the cost of contention —
@@ -133,6 +148,9 @@ public final class Scatter {
         requireGrid(nx, ny);
         if (mode == Mode.PRE_REDUCED) {
             return preReduced(nx, ny);
+        }
+        if (mode == Mode.GATHER) {
+            return gather(nx, ny);
         }
         Body b = new Body();
         LocalVar p = b.let("p", new Expr.InvocationId());
@@ -223,6 +241,103 @@ public final class Scatter {
             }
         });
         return new Function("scatterPreReduced", new Type.FunctionType(Type.VOID, List.of()), b.finish());
+    }
+
+    /**
+     * The same transfer turned around: one invocation per node, summing what the particles of the up to four
+     * cells around it give it, and writing the node once. No atomics, so no collisions, and each node's sum is
+     * taken in the same order every time, so the result is the same to the bit on every run — which no atomic
+     * schedule promises.
+     *
+     * <p>The price is the order: the particles must be sorted by cell, with {@link #cellStarts} saying where
+     * each cell's run begins, bound at {@link #CELL_START}. A FLIP step sorts its particles anyway, for locality;
+     * this makes the sort load-bearing rather than an optimisation. Dispatch {@code nx · ny} invocations, not one
+     * per particle. Each particle is read by the four nodes around it rather than written to them.
+     */
+    static Function gather(int nx, int ny) {
+        requireGrid(nx, ny);
+        int cols = nx - 1;
+        Body b = new Body();
+        LocalVar node = b.let("node", new Expr.InvocationId());
+        LocalVar ni = b.let("ni", mod(v(node), i(nx)));
+        LocalVar nj = b.let("nj", div(v(node), i(nx)));
+        LocalVar sumM = b.let("sumM", f(0));
+        LocalVar sumMu = b.let("sumMu", f(0));
+        LocalVar sumMv = b.let("sumMv", f(0));
+
+        // The cell to the south-west has this node as its north-east corner, and so on round.
+        for (int dr = -1; dr <= 0; dr++) {
+            for (int dc = -1; dc <= 0; dc++) {
+                boolean east = dc == -1;
+                boolean north = dr == -1;
+                LocalVar cc = b.let("cellCol", add(v(ni), i(dc)));
+                LocalVar cr = b.let("cellRow", add(v(nj), i(dr)));
+                b.when(not(lt(v(cc), i(0))), a -> a.when(lt(v(cc), i(cols)), c -> c.when(not(lt(v(cr), i(0))),
+                        e -> e.when(lt(v(cr), i(ny - 1)), in -> {
+                            LocalVar cell = in.let("cell", add(mul(v(cr), i(cols)), v(cc)));
+                            LocalVar k = in.let("k", load(CELL_START, v(cell)));
+                            LocalVar end = in.let("end", load(CELL_START, add(v(cell), i(1))));
+                            in.loop(lt(v(k), v(end)), pass -> {
+                                LocalVar x = pass.let("x", clamp(load(PX, v(k)), f(0), f(nx - 1)));
+                                LocalVar y = pass.let("y", clamp(load(PY, v(k)), f(0), f(ny - 1)));
+                                LocalVar fx = pass.let("fx", sub(v(x), toFloat(v(cc))));
+                                LocalVar fy = pass.let("fy", sub(v(y), toFloat(v(cr))));
+                                LocalVar w = pass.let("w", mul(east ? v(fx) : sub(f(1), v(fx)),
+                                        north ? v(fy) : sub(f(1), v(fy))));
+                                LocalVar wm = pass.let("wm", mul(v(w), load(PM, v(k))));
+                                pass.set(sumM, add(v(sumM), v(wm)));
+                                pass.set(sumMu, add(v(sumMu), mul(v(wm), load(PU, v(k)))));
+                                pass.set(sumMv, add(v(sumMv), mul(v(wm), load(PV, v(k)))));
+                                pass.set(k, add(v(k), i(1)));
+                            });
+                        }))));
+            }
+        }
+        b.store(GRID_M, v(node), v(sumM));
+        b.store(GRID_MU, v(node), v(sumMu));
+        b.store(GRID_MV, v(node), v(sumMv));
+        return new Function("gather", new Type.FunctionType(Type.VOID, List.of()), b.finish());
+    }
+
+    /**
+     * The cell a particle deposits from, row-major over the {@code (nx−1) × (ny−1)} cells — computed exactly as
+     * the kernels compute it, clamping included, in the same f32 arithmetic, so a sort by this key is the order
+     * {@link #gather} needs.
+     */
+    public static int cell(float x, float y, int nx, int ny) {
+        float cx = Math.clamp(x, 0f, nx - 1f);
+        float cy = Math.clamp(y, 0f, ny - 1f);
+        return (int) Math.min(cy, ny - 2f) * (nx - 1) + (int) Math.min(cx, nx - 2f);
+    }
+
+    /**
+     * Where each cell's particles start, for {@link #gather}: {@code cells + 1} words, the last the particle
+     * count. The particles must already be in cell order; this checks rather than sorts, because a gather
+     * over unsorted particles would silently drop every particle outside its cell's run.
+     */
+    public static int[] cellStarts(float[] px, float[] py, int nx, int ny) {
+        requireGrid(nx, ny);
+        int cells = (nx - 1) * (ny - 1);
+        int[] starts = new int[cells + 1];
+        int previous = 0;
+        for (int p = 0; p < px.length; p++) {
+            int c = cell(px[p], py[p], nx, ny);
+            if (c < previous) {
+                throw new IllegalArgumentException("particle " + p + " is in cell " + c + " after a particle in cell "
+                        + previous + "; the particles must be sorted by cell");
+            }
+            previous = c;
+            starts[c + 1]++;
+        }
+        for (int c = 0; c < cells; c++) {
+            starts[c + 1] += starts[c];
+        }
+        return starts;
+    }
+
+    /** How many invocations {@code mode} is dispatched with: one per particle, or one per node for a gather. */
+    static int invocations(int nx, int ny, int particles, Mode mode) {
+        return mode == Mode.GATHER ? nx * ny : particles;
     }
 
     /** How many elements each grid buffer needs for {@code particles} particles under {@code mode}. */
