@@ -11,6 +11,7 @@ import dev.supirvast.vastir.core.PushConstants;
 import dev.supirvast.vastir.core.Region;
 import dev.supirvast.vastir.core.SharedArray;
 import dev.supirvast.vastir.core.Statement;
+import dev.supirvast.vastir.core.SubgroupOp;
 import dev.supirvast.vastir.core.UnaryOp;
 import dev.supirvast.vastir.type.Type;
 
@@ -68,6 +69,23 @@ public final class Body {
         LocalVar previous = new LocalVar(names.fresh(name), buffer.element());
         statements.add(new Statement.AtomicUpdate(previous, op, buffer, index, value));
         return previous;
+    }
+
+    /**
+     * {@code value} as another lane of the subgroup holds it — {@code lane} lanes up or down, or lane
+     * {@code lane} itself, by {@code kind}. Like a barrier, only at the top level of a kernel.
+     */
+    public LocalVar shuffle(String name, Statement.SubgroupShuffle.Kind kind, Expr value, Expr lane) {
+        LocalVar result = new LocalVar(names.fresh(name), value.type());
+        statements.add(new Statement.SubgroupShuffle(result, kind, value, lane));
+        return result;
+    }
+
+    /** {@code op} over the subgroup's lanes — the whole of it, or each lane's running scan. Top level only. */
+    public LocalVar subgroup(String name, SubgroupOp op, Statement.SubgroupArithmetic.Scan scan, Expr value) {
+        LocalVar result = new LocalVar(names.fresh(name), value.type());
+        statements.add(new Statement.SubgroupArithmetic(result, op, scan, value));
+        return result;
     }
 
     /** Writes an element of workgroup memory. */

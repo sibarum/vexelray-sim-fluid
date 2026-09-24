@@ -6,6 +6,8 @@ import dev.supirvast.vastir.core.Expr;
 import dev.supirvast.vastir.core.Function;
 import dev.supirvast.vastir.core.LocalVar;
 import dev.supirvast.vastir.core.SharedArray;
+import dev.supirvast.vastir.core.Statement;
+import dev.supirvast.vastir.core.SubgroupOp;
 import dev.supirvast.vastir.type.Type;
 import dev.vexelray.sim.fluid.ir.Body;
 
@@ -49,15 +51,16 @@ import static dev.vexelray.sim.fluid.ir.Body.v;
  * the hardware happens to choose. On f32 the sum is not associative, so two runs can differ in the last bits;
  * the conservation is what survives, not the bits.
  *
- * <h2>Three schedules</h2>
+ * <h2>Four schedules</h2>
  * {@link #kernel} is the direct scatter: every deposit is an atomic on the grid. In cell order that is where
  * the time goes — neighbouring invocations hit the same nodes, and the atomics on one address serialise.
  * {@link #preReduced} is the same transfer with a workgroup's deposits summed in workgroup memory first, so the
  * grid sees one atomic per node the workgroup touched instead of one per deposit — but each particle still
  * takes an atomic, now on a shared slot, so the serialisation moves rather than goes. {@link #gather} turns the
  * transfer around, one invocation per node summing its particles with no atomics at all, which needs the
- * particles sorted by cell and is the fastest of the three at every density measured; see
- * {@code docs/TODO.md} for the numbers.
+ * particles sorted by cell. {@link #segmented} keeps one invocation per particle but sums each run of a cell
+ * across the subgroup's lanes, so a run takes one atomic per node; it is right in any order, and fast in cell
+ * order. See {@code docs/TODO.md} for how they compare.
  *
  * <h2>Positions</h2>
  * In node units: node {@code (i, j)} is at {@code (i, j)}, and the grid is {@code nx × ny} nodes, row-major. A
@@ -121,6 +124,8 @@ public final class Scatter {
         PRE_REDUCED,
         /** One invocation per node summing the particles around it, no atomics: {@link #gather}. */
         GATHER,
+        /** Each run of one cell summed across the subgroup's lanes, one atomic per run: {@link #segmented}. */
+        SEGMENTED,
         /**
          * Atomic adds into four slots of the particle's own, {@code 4p + k}: the same atomics and arithmetic,
          * with no two invocations ever touching one address. Against {@link #GRID}, the cost of contention —
@@ -151,6 +156,9 @@ public final class Scatter {
         }
         if (mode == Mode.GATHER) {
             return gather(nx, ny);
+        }
+        if (mode == Mode.SEGMENTED) {
+            return segmented(nx, ny);
         }
         Body b = new Body();
         LocalVar p = b.let("p", new Expr.InvocationId());
@@ -297,6 +305,89 @@ public final class Scatter {
         b.store(GRID_MU, v(node), v(sumMu));
         b.store(GRID_MV, v(node), v(sumMv));
         return new Function("gather", new Type.FunctionType(Type.VOID, List.of()), b.finish());
+    }
+
+    /** The subgroup {@link #segmented} is built for, and must be registered with. */
+    public static final int SUBGROUP = 32;
+
+    /**
+     * The scatter with each run of particles in one cell summed across the lanes of the subgroup first, so a
+     * run takes one atomic per node rather than one per particle. Register it with a workgroup of
+     * {@link #WORKGROUP} and a subgroup of {@link #SUBGROUP}.
+     *
+     * <p>Every particle of a cell deposits on the same four nodes, so a run of one cell in neighbouring lanes
+     * — which cell order makes of every cell's particles — is summed by a segmented scan: each lane holds its
+     * twelve amounts (three fields on four corners), and over five rounds adds what the lane {@code 2^r} below
+     * held, if that lane is in the same run. The run's last lane then holds the run's sum and takes the atomics.
+     * The collisions the direct scatter pays for between particles of one cell are gone; what remains is
+     * between neighbouring cells, which share nodes, and between subgroups.
+     *
+     * <p>"In the same run" is decided by where the run starts, not by the key alone: the lane {@code 2^r} below
+     * can hold the same cell with another cell between — particles only nearly sorted — and adding it would
+     * count its run twice. So each lane first finds its run's first lane, a max-scan over the lanes that begin
+     * a run, and adds only from lanes at or after it. Any order is then correct; cell order only decides how
+     * long the runs are, and so how many atomics are saved.
+     *
+     * <p>Subgroup operations follow a barrier's rules: every lane reaches every one, so the tail past the last
+     * particle joins in with a cell of {@code −1} and nothing to add, and takes no atomics.
+     */
+    static Function segmented(int nx, int ny) {
+        requireGrid(nx, ny);
+        Body b = new Body();
+        LocalVar lane = b.let("lane", new Expr.SubgroupInvocationId());
+        LocalVar p = b.let("p", new Expr.InvocationId());
+        LocalVar key = b.let("key", i(-1));
+        LocalVar[] amounts = new LocalVar[12];
+        for (int j = 0; j < amounts.length; j++) {
+            amounts[j] = b.let("amount", f(0));
+        }
+        b.when(lt(v(p), new Expr.InvocationCount()), t -> {
+            Particle particle = Particle.load(t, v(p), nx, ny);
+            t.set(key, v(particle.corner()));
+            for (int k = 0; k < 4; k++) {
+                Deposit d = particle.deposit(t, k, nx);
+                for (int f = 0; f < 3; f++) {
+                    t.set(amounts[3 * k + f], d.amount(f));
+                }
+            }
+        });
+
+        // Where this lane's run begins: its own lane if the lane below holds another cell, else that of the
+        // lane below — which a max-scan over the lanes that begin a run gives every lane at once.
+        LocalVar below = b.shuffle("below", Statement.SubgroupShuffle.Kind.UP, v(key), i(1));
+        LocalVar head = b.let("head", v(lane));
+        b.when(lt(i(0), v(lane)), t -> t.when(eq(v(below), v(key)), s -> s.set(head, i(0))));
+        LocalVar runStart = b.subgroup("runStart", SubgroupOp.MAX, Statement.SubgroupArithmetic.Scan.INCLUSIVE,
+                v(head));
+
+        // Hillis–Steele within runs: every lane shuffles before any adds, so a round reads the round before.
+        for (int d = 1; d < SUBGROUP; d <<= 1) {
+            int delta = d;
+            LocalVar[] from = new LocalVar[amounts.length];
+            for (int j = 0; j < amounts.length; j++) {
+                from[j] = b.shuffle("from", Statement.SubgroupShuffle.Kind.UP, v(amounts[j]), i(delta));
+            }
+            b.when(not(lt(sub(v(lane), i(delta)), v(runStart))), t -> {
+                for (int j = 0; j < amounts.length; j++) {
+                    t.set(amounts[j], add(v(amounts[j]), v(from[j])));
+                }
+            });
+        }
+
+        // The run's last lane holds its sum: the subgroup's last lane, or one whose next lane holds another cell.
+        LocalVar above = b.shuffle("above", Statement.SubgroupShuffle.Kind.DOWN, v(key), i(1));
+        LocalVar last = b.let("last", i(0));
+        b.when(eq(v(lane), i(SUBGROUP - 1)), t -> t.set(last, i(1)));
+        b.when(not(eq(v(above), v(key))), t -> t.set(last, i(1)));
+        b.when(not(lt(v(key), i(0))), t -> t.when(eq(v(last), i(1)), s -> {
+            for (int k = 0; k < 4; k++) {
+                LocalVar node = s.let("node", add(v(key), i((k >> 1) * nx + (k & 1))));
+                for (int f = 0; f < 3; f++) {
+                    s.atomic(AtomicOp.ADD, GRID.get(f), v(node), v(amounts[3 * k + f]));
+                }
+            }
+        }));
+        return new Function("scatterSegmented", new Type.FunctionType(Type.VOID, List.of()), b.finish());
     }
 
     /**

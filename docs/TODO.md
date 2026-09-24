@@ -41,36 +41,34 @@ cannot be fixed from here at all.
 - [ ] **FLIP.** A fluid library without one is not taken seriously, and it suits the shared core:
       particles carry the fluid and a patch grid does the solve. Particle-to-grid is a `⊕`-sum per node,
       so any schedule is correct ([architecture.md](architecture.md#conserved-pairs)). Particle-to-grid
-      exists in three schedules (`particle.Scatter`, 2D bilinear), and so does the device sort by cell the
+      exists in four schedules (`particle.Scatter`, 2D bilinear), and so does the device sort by cell the
       gather needs (`particle.Sort`); both are measured. Grid-to-particle, advection, the grid solve and
       clearing the grid between steps do not exist. Open: incompressible projection or weakly
       compressible (local, no global solve, smaller time step); 2D or 3D first.
 
-- [ ] **The scatter: gather per node, not atomics per particle.** `ScatterTest.gpuScatterCost`, 2²⁰
-      particles, workgroup 256, RTX 5070 Ti, ms per scatter, typical of five runs after a half-second warm-up
-      (the 1 ppc row varies ±20%, the rest a few percent):
+- [ ] **The scatter: a segmented subgroup sum, or a gather.** `ScatterTest.gpuScatterCost`, 2²⁰
+      particles, workgroup 256, subgroup 32, RTX 5070 Ti, ms per scatter, typical of three runs after a
+      half-second warm-up (the 1 ppc row varies ±20%, the rest a few percent):
 
-      | ppc | direct, sorted | pre-reduced, sorted | gather, sorted | plain stores, sorted | direct, random |
-      | --- | --- | --- | --- | --- | --- |
-      | 1 | 0.07 | 0.07 | 0.05 | 0.06 | 0.36 |
-      | 4 | 0.095 | 0.08 | 0.05 | 0.03 | 0.36 |
-      | 16 | 0.26 | 0.23 | 0.11 | 0.05 | 0.36 |
-      | 64 | 0.62 | 0.51 | 0.27 | 0.03 | 0.37 |
+      | ppc | direct | pre-reduced | gather | segmented | plain stores | direct, random |
+      | --- | --- | --- | --- | --- | --- | --- |
+      | 1 | 0.07 | 0.05 | 0.04 | 0.065 | 0.06 | 0.36 |
+      | 4 | 0.095 | 0.08 | 0.04 | 0.057 | 0.03 | 0.36 |
+      | 16 | 0.26 | 0.23 | 0.11 | 0.058 | 0.03 | 0.36 |
+      | 64 | 0.62 | 0.51 | 0.27 | 0.058 | 0.03 | 0.37 |
 
-      In cell order the direct scatter is contention-bound: it grows with particles per cell while plain
-      stores to the same addresses do not — two thirds of it at 4 ppc. The workgroup pre-reduction
-      (`Scatter.preReduced`) takes only 10–20% off and grows the same way, because each particle of a cell
-      still takes an atomic on one slot, now in workgroup memory. The gather (`Scatter.gather`, one
-      invocation per node, no atomics) is fastest at every density: at 4 ppc about half the direct scatter
-      and near the plain-store floor — about one shallow-water step at 2²⁰ cells (0.045 ms). It is also
-      the same to the bit on every run. Its time still grows with ppc, but for another reason: one
-      invocation per node means fewer invocations as ppc rises (16K at 64 ppc), each looping over more
-      particles, so the device runs short of parallelism; a subgroup-wide segmented sum over particles is
-      the schedule that would keep it. Its costs: the particles must be sorted by cell (not timed here —
-      every sorted column assumes it) and needs its cell starts, which `Scatter.cellStarts` builds on the
-      host and `particle.Sort` on the device (entry below). Random order is 4–10× the sorted schedules until very high densities.
-      *An earlier table here was twice as slow at 1 and 4 ppc: the GPU was still at idle clocks when those
-      rows ran first. Measured on the Intel iGPU the shape was the same, ~10–20× slower.*
+      All but the last column in cell order. The direct scatter is contention-bound: it grows with
+      particles per cell while plain stores to the same addresses do not. The workgroup pre-reduction
+      (`Scatter.preReduced`) takes only 10–20% off, because each particle still takes an atomic, on a
+      shared slot. The gather (`Scatter.gather`, one invocation per node, no atomics) is fastest at 1–4 ppc
+      and bit-for-bit repeatable, but needs sorted particles and its cell starts, and slows as ppc rises
+      because fewer node invocations each loop over more particles. The segmented sum (`Scatter.segmented`)
+      is flat from 4 to 64 ppc — a run of one cell is summed across the subgroup's lanes and takes one
+      atomic per node — at 1.7× the direct scatter's speed at 4 ppc and 10× at 64. It needs no sort and no
+      starts, only rough cell order, and is right in any order: it tells runs apart by where they start, not
+      by key, so a cell split across one subgroup is not counted twice. From random order it is the direct
+      scatter's cost, nothing lost. Close to the dispatch floor (0.021 ms, upstream) at every density; the
+      rest is the twelve-value scan. *An earlier table was twice as slow at 1 and 4 ppc: idle clocks.*
 
 - [ ] **Sorting to gather does not pay for itself every step — yet.** `particle.Sort` is a five-pass
       counting sort (count and rank by integer atomic, a three-pass workgroup-memory scan, permute), exact
@@ -85,14 +83,12 @@ cannot be fixed from here at all.
       | 64 | nearly sorted | 0.13 | 0.26 | 0.39 | 0.62 |
 
       Per step on the input a solver actually has — nearly sorted, since advection moves a particle a
-      fraction of a cell — the direct scatter wins at 4 and 16 ppc; sort + gather only at 64. But about
-      0.1 ms of the sort is the dispatch floor, five passes at 0.021 ms each (upstream entry below), and
-      the scan passes run at that floor, so their work is nothing. What is left is the permute, 0.07 ms
-      nearly sorted and 0.16–0.2 random, where its writes scatter. With the floor gone, sort + gather
-      would be about level with the direct scatter at 4 ppc and ahead above it. Until then: scatter
-      directly every step, and sort every few steps to keep the order — the direct scatter from random
-      order is 4× slower, so letting it decay costs more than the sort. The sort is not stable, so the
-      gather's bit-for-bit repeatability does not survive it.
+      fraction of a cell — sort + gather loses to the direct scatter until 64 ppc, and to the segmented
+      scatter (0.057 ms, entry above) everywhere. About 0.1 ms of the sort is the dispatch floor, five
+      passes at 0.021 ms each (upstream), and the scan passes run at that floor; what is left is the
+      permute, 0.07 ms nearly sorted and 0.16–0.2 random. So: scatter segmented every step, and sort only
+      every few steps, to keep the order that makes its runs long. The sort is not stable, so the gather's
+      bit-for-bit repeatability does not survive it.
 
 ## Upstream
 
@@ -107,17 +103,10 @@ matters depends on the approach.
       sets per buffer tuple, or recording several dispatches into one command buffer, is what would remove
       it; the second is what a multi-pass step like the sort wants.
 
-- [ ] **Workgroup memory, barriers and device selection are in `supirvast` uncommitted** (fix belongs in
-      `supirvast`). This repo already builds against them through the local `.m2`, so a fresh clone cannot
-      build until `supirvast` commits and installs them. Measured with them (entry above): a workgroup
-      pre-reduction of the scatter is worth 10–20% on the RTX, not the ~3× the contention suggested.
-
-- [ ] **No subgroup operations** (fix belongs in `supirvast`, step 3 of its workgroup build order). The
-      gather needs nothing upstream and is fastest at typical densities (scatter entry above), so this is no
-      longer on the scatter's critical path. It is where the gather runs out: at high particles per cell, or
-      in 3D with eight nodes a particle, a segmented sum across a subgroup's lanes keeps one invocation per
-      particle and still takes one atomic per node. A GPU sort and scan, which the gather needs, would use it
-      too.
+- [ ] **Workgroup memory, barriers, subgroup operations and device selection are in `supirvast`
+      uncommitted** (fix belongs in `supirvast`). This repo builds against all four through the local
+      `.m2`, so a fresh clone cannot build until `supirvast` commits and installs them. Measured with them
+      (entries above): the workgroup pre-reduction is worth 10–20%, the subgroup segmented sum 1.7–10×.
 
 - [ ] **The engine cannot dispatch compute inside a frame** (fix belongs in `vexelray`).
       `TechniqueContext` names pure compute only as a future technique kind, so the demo runs the simulation

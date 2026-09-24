@@ -53,7 +53,7 @@ class ScatterTest {
         int n = 64;
         Particles sorted = Particles.jittered(n - 1, 4, new Random(7));
         for (Scatter.Mode mode : new Scatter.Mode[] {Scatter.Mode.GRID, Scatter.Mode.PRE_REDUCED,
-                Scatter.Mode.GATHER}) {
+                Scatter.Mode.GATHER, Scatter.Mode.SEGMENTED}) {
             for (Particles particles : new Particles[] {sorted, sorted.shuffled(new Random(8))}) {
                 Particles given = mode == Scatter.Mode.GATHER ? particles.sortedByCell(n) : particles;
                 holdsWhatTheParticlesDid(backend + " " + mode + (particles == sorted ? " sorted" : " random"), n,
@@ -76,6 +76,34 @@ class ScatterTest {
         for (int f = 0; f < 3; f++) {
             assertArrayEquals(bits(first[f]), bits(second[f]), backend + ": field " + f + " differed between runs");
         }
+    }
+
+    /**
+     * The case a key-only segmented sum gets wrong: one cell's particles in two runs of the same subgroup, another
+     * cell between. Adding from the lane {@code 2^r} below because it holds the same cell would count the first
+     * run into the second; the runs must be told apart by where they start. Three cells in a repeating pattern of
+     * broken runs, 301 particles so the last subgroup has a tail.
+     */
+    @ParameterizedTest
+    @EnumSource(Backend.class)
+    void theSegmentedSumKeepsBrokenRunsApart(Backend backend) {
+        int n = 8;
+        int[][] cells = {{1, 1}, {2, 1}, {1, 2}};
+        int[] pattern = {0, 0, 1, 0, 2, 2, 2, 0, 1, 1, 0};
+        int count = 301;
+        Random random = new Random(51);
+        Particles particles = new Particles(new float[count], new float[count], new float[count], new float[count],
+                new float[count]);
+        for (int k = 0; k < count; k++) {
+            int[] cell = cells[pattern[k % pattern.length]];
+            particles.x[k] = cell[0] + random.nextFloat() * 0.999f;
+            particles.y[k] = cell[1] + random.nextFloat() * 0.999f;
+            particles.u[k] = (float) random.nextGaussian();
+            particles.v[k] = (float) random.nextGaussian();
+            particles.m[k] = 0.5f + random.nextFloat();
+        }
+        holdsWhatTheParticlesDid(backend + " broken runs", n, particles,
+                scatter(backend, n, particles, Scatter.Mode.SEGMENTED));
     }
 
     /** A gather over unsorted particles would drop every particle outside its cell's run, so it is refused. */
@@ -204,7 +232,7 @@ class ScatterTest {
             System.out.println("[scatter] 2^20 particles, 2D bilinear, workgroup " + Scatter.WORKGROUP
                     + ", on " + accelerator.capabilities().deviceName() + "; ms per scatter");
             System.out.println("[scatter]   ppc   grid      direct(sorted)  pre-reduced(sorted)  gather(sorted)"
-                    + "  direct(random)  plain(sorted)  plain(random)");
+                    + "  segmented(sorted)  direct(random)  segmented(random)  plain(sorted)  plain(random)");
             warmUp(accelerator);
             double privateMs = Double.NaN;
             boolean preReducedRan = false;
@@ -217,15 +245,17 @@ class ScatterTest {
                 double preSorted = time(accelerator, n, sorted, Scatter.Mode.PRE_REDUCED);
                 preReducedRan |= !Double.isNaN(preSorted);
                 double gather = time(accelerator, n, sorted, Scatter.Mode.GATHER);
+                double segmentedSorted = time(accelerator, n, sorted, Scatter.Mode.SEGMENTED);
                 double gridRandom = time(accelerator, n, random, Scatter.Mode.GRID);
+                double segmentedRandom = time(accelerator, n, random, Scatter.Mode.SEGMENTED);
                 double plainSorted = time(accelerator, n, sorted, Scatter.Mode.PLAIN);
                 double plainRandom = time(accelerator, n, random, Scatter.Mode.PLAIN);
                 if (ppc == 4) {
                     privateMs = time(accelerator, n, sorted, Scatter.Mode.PRIVATE);
                 }
-                System.out.printf("[scatter]   %3d   %4d^2   %8s        %8s             %8s        %8s        %8s"
-                        + "       %8s%n", ppc, n, ms(gridSorted), ms(preSorted), ms(gather), ms(gridRandom), ms(plainSorted),
-                        ms(plainRandom));
+                System.out.printf("[scatter]   %3d   %4d^2   %8s        %8s             %8s        %8s           %8s"
+                        + "        %8s           %8s       %8s%n", ppc, n, ms(gridSorted), ms(preSorted), ms(gather),
+                        ms(segmentedSorted), ms(gridRandom), ms(segmentedRandom), ms(plainSorted), ms(plainRandom));
             }
             System.out.printf("[scatter]   private slots (no collisions, 4 * 2^20 per field): %s ms%n", ms(privateMs));
             if (!preReducedRan) {
@@ -310,7 +340,7 @@ class ScatterTest {
         Job job = Job.of(n, particles, mode);
         if (backend == Backend.CPU) {
             int[][] words = job.words();
-            new CoreToTruffle().lowerDispatch(job.kernel(), job.bindings(), Scatter.WORKGROUP)
+            new CoreToTruffle().lowerDispatch(job.kernel(), job.bindings(), Scatter.WORKGROUP, Scatter.SUBGROUP)
                     .dispatch(words, job.invocations());
             return new float[][] {floats(words[0]), floats(words[1]), floats(words[2])};
         }
@@ -364,7 +394,7 @@ class ScatterTest {
         /** Registers at {@link Scatter#WORKGROUP}, which the pre-reduction requires and the rest run at to compare. */
         KernelHandle register(Accelerator accelerator) {
             return accelerator.register(new KernelSpec(kernel, columns(bindings, initial))
-                    .withWorkgroupSize(Scatter.WORKGROUP)).orElseThrow();
+                    .withWorkgroupSize(Scatter.WORKGROUP).withSubgroupSize(Scatter.SUBGROUP)).orElseThrow();
         }
 
         List<ResidentBuffer> upload(Accelerator accelerator) {
