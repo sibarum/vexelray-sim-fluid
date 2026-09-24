@@ -5,6 +5,7 @@ import dev.supirvast.vast.CpuKernel;
 import dev.supirvast.vastir.core.Buffer;
 import dev.supirvast.vastir.core.Function;
 import dev.supirvast.vastir.tools.Accelerator;
+import dev.supirvast.vastir.tools.DispatchSequence;
 import dev.supirvast.vastir.tools.KernelHandle;
 import dev.supirvast.vastir.tools.KernelSpec;
 import dev.supirvast.vastir.tools.ResidentBuffer;
@@ -88,6 +89,27 @@ class SortTest {
         }
     }
 
+    /**
+     * The sort and the gather recorded as one submission give what the same dispatches made one by one give —
+     * and really are one submission on this device, not the step-by-step fallback, or the timing below would
+     * measure the wrong thing.
+     */
+    @Test
+    void theSortAndGatherRunAsOneSubmission() {
+        int n = 64;
+        Particles particles = Particles.jittered(n - 1, 4, new Random(61)).shuffled(new Random(62));
+        try (Accelerator accelerator = new Accelerator()) {
+            assumeGpu(accelerator);
+            try (GpuSorter sorter = new GpuSorter(accelerator, n, particles.count())) {
+                assertTrue(sorter.recorded(), "the sequences fell back to dispatch by dispatch");
+                sorter.load(particles);
+                sorter.sortAndGatherSequenced();
+                sortedLike("sequenced", n, particles, sorter);
+                holdsWhatTheParticlesDid("sequenced sort + gather", n, particles, sorter.grid());
+            }
+        }
+    }
+
     private static void sortedLike(String backend, int n, Particles given, Sorter sorter) {
         Particles expected = given.sortedByCell(n);
         assertArrayEquals(Scatter.cellStarts(expected.x(), expected.y(), n, n), sorter.starts(),
@@ -138,9 +160,11 @@ class SortTest {
             ScatterTest.warmUp(accelerator);
             System.out.println("[sort] 2^20 particles on " + accelerator.capabilities().deviceName()
                     + "; ms per step");
-            System.out.printf("[sort]   dispatch floor: an empty kernel over 256 invocations, %.3f ms%n",
-                    dispatchFloor(accelerator));
-            System.out.println("[sort]   ppc   input    sort     gather   sort+gather   direct scatter");
+            double[] floor = dispatchFloor(accelerator);
+            System.out.printf("[sort]   dispatch floor: an empty kernel over 256 invocations, %.4f ms one at a time,"
+                    + " %.4f ms each in a sequence of 5%n", floor[0], floor[1]);
+            System.out.println("[sort]   ppc   input    sort     gather   sort+gather   direct scatter"
+                    + "   sort(seq)   sort+gather(seq)");
             for (int ppc : new int[] {1, 4, 16, 64}) {
                 int cells = (int) Math.round(Math.sqrt(count / (double) ppc));
                 Particles sorted = Particles.jittered(cells, ppc, new Random(ppc));
@@ -150,11 +174,13 @@ class SortTest {
                         double sort = sorter.time(sorter::sort);
                         double gather = sorter.time(sorter::gather);
                         double direct = sorter.time(sorter::scatterUnsorted);
+                        double sortSequenced = sorter.time(sorter::sortSequenced);
+                        double bothSequenced = sorter.time(sorter::sortAndGatherSequenced);
                         double[] passes = sorter.passes();
-                        System.out.printf("[sort]   %3d   %-7s  %6.3f   %6.3f   %6.3f        %6.3f"
-                                + "          passes: count %.3f  scan %.3f + %.3f + %.3f  permute %.3f%n", ppc,
-                                input == sorted ? "sorted" : "random", sort, gather, sort + gather, direct,
-                                passes[0], passes[1], passes[2], passes[3], passes[4]);
+                        System.out.printf("[sort]   %3d   %-7s  %6.3f   %6.3f   %6.3f        %6.3f           %6.3f"
+                                + "      %6.3f           passes: count %.3f  scan %.3f + %.3f + %.3f  permute %.3f%n",
+                                ppc, input == sorted ? "sorted" : "random", sort, gather, sort + gather, direct,
+                                sortSequenced, bothSequenced, passes[0], passes[1], passes[2], passes[3], passes[4]);
                     }
                 }
             }
@@ -163,9 +189,10 @@ class SortTest {
 
     /**
      * What a dispatch costs when the kernel does nothing: one word written by invocation zero, over a single
-     * workgroup. Every pass pays at least this, so a five-pass sort pays it five times whatever its size.
+     * workgroup. Every pass pays at least this, so a five-pass sort pays it five times whatever its size — one
+     * at a time, and then per dispatch in a {@link DispatchSequence} of five, which pays the fixed cost once.
      */
-    private static double dispatchFloor(Accelerator accelerator) {
+    private static double[] dispatchFloor(Accelerator accelerator) {
         Buffer out = new Buffer("out", 0, dev.vexelray.sim.fluid.ir.Body.I32);
         dev.vexelray.sim.fluid.ir.Body b = new dev.vexelray.sim.fluid.ir.Body();
         dev.supirvast.vastir.core.LocalVar k = b.let("k", new dev.supirvast.vastir.core.Expr.InvocationId());
@@ -188,7 +215,24 @@ class SortTest {
                 handle.dispatch(List.of(buffer), Sort.BLOCK);
             }
             buffer.read();
-            return (System.nanoTime() - start) / 1e6 / timed;
+            double single = (System.nanoTime() - start) / 1e6 / timed;
+
+            DispatchSequence.Builder builder = accelerator.sequence();
+            for (int s = 0; s < 5; s++) {
+                builder.dispatch(handle, List.of(buffer), Sort.BLOCK);
+            }
+            try (DispatchSequence five = builder.build()) {
+                for (int s = 0; s < 20; s++) {
+                    five.run();
+                }
+                buffer.read();
+                start = System.nanoTime();
+                for (int s = 0; s < timed; s++) {
+                    five.run();
+                }
+                buffer.read();
+                return new double[] {single, (System.nanoTime() - start) / 1e6 / timed / 5};
+            }
         } finally {
             buffer.close();
             accelerator.release(handle);
@@ -386,6 +430,38 @@ class SortTest {
             }
             register(gather);
             register(scatter);
+            List<Pass> sortThenGather = new ArrayList<>(sort);
+            sortThenGather.add(gather);
+            sortSequence = sequence(sort);
+            sortGatherSequence = sequence(sortThenGather);
+        }
+
+        private final DispatchSequence sortSequence;
+        private final DispatchSequence sortGatherSequence;
+
+        /** The passes recorded once and run as one submission each time: the same dispatches, one fixed cost. */
+        private DispatchSequence sequence(List<Pass> passes) {
+            DispatchSequence.Builder builder = accelerator.sequence();
+            for (Pass pass : passes) {
+                builder.dispatch(handles.get(pass), pass.buffers().stream().map(buffers::get).toList(),
+                        pass.invocations());
+            }
+            return builder.build();
+        }
+
+        /** The sort, as one submission. */
+        void sortSequenced() {
+            sortSequence.run();
+        }
+
+        /** The sort and then the gather, as one submission. */
+        void sortAndGatherSequenced() {
+            sortGatherSequence.run();
+        }
+
+        /** Whether the sequences really are one GPU submission, rather than falling back to dispatch by dispatch. */
+        boolean recorded() {
+            return sortSequence.recorded() && sortGatherSequence.recorded();
         }
 
         private void register(Pass pass) {
@@ -460,6 +536,8 @@ class SortTest {
 
         @Override
         public void close() {
+            sortSequence.close();
+            sortGatherSequence.close();
             handles.values().forEach(accelerator::release);
             buffers.values().forEach(ResidentBuffer::close);
         }

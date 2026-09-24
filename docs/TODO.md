@@ -70,42 +70,44 @@ cannot be fixed from here at all.
       scatter's cost, nothing lost. Close to the dispatch floor (0.021 ms, upstream) at every density; the
       rest is the twelve-value scan. *An earlier table was twice as slow at 1 and 4 ppc: idle clocks.*
 
-- [ ] **Sorting to gather does not pay for itself every step — yet.** `particle.Sort` is a five-pass
-      counting sort (count and rank by integer atomic, a three-pass workgroup-memory scan, permute), exact
-      against the host's sort on both backends and needing no optional capability. `SortTest.gpuSortCost`,
-      2²⁰ particles, RTX, ms per step, typical of three runs:
+- [ ] **Sorting to gather does not pay for itself every step.** `particle.Sort` is a five-pass counting
+      sort (count and rank by integer atomic, a three-pass workgroup-memory scan, permute), exact against
+      the host's sort on both backends and needing no optional capability. `SortTest.gpuSortCost`, 2²⁰
+      particles, RTX, ms per step, typical of three runs — dispatched one by one, and recorded once as a
+      `DispatchSequence` run as one submission:
 
-      | ppc | input | sort | gather | sort + gather | direct scatter |
-      | --- | --- | --- | --- | --- | --- |
-      | 4 | nearly sorted | 0.16 | 0.04 | 0.20 | 0.095 |
-      | 4 | random | 0.34 | 0.04 | 0.38 | 0.36 |
-      | 16 | nearly sorted | 0.18 | 0.11 | 0.30 | 0.25 |
-      | 64 | nearly sorted | 0.13 | 0.26 | 0.39 | 0.62 |
+      | ppc | input | sort | sort + gather | sort, seq | sort + gather, seq | direct | segmented |
+      | --- | --- | --- | --- | --- | --- | --- | --- |
+      | 4 | nearly sorted | 0.17 | 0.21 | 0.12 | 0.14 | 0.095 | 0.057 |
+      | 4 | random | 0.33 | 0.37 | 0.29 | 0.35 | 0.36 | 0.36 |
+      | 16 | nearly sorted | 0.20 | 0.31 | 0.16 | 0.25 | 0.26 | 0.058 |
+      | 64 | nearly sorted | 0.15 | 0.41 | 0.11 | 0.36 | 0.62 | 0.058 |
 
       Per step on the input a solver actually has — nearly sorted, since advection moves a particle a
-      fraction of a cell — sort + gather loses to the direct scatter until 64 ppc, and to the segmented
-      scatter (0.057 ms, entry above) everywhere. About 0.1 ms of the sort is the dispatch floor, five
-      passes at 0.021 ms each (upstream), and the scan passes run at that floor; what is left is the
-      permute, 0.07 ms nearly sorted and 0.16–0.2 random. So: scatter segmented every step, and sort only
-      every few steps, to keep the order that makes its runs long. The sort is not stable, so the gather's
-      bit-for-bit repeatability does not survive it.
+      fraction of a cell — the segmented scatter wins everywhere, even against the sequenced sort + gather.
+      The sequence saves ~0.045 ms of the sort, not the ~0.1 an earlier estimate here claimed: that one
+      timed each pass alone, which is host-bound, whereas the five passes of a real sort already overlapped
+      their host cost with the device's work. What is left is device time — the permute (0.07 ms nearly
+      sorted, 0.16–0.2 random) and the idle between passes that depend on each other. So: scatter segmented
+      every step, and sort only every few steps, to keep the order that makes its runs long. The sort is not
+      stable, so the gather's bit-for-bit repeatability does not survive it.
 
 ## Upstream
 
 Limits of the stack that `-core`'s IR runs on, found while setting this project up. Whether each one
 matters depends on the approach.
 
-- [ ] **Every dispatch costs 0.021 ms, whatever it does** (fix belongs in `supirvast`). Measured by
-      `SortTest.gpuSortCost` with an empty kernel on the RTX. A pass that does little — each of the sort's
-      three scans over 262K counts — costs exactly that, so a five-pass sort pays ~0.1 ms before its work
-      begins, and the shallow-water step (0.045 ms) is half floor. `supirvast`'s own TODO names the likely
-      cause: a descriptor pool and set allocated per dispatch, and one submission each. Caching descriptor
-      sets per buffer tuple, or recording several dispatches into one command buffer, is what would remove
-      it; the second is what a multi-pass step like the sort wants.
+- [ ] **Every separate dispatch costs ~0.021 ms; a `DispatchSequence` pays it once** (in `supirvast`,
+      uncommitted). Measured by `SortTest.gpuSortCost` with an empty kernel on the RTX: 0.022 ms one at a
+      time, 0.003 ms each in a sequence of five. The sort uses one now (entry above) and gains ~0.045 ms.
+      Not yet used: the shallow-water step and the scatters dispatch one pass per step, so their gain is in
+      recording several steps per submission — the shallow-water rotation of two states, three speed
+      buffers and two budgets repeats every six steps, so a sequence of six steps is a fixed set of buffers
+      — and, for FLIP, recording the whole step (scatter, solve, grid-to-particle) as one.
 
-- [ ] **Workgroup memory, barriers, subgroup operations and device selection are in `supirvast`
-      uncommitted** (fix belongs in `supirvast`). This repo builds against all four through the local
-      `.m2`, so a fresh clone cannot build until `supirvast` commits and installs them. Measured with them
+- [ ] **Workgroup memory, barriers, subgroup operations, device selection and dispatch sequences are
+      in `supirvast` uncommitted** (fix belongs in `supirvast`). This repo builds against all five through
+      the local `.m2`, so a fresh clone cannot build until `supirvast` commits and installs them. Measured with them
       (entries above): the workgroup pre-reduction is worth 10–20%, the subgroup segmented sum 1.7–10×.
 
 - [ ] **The engine cannot dispatch compute inside a frame** (fix belongs in `vexelray`).
