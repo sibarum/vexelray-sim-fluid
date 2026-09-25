@@ -29,11 +29,13 @@ final class Readout {
     }
 
     private final Node panel;
+    private final Node heading;
+    private String headingText;
     private final Map<Line, Node> nodes = new EnumMap<>(Line.class);
     private final Map<Line, String> shown = new EnumMap<>(Line.class);
 
     Readout(Gui gui) {
-        Node heading = gui.text("shallow water · first-order HLL")
+        heading = gui.text(" ")
                 .font(Look.UI).textSize(Look.HEADING).textColor(gui.theme().color(Role.INK));
         panel = gui.column()
                 .width(Length.em(30)).height(Length.FILL)
@@ -58,6 +60,14 @@ final class Readout {
 
     Node node() {
         return panel;
+    }
+
+    /** What is being simulated, above the lines; posted only if it changed. */
+    void heading(String text) {
+        if (!text.equals(headingText)) {
+            headingText = text;
+            heading.text(text);
+        }
     }
 
     /** Sets a line, posting a mutation only if it changed. Safe from any thread, as every node setter is. */

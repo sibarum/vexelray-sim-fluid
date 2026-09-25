@@ -46,20 +46,20 @@ cannot be fixed from here at all.
 
       *What exists and works:* the scatter in four schedules (`Scatter`; the segmented one's lane machinery is
       `Scatter.segmentedDeposit`, any number of fields per corner), the device sort (`Sort`, any number of
-      fields). *In the working tree, uncommitted, with `Flip`:* a step described as data (`FlipStep`), run by a
+      fields). *With `Flip`, committed as the experiment it is:* a step described as data (`FlipStep`), run by a
       test rig (`Rig`) or the demo's runner (`ParticleSimulation`, the scenario in `Session`), one submission
       per step; that plumbing works, and a lone particle falls exactly
       (`FlipTest.aLoneParticleFallsAsGravitySays`). Reuse it; replace what `Flip` computes.
 
-      *What was tried and failed — do not repeat it* (`Flip`, uncommitted):
+      *What was tried and failed — do not repeat it* (`Flip`, and the demo's particle scenario, which shows it):
       1. Pressure from node density, `B · max(m/ρ₀ − 1, 0)`. Four jittered particles a cell make that
          density noisy by ±20%; the stiffness turns it into pressure hundreds of times gravity, and a
          pressure that only pushes rectifies it outward. The water boiled and filled the box.
       2. Pressure from a per-particle `J` carried by `J ← J(1 + dt ∇·v)`, as MPM does, but with forces
          still from a central difference of node pressure on the collocated grid. Unstable at demo size
          (128², column 40 × 80 cells) at every Courant number down to 0.1 with FLIP 0.95; only FLIP 0.5 at
-         C = 0.1 stays sane, too slow and too viscous (`FlipSweepTest`, scratch, is the sweep). Diagnosis:
-         pressure and velocity on the same nodes with a central-difference gradient admit a checkerboard the
+         C = 0.1 stays sane, too slow and too viscous (`FlipSweepTest` is the sweep; run it with
+         `-Dflip.sweep=true`). Diagnosis: pressure and velocity on the same nodes with a central-difference gradient admit a checkerboard the
          force cannot see, FLIP does not damp it, and `J` drifts to its bounds (0.1 .. 2.4 seen).
       3. Found on the way, and fixed: the wall was on the outermost node ring, which particles kept one
          spacing inside never reach, so the grid never felt the floor. The wall is the ring they do reach
@@ -83,8 +83,8 @@ cannot be fixed from here at all.
         B-spline weights (3×3 nodes) are `mpm88`'s; bilinear is simpler and fits the existing corner
         machinery but is noisier — try bilinear first, switch if it shows.
       - Judge it with the stricter `FlipTest.aDamBreakStaysWaterInItsBox`, which the collocated scheme
-        fails: front under Ritter's `2√(gH)`; `J` within a few percent of rest for 98% of particles; 95% of
-        the water below its starting height. Then rerun `FlipSweepTest` at demo size, and look at the demo.
+        fails and so is `@Disabled` until the new step passes it: front under Ritter's `2√(gH)`; `J`
+        within a few percent of rest for 98% of particles; 95% of the water below its starting height. Then rerun `FlipSweepTest` at demo size, and look at the demo.
 
 - [ ] **The scatter: a segmented subgroup sum, or a gather.** `ScatterTest.gpuScatterCost`, 2²⁰
       particles, workgroup 256, subgroup 32, RTX 5070 Ti, ms per scatter, typical of three runs after a

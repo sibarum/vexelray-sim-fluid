@@ -1,7 +1,8 @@
 package dev.vexelray.sim.fluid.demo;
 
 /**
- * The starting states, each chosen to exercise one thing, on a 100 m square patch walled on every side.
+ * The starting states, each chosen to exercise one thing: shallow water on a 100 m square patch walled on every
+ * side, and one dam break as particles in a walled vertical slice.
  */
 enum Scenario {
 
@@ -10,6 +11,18 @@ enum Scenario {
         @Override
         double depth(double x, double y) {
             return x < SIZE / 2 ? 1.0 : 0.0;
+        }
+    },
+
+    /**
+     * The same dam break stood on its side: a column of water against the left wall of a walled vertical slice,
+     * gravity down, as particles — FLIP, weakly compressible. The picture is the grid the particles scatter onto:
+     * density where the depth views show depth, and velocity as momentum over mass.
+     */
+    DAM_BREAK_PARTICLES("dam break, particles (FLIP)", 1.3, true) {
+        @Override
+        double depth(double x, double y) {
+            return 0;
         }
     },
 
@@ -51,10 +64,21 @@ enum Scenario {
 
     private final String description;
     private final double deepest;
+    private final boolean particles;
 
     Scenario(String description, double deepest) {
+        this(description, deepest, false);
+    }
+
+    Scenario(String description, double deepest, boolean particles) {
         this.description = description;
         this.deepest = deepest;
+        this.particles = particles;
+    }
+
+    /** Whether this is a particle scenario, run by FLIP, rather than a shallow-water one. */
+    boolean particles() {
+        return particles;
     }
 
     abstract double depth(double x, double y);
