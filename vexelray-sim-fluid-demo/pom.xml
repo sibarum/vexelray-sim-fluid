@@ -93,6 +93,45 @@
     </build>
 
     <profiles>
+        <!--
+          GraalVM native image:  mvn -Pnative -pl vexelray-sim-fluid-demo -am package  ->  target/vexelray-sim-fluid-demo(.exe)
+          Profile-gated as vexelray-gui-demo's is: native-image takes minutes and needs a GraalVM JDK, and an
+          ordinary package must not pay for it. The reachability metadata (FFM downcalls and upcalls, reflection,
+          resources) is under src/main/resources/META-INF/native-image/, recorded with the tracing agent; see
+          the README for how to record it again.
+        -->
+        <profile>
+            <id>native</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <version>0.10.6</version>
+                        <extensions>true</extensions>
+                        <executions>
+                            <execution>
+                                <id>build-native</id>
+                                <goals><goal>compile-no-fork</goal></goals>
+                                <phase>package</phase>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <imageName>vexelray-sim-fluid-demo</imageName>
+                            <mainClass>${app.mainClass}</mainClass>
+                            <buildArgs>
+                                <buildArg>--no-fallback</buildArg>
+                                <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
+                                <buildArg>-H:+ForeignAPISupport</buildArg>
+                                <buildArg>--enable-native-access=ALL-UNNAMED</buildArg>
+                                <buildArg>-Dstdout.encoding=UTF-8</buildArg>
+                                <buildArg>-H:IncludeResources=META-INF/supirvast/shaders/.*</buildArg>
+                            </buildArgs>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
         <!-- Exactly one activates from the host OS: VexelRay's provider and tactroller's input backend. -->
         <profile>
             <id>platform-windows</id>

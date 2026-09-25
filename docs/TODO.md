@@ -25,7 +25,9 @@ cannot be fixed from here at all.
       shortcut path, or shortcuts drop a press that arrives before the previous one's release is handled.
       *Likely found, here:* shortcut commands run on a cached thread pool, and `Controls.nextScenario` was
       an unsynchronized read-modify-write, so two concurrent presses could advance once. Now synchronized;
-      delete this entry once the double `key N` is seen to advance twice.
+      delete this entry once the double `key N` is seen to advance twice. *Seen again since, 2026-09-25:*
+      `key SPACE`, `key PERIOD`, `key SPACE`, `key R` sent back to back left the demo paused, so a press was
+      still lost (or the step or reset re-paused it; not isolated). With an `await` between keys, never.
 
 - [ ] **The debug view's box is a fixed 720 dp and its target a fixed 1024 px.** Square and legible, but it
       neither fills a larger window nor re-mints the target to the box's real pixels, so cells are

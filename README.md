@@ -39,6 +39,33 @@ The debug view reserves two colours: **magenta** is a broken cell (NaN, infinity
 **orange to red** is a cell outside the step size the scheme is guaranteed stable for. Alarms latch, with the
 simulated time they were first seen, until a reset.
 
+### Native executable
+
+With a GraalVM JDK (25, as `JAVA_HOME`), the demo builds to a native binary. It is profile-gated, so ordinary
+builds stay fast:
+
+```bash
+mvn -Pnative -pl vexelray-sim-fluid-demo package
+```
+
+That gives `vexelray-sim-fluid-demo/target/vexelray-sim-fluid-demo(.exe)`, about 56 MB, built in under a
+minute. It takes the same arguments (`--automation=0` included). On Windows it needs the AWT DLLs that
+native-image copies beside it in `target/`, so move the whole set together.
+
+The reachability metadata (FFM downcalls and upcalls, the window procedure, the input backend, ImageIO for
+captures, the shaders) is in `vexelray-sim-fluid-demo/src/main/resources/META-INF/native-image/`. It was
+recorded by running the demo under the tracing agent while `ottermate` drove every scenario, view and key.
+After a change that reaches new native or reflective code, record it again the same way:
+
+```bash
+mvn -pl vexelray-sim-fluid-demo exec:exec -Dautomation=0 "-Dapp.jvmArgs=-agentlib:native-image-agent=config-output-dir=vexelray-sim-fluid-demo/src/main/resources/META-INF/native-image/dev.vexelray.sim/vexelray-sim-fluid-demo,config-write-period-secs=5"
+```
+
+The periodic write matters, because `ottermate` ends the process rather than letting it exit, and the agent
+otherwise writes only at exit. Only the GPU path has been recorded and tried. SupirVast's CPU fallback, which
+lowers kernels through Truffle, cannot be forced on a machine with a GPU, so a native binary on a machine without
+one is untested.
+
 ### Screenshots while developing
 
 With `-Dautomation=0` the demo opens an automation socket on a free port, and `ottermate` (in
