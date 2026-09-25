@@ -57,7 +57,7 @@ import static dev.vexelray.sim.fluid.ir.Body.v;
  *
  * <h2>Quadratic B-spline weights, a 3×3 stencil</h2>
  * A particle at {@code x} weighs on the three nodes from {@code base = ⌊x − ½⌋}, at {@code fx = x − base} in
- * {@code [½, 3/2)}: {@code ½(3/2 − fx)²}, {@code 3/4 − (fx − 1)²}, {@code ½(fx − ½)²}, and the same along y. For these
+ * {@code [½, 3/2]}: {@code ½(3/2 − fx)²}, {@code 3/4 − (fx − 1)²}, {@code ½(fx − ½)²}, and the same along y. For these
  * MLS-MPM's moment matrix is constant, {@code D = ¼·I} in node units, so {@code C = 4·Σ w·vᵢ ⊗ (xᵢ − xₚ)} and the weight
  * gradient is {@code ∇wᵢₚ ≈ 4·w·(xᵢ − xₚ)}. The scatter is {@link Scatter#segmentedDeposit(Body, int, int, List,
  * Scatter.Load)} three nodes wide, keyed by the stencil's lower-left node.
@@ -337,9 +337,10 @@ public final class Flip {
 
     /**
      * A particle's 3×3 stencil: its lower-left node {@code base}, the particle's offset from it {@code (fx, fy)} in
-     * {@code [½, 3/2)}, and the quadratic B-spline weights along each axis. Node {@code k} is {@code k % 3} along and
-     * {@code k / 3} up from {@code base}, as {@link Scatter#segmentedDeposit(Body, int, int, List, Scatter.Load)}
-     * numbers it.
+     * {@code [½, 3/2]}, and the quadratic B-spline weights along each axis. Closed at 3/2: at the far clamp,
+     * {@code x = n − 3/2}, the base is held at {@code n − 3} and the offset is exactly 3/2. Node {@code k} is
+     * {@code k % 3} along and {@code k / 3} up from {@code base}, as
+     * {@link Scatter#segmentedDeposit(Body, int, int, List, Scatter.Load)} numbers it.
      *
      * <p>The position is clamped to {@code [½, n − 3/2]} and the base to {@code n − 3} at most, so the stencil stays
      * on the grid and no weight goes negative wherever a particle is. A particle inside the walls is never clamped.
