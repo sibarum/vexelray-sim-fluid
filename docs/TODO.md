@@ -112,7 +112,21 @@ cannot be fixed from here at all.
       bits. (2) **The offset is quantised to 2⁻¹⁰ of a cell** (`FixedScatter.OFFSET_BITS`). Float weights
       floored differently on the device: its compiler reordered `(ax·ay)·M` into `ax·(ay·M)`. Integer weights
       leave nothing to reorder, but a finer offset needs wider registers. (3) **Use it in the particle step**
-      once MLS-MPM settles, which needs a 3×3 quadratic stencil version of the quantised shares.
+      once MLS-MPM settles. The 3×3 scheme is proved (cott-lean `Scatter/Stencil.lean`), against `Flip.Stencil`'s
+      weights, numbering and closed clamp. Mass: floor every node's share but the centre's (`k = 4`), and give
+      the centre the rest. It is exact and never negative (`sum_quadraticShares`, `quadraticShares_nonneg`). The
+      centre weighs at least ¼ wherever the particle is, so it takes the remainder's error of under 8 quanta
+      on a large share (`quadraticShares_center`). A corner could weigh nothing. Momentum is not mass share ×
+      velocity here: each node gets `(w·m)·(v + C·d) + w·s·d`. The `C·d` and impulse terms cancel over the
+      stencil because the weights' first moment is zero, so the exact total is `M·V` (`sum_affine_amount`),
+      but floored node by node they do not cancel. So compute each node's exact amount, floor it for the eight
+      other nodes, zero it where the mass share is zero, and give the centre `M·V` minus their sum. That target
+      is an integer only if `V` is, so quantise the particle's velocity first and use that. Momentum is
+      then conserved exactly (`sum_quadraticMomentum`). The centre always has mass, so no node holds momentum
+      without mass (`quadraticMomentum_eq_zero`). *To size:* with the offset at `F/2^b` the quadratic weights
+      are exact integers only over `2^(2b+1)` per axis, because of the halves, so `2^(4b+2)` in 2D. At
+      `b = 10` that is `2^42`, so the share products need 64-bit intermediates (non-atomic `shaderInt64`,
+      optional but common) or far fewer offset bits.
 
 - [ ] **Sorting to gather does not pay for itself every step.** `particle.Sort` is a five-pass counting
       sort (count and rank by integer atomic, a three-pass workgroup-memory scan, permute), exact against
