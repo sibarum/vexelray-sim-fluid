@@ -30,218 +30,6 @@
       ]
     },
     {
-      "type": "java.awt.Insets",
-      "jniAccessible": true,
-      "fields": [
-        {
-          "name": "bottom"
-        },
-        {
-          "name": "left"
-        },
-        {
-          "name": "right"
-        },
-        {
-          "name": "top"
-        }
-      ],
-      "methods": [
-        {
-          "name": "<init>",
-          "parameterTypes": [
-            "int",
-            "int",
-            "int",
-            "int"
-          ]
-        }
-      ]
-    },
-    {
-      "type": "java.awt.Toolkit",
-      "jniAccessible": true,
-      "methods": [
-        {
-          "name": "getDefaultToolkit",
-          "parameterTypes": []
-        },
-        {
-          "name": "getFontMetrics",
-          "parameterTypes": [
-            "java.awt.Font"
-          ]
-        }
-      ]
-    },
-    {
-      "type": "java.awt.image.BufferedImage",
-      "jniAccessible": true,
-      "fields": [
-        {
-          "name": "colorModel"
-        },
-        {
-          "name": "imageType"
-        },
-        {
-          "name": "raster"
-        }
-      ],
-      "methods": [
-        {
-          "name": "getRGB",
-          "parameterTypes": [
-            "int",
-            "int",
-            "int",
-            "int",
-            "int[]",
-            "int",
-            "int"
-          ]
-        },
-        {
-          "name": "setRGB",
-          "parameterTypes": [
-            "int",
-            "int",
-            "int",
-            "int",
-            "int[]",
-            "int",
-            "int"
-          ]
-        }
-      ]
-    },
-    {
-      "type": "java.awt.image.ColorModel",
-      "jniAccessible": true,
-      "fields": [
-        {
-          "name": "colorSpace"
-        },
-        {
-          "name": "colorSpaceType"
-        },
-        {
-          "name": "isAlphaPremultiplied"
-        },
-        {
-          "name": "is_sRGB"
-        },
-        {
-          "name": "nBits"
-        },
-        {
-          "name": "numComponents"
-        },
-        {
-          "name": "supportsAlpha"
-        },
-        {
-          "name": "transparency"
-        }
-      ],
-      "methods": [
-        {
-          "name": "getRGBdefault",
-          "parameterTypes": []
-        }
-      ]
-    },
-    {
-      "type": "java.awt.image.Raster",
-      "jniAccessible": true,
-      "fields": [
-        {
-          "name": "dataBuffer"
-        },
-        {
-          "name": "height"
-        },
-        {
-          "name": "minX"
-        },
-        {
-          "name": "minY"
-        },
-        {
-          "name": "numBands"
-        },
-        {
-          "name": "numDataElements"
-        },
-        {
-          "name": "sampleModel"
-        },
-        {
-          "name": "sampleModelTranslateX"
-        },
-        {
-          "name": "sampleModelTranslateY"
-        },
-        {
-          "name": "width"
-        }
-      ]
-    },
-    {
-      "type": "java.awt.image.SampleModel",
-      "jniAccessible": true,
-      "fields": [
-        {
-          "name": "height"
-        },
-        {
-          "name": "width"
-        }
-      ],
-      "methods": [
-        {
-          "name": "getPixels",
-          "parameterTypes": [
-            "int",
-            "int",
-            "int",
-            "int",
-            "int[]",
-            "java.awt.image.DataBuffer"
-          ]
-        },
-        {
-          "name": "setPixels",
-          "parameterTypes": [
-            "int",
-            "int",
-            "int",
-            "int",
-            "int[]",
-            "java.awt.image.DataBuffer"
-          ]
-        }
-      ]
-    },
-    {
-      "type": "java.awt.image.SinglePixelPackedSampleModel",
-      "jniAccessible": true,
-      "fields": [
-        {
-          "name": "bitMasks"
-        },
-        {
-          "name": "bitOffsets"
-        },
-        {
-          "name": "bitSizes"
-        },
-        {
-          "name": "maxBitSize"
-        }
-      ]
-    },
-    {
       "type": "java.lang.Boolean",
       "jniAccessible": true,
       "methods": [
@@ -349,12 +137,6 @@
       "type": "java.nio.MappedByteBuffer"
     },
     {
-      "type": "javax.imageio.spi.ImageReaderSpi"
-    },
-    {
-      "type": "javax.imageio.spi.ImageWriterSpi"
-    },
-    {
       "type": "org.lwjgl.system.jemalloc.JEmallocAllocator"
     },
     {
@@ -368,62 +150,6 @@
           "parameterTypes": [
             "java.lang.foreign.MemorySegment",
             "int",
-            "long",
-            "long"
-          ]
-        }
-      ]
-    },
-    {
-      "type": "sun.awt.image.ByteComponentRaster",
-      "jniAccessible": true,
-      "fields": [
-        {
-          "name": "data"
-        },
-        {
-          "name": "dataOffsets"
-        },
-        {
-          "name": "pixelStride"
-        },
-        {
-          "name": "scanlineStride"
-        },
-        {
-          "name": "type"
-        }
-      ]
-    },
-    {
-      "type": "sun.awt.image.IntegerComponentRaster",
-      "jniAccessible": true,
-      "fields": [
-        {
-          "name": "data"
-        },
-        {
-          "name": "dataOffsets"
-        },
-        {
-          "name": "pixelStride"
-        },
-        {
-          "name": "scanlineStride"
-        },
-        {
-          "name": "type"
-        }
-      ]
-    },
-    {
-      "type": "sun.java2d.Disposer",
-      "jniAccessible": true,
-      "methods": [
-        {
-          "name": "addRecord",
-          "parameterTypes": [
-            "java.lang.Object",
             "long",
             "long"
           ]
@@ -503,21 +229,6 @@
       "glob": "META-INF/services/dev.vexelray.os.NativePlatform"
     },
     {
-      "glob": "META-INF/services/javax.imageio.spi.ImageInputStreamSpi"
-    },
-    {
-      "glob": "META-INF/services/javax.imageio.spi.ImageOutputStreamSpi"
-    },
-    {
-      "glob": "META-INF/services/javax.imageio.spi.ImageReaderSpi"
-    },
-    {
-      "glob": "META-INF/services/javax.imageio.spi.ImageTranscoderSpi"
-    },
-    {
-      "glob": "META-INF/services/javax.imageio.spi.ImageWriterSpi"
-    },
-    {
       "glob": "META-INF/services/sibarum.tactroller.api.InputBackend"
     },
     {
@@ -548,24 +259,13 @@
       "glob": "dev/vexelray/text/atlas/primary.json"
     },
     {
-      "glob": "dev/vexelray/text/atlas/primary.png"
+      "glob": "dev/vexelray/text/atlas/primary.rgba"
     },
     {
       "glob": "vulkan-1.dll"
     },
     {
       "glob": "windows/x64/org/lwjgl/lwjgl.dll"
-    },
-    {
-      "module": "java.desktop",
-      "glob": "sun/awt/resources/awt_en.properties"
-    },
-    {
-      "module": "java.desktop",
-      "glob": "sun/awt/resources/awt_en_US.properties"
-    },
-    {
-      "bundle": "sun.awt.resources.awt"
     }
   ],
   "foreign": {

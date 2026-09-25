@@ -48,12 +48,14 @@ builds stay fast:
 mvn -Pnative -pl vexelray-sim-fluid-demo package
 ```
 
-That gives `vexelray-sim-fluid-demo/target/vexelray-sim-fluid-demo(.exe)`, about 56 MB, built in under a
-minute. It takes the same arguments (`--automation=0` included). On Windows it needs the AWT DLLs that
-native-image copies beside it in `target/`, so move the whole set together.
+That gives `vexelray-sim-fluid-demo/target/vexelray-sim-fluid-demo(.exe)`, about 49 MB, built in under a
+minute. It is the only file: it runs from a folder holding nothing else, and extracts nothing. It takes the same
+arguments (`--automation=0` included). That depends on nothing in the stack reaching AWT, which on Windows a
+native image can only ship as nine DLLs beside the executable. `vexelray-gui` keeps it so: the font atlas loads as
+RGBA pixels, captures are written by its own PNG writer, and a guard test fails on any reference to AWT or ImageIO.
+If the build's artifacts ever list a `.dll` again, something has started to reach AWT.
 
-The reachability metadata (FFM downcalls and upcalls, the window procedure, the input backend, ImageIO for
-captures, the shaders) is in `vexelray-sim-fluid-demo/src/main/resources/META-INF/native-image/`. It was
+The reachability metadata (FFM downcalls and upcalls, the window procedure, the input backend, the shaders) is in `vexelray-sim-fluid-demo/src/main/resources/META-INF/native-image/`. It was
 recorded by running the demo under the tracing agent while `ottermate` drove every scenario, view and key.
 After a change that reaches new native or reflective code, record it again the same way:
 
