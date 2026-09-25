@@ -334,14 +334,7 @@ public final class Scatter {
     static Function segmented(int nx, int ny) {
         requireGrid(nx, ny);
         Body b = new Body();
-        LocalVar lane = b.let("lane", new Expr.SubgroupInvocationId());
-        LocalVar p = b.let("p", new Expr.InvocationId());
-        LocalVar key = b.let("key", i(-1));
-        LocalVar[] amounts = new LocalVar[12];
-        for (int j = 0; j < amounts.length; j++) {
-            amounts[j] = b.let("amount", f(0));
-        }
-        b.when(lt(v(p), new Expr.InvocationCount()), t -> {
+        segmentedDeposit(b, nx, GRID, (t, p, key, amounts) -> {
             Particle particle = Particle.load(t, v(p), nx, ny);
             t.set(key, v(particle.corner()));
             for (int k = 0; k < 4; k++) {
@@ -351,6 +344,32 @@ public final class Scatter {
                 }
             }
         });
+        return new Function("scatterSegmented", new Type.FunctionType(Type.VOID, List.of()), b.finish());
+    }
+
+    /**
+     * Fills one particle's key — the node at its cell's lower-left corner — and its amounts, {@code grids.size()}
+     * per corner, corner by corner: the amount of field {@code f} for corner {@code k} at {@code k · fields + f}.
+     * Runs in a branch, for real particles only.
+     */
+    interface Load {
+        void into(Body b, LocalVar p, LocalVar key, LocalVar[] amounts);
+    }
+
+    /**
+     * The body of a segmented scatter onto {@code grids}, one field each, for whatever {@code load} deposits: the
+     * run starts, the shuffle scan within runs, and the run's last lane taking the atomics. See {@link #segmented}.
+     */
+    static void segmentedDeposit(Body b, int nx, List<Buffer> grids, Load load) {
+        int fields = grids.size();
+        LocalVar lane = b.let("lane", new Expr.SubgroupInvocationId());
+        LocalVar p = b.let("p", new Expr.InvocationId());
+        LocalVar key = b.let("key", i(-1));
+        LocalVar[] amounts = new LocalVar[4 * fields];
+        for (int j = 0; j < amounts.length; j++) {
+            amounts[j] = b.let("amount", f(0));
+        }
+        b.when(lt(v(p), new Expr.InvocationCount()), t -> load.into(t, p, key, amounts));
 
         // Where this lane's run begins: its own lane if the lane below holds another cell, else that of the
         // lane below — which a max-scan over the lanes that begin a run gives every lane at once.
@@ -382,12 +401,11 @@ public final class Scatter {
         b.when(not(lt(v(key), i(0))), t -> t.when(eq(v(last), i(1)), s -> {
             for (int k = 0; k < 4; k++) {
                 LocalVar node = s.let("node", add(v(key), i((k >> 1) * nx + (k & 1))));
-                for (int f = 0; f < 3; f++) {
-                    s.atomic(AtomicOp.ADD, GRID.get(f), v(node), v(amounts[3 * k + f]));
+                for (int f = 0; f < fields; f++) {
+                    s.atomic(AtomicOp.ADD, grids.get(f), v(node), v(amounts[fields * k + f]));
                 }
             }
         }));
-        return new Function("scatterSegmented", new Type.FunctionType(Type.VOID, List.of()), b.finish());
     }
 
     /**
@@ -467,7 +485,7 @@ public final class Scatter {
     }
 
     /** What a particle deposits: its cell, its fractional position in it, and its mass and momentum. */
-    private record Particle(Cell cell, LocalVar fx, LocalVar fy, LocalVar m, LocalVar mu, LocalVar mv,
+    record Particle(Cell cell, LocalVar fx, LocalVar fy, LocalVar m, LocalVar mu, LocalVar mv,
                             LocalVar corner) {
         static Particle load(Body b, Expr p, int nx, int ny) {
             Cell cell = Cell.of(b, "", p, nx, ny, PX, PY);
@@ -493,7 +511,7 @@ public final class Scatter {
     }
 
     /** One corner's share: the node, its weight, and so the mass and momentum it receives. */
-    private record Deposit(LocalVar node, LocalVar w, Particle particle) {
+    record Deposit(LocalVar node, LocalVar w, Particle particle) {
         /** Field {@code f}: 0 mass, 1 x-momentum, 2 y-momentum. */
         Expr amount(int f) {
             LocalVar of = switch (f) {

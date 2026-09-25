@@ -38,13 +38,53 @@ cannot be fixed from here at all.
       first change that is a *second scheme* — the point at which the discretisation level of the tower
       earns its place ([architecture.md](architecture.md#built-from-the-bottom-up-with-the-output-written-by-hand-first)).
 
-- [ ] **FLIP.** A fluid library without one is not taken seriously, and it suits the shared core:
-      particles carry the fluid and a patch grid does the solve. Particle-to-grid is a `⊕`-sum per node,
-      so any schedule is correct ([architecture.md](architecture.md#conserved-pairs)). Particle-to-grid
-      exists in four schedules (`particle.Scatter`, 2D bilinear), and so does the device sort by cell the
-      gather needs (`particle.Sort`); both are measured. Grid-to-particle, advection, the grid solve and
-      clearing the grid between steps do not exist. Open: incompressible projection or weakly
-      compressible (local, no global solve, smaller time step); 2D or 3D first.
+- [ ] **FLIP: the next step is MLS-MPM** (decided 2026-09-24). A fluid library without a particle method is
+      not taken seriously, and it suits the shared core: particles carry the fluid and a patch grid does the
+      forces. Decided so far: 2D first, a vertical slice with gravity; **weakly compressible**, so every pass
+      is local and a step is one `DispatchSequence`; shown as a scenario of the existing demo, the grid's
+      mass and momentum through the debug view (`ParticleSimulation` in `-gui`, "dam break, particles").
+
+      *What exists and works:* the scatter in four schedules (`Scatter`; the segmented one's lane machinery is
+      `Scatter.segmentedDeposit`, any number of fields per corner), the device sort (`Sort`, any number of
+      fields). *In the working tree, uncommitted, with `Flip`:* a step described as data (`FlipStep`), run by a
+      test rig (`Rig`) or the demo's runner (`ParticleSimulation`, the scenario in `Session`), one submission
+      per step; that plumbing works, and a lone particle falls exactly
+      (`FlipTest.aLoneParticleFallsAsGravitySays`). Reuse it; replace what `Flip` computes.
+
+      *What was tried and failed — do not repeat it* (`Flip`, uncommitted):
+      1. Pressure from node density, `B · max(m/ρ₀ − 1, 0)`. Four jittered particles a cell make that
+         density noisy by ±20%; the stiffness turns it into pressure hundreds of times gravity, and a
+         pressure that only pushes rectifies it outward. The water boiled and filled the box.
+      2. Pressure from a per-particle `J` carried by `J ← J(1 + dt ∇·v)`, as MPM does, but with forces
+         still from a central difference of node pressure on the collocated grid. Unstable at demo size
+         (128², column 40 × 80 cells) at every Courant number down to 0.1 with FLIP 0.95; only FLIP 0.5 at
+         C = 0.1 stays sane, too slow and too viscous (`FlipSweepTest`, scratch, is the sweep). Diagnosis:
+         pressure and velocity on the same nodes with a central-difference gradient admit a checkerboard the
+         force cannot see, FLIP does not damp it, and `J` drifts to its bounds (0.1 .. 2.4 seen).
+      3. Found on the way, and fixed: the wall was on the outermost node ring, which particles kept one
+         spacing inside never reach, so the grid never felt the floor. The wall is the ring they do reach
+         (`Flip.WALL`, `WALL_NODE`). Keep that fix.
+
+      *The plan, MLS-MPM* (Hu et al. 2018, "A moving least squares material point method"; Taichi's
+      `mpm88` is the reference, a weakly compressible fluid in ~88 lines):
+      - Particles carry `x, v, m, J` and the affine velocity `C` (2×2, APIC), which replaces the FLIP/PIC
+        blend: velocity comes back as PIC plus `C`, with no noise to damp and no dissipation to fight.
+      - Particle-to-grid scatters mass and momentum `m·(v + C·(xᵢ − xₚ))`, **plus the stress as a force**:
+        `−dt · V₀ · 4/Δx² · J · (J−1) · E · (xᵢ − xₚ)` for `mpm88`'s equation of state, or the equivalent for
+        `B·(1/J − 1)`. Pressure never sits on a node and is never differenced, which is what removes the
+        checkerboard; the force is the weight gradient's, consistent with how momentum was deposited.
+      - The grid update is only `v = mv/m` (the conserved pair's ratio, zero where empty), gravity, and the
+        walls — on the ring the particles reach.
+      - Grid-to-particle gathers `v` and `C = 4/Δx² · Σ w·vᵢ⊗(xᵢ − xₚ)`, updates `J ← J(1 + dt·tr C)`,
+        and moves `x += dt·v`.
+      - It fits what exists. The momentum amount per corner now depends on the corner, which
+        `segmentedDeposit` already allows (twelve fields → mass, two momentum, per corner), and `J` and `C`
+        make the particle six floats more, which `Sort` and `Flip.copy` take as a field count. Quadratic
+        B-spline weights (3×3 nodes) are `mpm88`'s; bilinear is simpler and fits the existing corner
+        machinery but is noisier — try bilinear first, switch if it shows.
+      - Judge it with the stricter `FlipTest.aDamBreakStaysWaterInItsBox`, which the collocated scheme
+        fails: front under Ritter's `2√(gH)`; `J` within a few percent of rest for 98% of particles; 95% of
+        the water below its starting height. Then rerun `FlipSweepTest` at demo size, and look at the demo.
 
 - [ ] **The scatter: a segmented subgroup sum, or a gather.** `ScatterTest.gpuScatterCost`, 2²⁰
       particles, workgroup 256, subgroup 32, RTX 5070 Ti, ms per scatter, typical of three runs after a
@@ -69,6 +109,17 @@ cannot be fixed from here at all.
       by key, so a cell split across one subgroup is not counted twice. From random order it is the direct
       scatter's cost, nothing lost. Close to the dispatch floor (0.021 ms, upstream) at every density; the
       rest is the twelve-value scan. *An earlier table was twice as slow at 1 and 4 ppc: idle clocks.*
+
+- [ ] **A fixed-point integer scatter.** Store the conserved pair — mass and momentum — as integers at a
+      fixed scale, and accumulate them with integer atomic adds. Integer addition is exactly associative and
+      commutative, so `⊕` really is on the GPU what it is on paper: any order of the deposits gives the same
+      grid to the bit, in every schedule, where f32 gives conservation but not the bits (`Scatter`, *Why
+      atomics*). It also drops the optional `AtomicFloat32AddEXT` and `shaderSharedFloat32AtomicAdd`, since
+      integer atomics are core (`Scatter`, *Portability*). Quantise so conservation is exact too: round three
+      corners' shares and give the fourth the particle's amount minus their sum. To decide: the scale against
+      the range — the heaviest node must not overflow, the lightest deposit must not round to zero — and
+      whether that needs i64 (atomics on it are optional, `shaderInt64Atomics`) or fits i32. Then measure it
+      against the f32 segmented scatter.
 
 - [ ] **Sorting to gather does not pay for itself every step.** `particle.Sort` is a five-pass counting
       sort (count and rank by integer atomic, a three-pass workgroup-memory scan, permute), exact against

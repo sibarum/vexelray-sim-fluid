@@ -156,24 +156,32 @@ public final class Sort {
     public static final Buffer PERMUTE_RANKS = new Buffer("ranks", 1, I32);
     public static final Buffer PERMUTE_STARTS = new Buffer("starts", 2, I32);
 
-    /** The particle fields moved by {@link #permute}: {@code x, y, u, v, m}, in and then out. */
+    /** The particle fields {@link #permute()} moves: {@code x, y, u, v, m}, in and then out. */
     public static final int FIELDS = 5;
 
-    private static final List<Buffer> PERMUTE_IN = fields("in", 3);
-    private static final List<Buffer> PERMUTE_OUT = fields("out", 3 + FIELDS);
+    public static final List<Buffer> PERMUTE_BUFFERS = permuteBuffers(FIELDS);
 
-    public static final List<Buffer> PERMUTE_BUFFERS = java.util.stream.Stream.of(
-            List.of(PERMUTE_KEYS, PERMUTE_RANKS, PERMUTE_STARTS), PERMUTE_IN, PERMUTE_OUT)
-            .flatMap(List::stream).toList();
+    /** The keys, ranks and starts, then {@code fields} f32 fields in, then the same fields out. */
+    public static List<Buffer> permuteBuffers(int fields) {
+        return java.util.stream.Stream.of(List.of(PERMUTE_KEYS, PERMUTE_RANKS, PERMUTE_STARTS),
+                fields("in", 3, fields), fields("out", 3 + fields, fields)).flatMap(List::stream).toList();
+    }
 
-    /** One invocation per particle: its fields copied to {@code starts[key] + rank}. */
+    /** {@link #permute(int)} of the five fields a particle of the scatters has. */
     public static Function permute() {
+        return permute(FIELDS);
+    }
+
+    /** One invocation per particle: its {@code fields} fields copied to {@code starts[key] + rank}. */
+    public static Function permute(int fields) {
+        List<Buffer> in = fields("in", 3, fields);
+        List<Buffer> out = fields("out", 3 + fields, fields);
         Body b = new Body();
         LocalVar p = b.let("p", new Expr.InvocationId());
         LocalVar destination = b.let("destination", add(load(PERMUTE_STARTS, load(PERMUTE_KEYS, v(p))),
                 load(PERMUTE_RANKS, v(p))));
-        for (int f = 0; f < FIELDS; f++) {
-            b.store(PERMUTE_OUT.get(f), v(destination), load(PERMUTE_IN.get(f), v(p)));
+        for (int f = 0; f < fields; f++) {
+            b.store(out.get(f), v(destination), load(in.get(f), v(p)));
         }
         return function("sortPermute", b);
     }
@@ -209,10 +217,9 @@ public final class Sort {
         return b.let("inclusive", sharedLoad(tile, v(lid)));
     }
 
-    private static List<Buffer> fields(String prefix, int firstBinding) {
-        String[] names = {"X", "Y", "U", "V", "M"};
-        return java.util.stream.IntStream.range(0, FIELDS)
-                .mapToObj(f -> new Buffer(prefix + names[f], firstBinding + f, F32)).toList();
+    private static List<Buffer> fields(String prefix, int firstBinding, int count) {
+        return java.util.stream.IntStream.range(0, count)
+                .mapToObj(f -> new Buffer(prefix + f, firstBinding + f, F32)).toList();
     }
 
     private static Function function(String name, Body b) {

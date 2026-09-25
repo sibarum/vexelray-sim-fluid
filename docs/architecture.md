@@ -87,8 +87,9 @@ cheap to multiply from the start, rather than optimised for one large volume.
 
 ## Conserved pairs
 
-*From the traction model, `cott-engine/docs/Traction-Model.md`: a value is a pair `(p, q)` read as
-`p/q`, with `⊕` adding pairs componentwise — the mediant — and `0/0` its identity.*
+*From traction, the number model proven in `cott-lean` and implemented by `cott-engine`: a value is a pair
+`(p, q)` read as `p/q`, with `⊕` adding pairs componentwise — the mediant — and `0/0` its identity. The
+theorems cited below are cott-lean declarations.*
 
 A solver stores conserved quantities and derives the rest from them. Velocity is momentum over mass, and
 merging two parcels adds momenta and adds masses:
@@ -126,6 +127,59 @@ Magnitude cannot be mass: `|a ⊕ b| ≤ |a| + |b|`, so parcels at different vel
 merged — two equal parcels at `v = ±1` merge to `√2·m`, not `2m`. That partial cancellation is wrong for
 matter and exactly right for waves. Matter pools and waves interfere, so the two readings are the two scales
 again.
+
+### Two levels: why the rules are forced, and where division lives
+
+The three rules above were written as good practice. Traction proves the first two are forced, and its
+second level — pairs of pairs — says exactly where a simulator divides and when a division can be undone.
+
+**The pair cannot be reduced.** The mediant survives no quotient (`oplus_respects_iff`): no invariant coarser
+than the pair itself — not the ratio, not the ray — is respected by `⊕`. Physically: velocity is a quotient
+of `(mv, m)`, so a solver that stores velocity cannot merge correctly; it must store momentum and mass.
+The same theorem forbids a habit float code reaches for, **renormalising a pair** to keep it in range: a
+conserved pair's scale is its mass, which is its weight in every later merge. A pair that is only ever read
+as a ratio may be rescaled; a pair that is `⊕`-accumulated may not.
+
+**Division is a change of level.** `⊕` and division cannot share an equality (`no_division_with_oplus`): any
+equivalence both respect, with inverses for all but `0/0`, identifies everything. So taking the ratio of a
+`⊕`-accumulated pair is not one more operation beside the merge; it is a step to the level above. That is
+"divide at the edge" as a theorem, and it is why the solver's passes split the way they do: the scatter
+merges, and a later pass divides.
+
+**The level above is a ratio of pairs.** `T2(A, B)` is a pair whose coordinates are pairs, and its
+projection `flatten` reads it as `A / B`, giving `T(A.p·B.q, A.q·B.p)` unreduced. A simulator is full of
+these — velocity is momentum over mass; MLS-MPM's node compression is `Σ w·m` over `Σ w·m·J`; the Froude
+number is `|u|` over `√(gh)`, with `u` itself a ratio. Three results say what the division does:
+
+- **When it can be undone** (`flatten_recoverable_iff`): the numerator comes back from the ratio exactly
+  when the denominator is off both axes. That is the condition every `m > EMPTY` or `h > dry` threshold
+  approximates by hand. Divided this way, an empty node gives `0/0` — the identity, carrying the fact that
+  it was empty — rather than a NaN or a guessed zero, one rule where each kernel now has its own threshold.
+- **When sums survive it** (`flatten_plus`): adding at the level above and then dividing equals dividing and
+  then adding, up to one residue, the product of the inner denominators. For a difference of two
+  velocities over the same node — FLIP's increment — that residue is a scale by the mass squared: harmless to
+  the ratio wherever the node has mass, and collapsing to `0/0` exactly where it has none.
+- **Why shared weights are reusable** (`flatten_eq_act`): dividing by a fixed denominator is a Möbius
+  transformation of the numerator, so it respects `⊕`. Merging before or after dividing by a shared mass
+  gives the same pair.
+
+**Where it stops.** Traction is exact over the integers, and the GPU works in `f32`, so only the semantics
+carry over, as above. Level-two arithmetic compounds magnitudes — every `+` multiplies denominators — so in
+`f32` it overflows or loses precision within a few steps; it belongs at the projections, where a value is
+consumed, not in inner loops. `cott-engine` does the same: it computes at level two and flattens once. And
+algebra does not reach discretisation: the collocated-grid instability recorded in `docs/TODO.md` is a
+property of where pressure and velocity sit, which no number representation changes.
+
+**Where it could be literal.** A fixed-point scatter — mass and momentum as integer pairs, accumulated with
+integer atomics — makes `⊕` genuinely exact and associative on the device. The scatter is then bitwise
+deterministic in any order, which replays and lockstep networking need; cott-lean's theorems apply as proved
+rather than by analogy; and level two describes the division at the edge exactly, including when it loses
+information. The costs are a fixed-point scale per field and 32-bit range, since there are no 64-bit atomics.
+That is an experiment to measure, not a decision.
+
+Traction has other readings the later work may want — `⊗` is angle addition without the tangent formula's
+collapse at a quarter turn, for the orientation of rigid bodies — but for the fluid, the two levels are the
+part that bears weight.
 
 ## The lowering tower
 
