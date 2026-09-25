@@ -168,14 +168,15 @@ public final class Flip {
         Scatter.segmentedDeposit(b, nx, List.of(Scatter.GRID_M, Scatter.GRID_MU, Scatter.GRID_MV, SCATTER_MJ),
                 (t, p, key, amounts) -> {
                     Scatter.Particle particle = Scatter.Particle.load(t, v(p), nx, ny);
-                    LocalVar mj = t.let("mj", mul(v(particle.m()), load(SCATTER_J, v(p))));
+                    LocalVar j = t.let("j", load(SCATTER_J, v(p)));
                     t.set(key, v(particle.corner()));
                     for (int k = 0; k < 4; k++) {
                         Scatter.Deposit d = particle.deposit(t, k, nx);
                         for (int f = 0; f < 3; f++) {
                             t.set(amounts[4 * k + f], d.amount(f));
                         }
-                        t.set(amounts[4 * k + 3], mul(v(d.w()), v(mj)));
+                        // The corner's mass times J, in the order its momentum takes (Scatter.Deposit).
+                        t.set(amounts[4 * k + 3], mul(v(d.wm()), v(j)));
                     }
                 });
         return function("flipScatter", b);

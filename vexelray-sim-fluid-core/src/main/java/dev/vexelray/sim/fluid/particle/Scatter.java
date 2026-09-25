@@ -484,18 +484,18 @@ public final class Scatter {
         }
     }
 
-    /** What a particle deposits: its cell, its fractional position in it, and its mass and momentum. */
-    record Particle(Cell cell, LocalVar fx, LocalVar fy, LocalVar m, LocalVar mu, LocalVar mv,
+    /** What a particle deposits: its cell, its fractional position in it, and its mass and velocity. */
+    record Particle(Cell cell, LocalVar fx, LocalVar fy, LocalVar m, LocalVar velU, LocalVar velV,
                             LocalVar corner) {
         static Particle load(Body b, Expr p, int nx, int ny) {
             Cell cell = Cell.of(b, "", p, nx, ny, PX, PY);
             LocalVar fx = b.let("fx", sub(v(cell.x()), toFloat(v(cell.col()))));
             LocalVar fy = b.let("fy", sub(v(cell.y()), toFloat(v(cell.row()))));
             LocalVar m = b.let("m", Body.load(PM, p));
-            LocalVar mu = b.let("mu", mul(v(m), Body.load(PU, p)));
-            LocalVar mv = b.let("mv", mul(v(m), Body.load(PV, p)));
+            LocalVar velU = b.let("u", Body.load(PU, p));
+            LocalVar velV = b.let("v", Body.load(PV, p));
             LocalVar corner = b.let("corner", add(mul(v(cell.row()), i(nx)), v(cell.col())));
-            return new Particle(cell, fx, fy, m, mu, mv, corner);
+            return new Particle(cell, fx, fy, m, velU, velV, corner);
         }
 
         /** Corner {@code k} of the cell: bit 0 east, bit 1 north. */
@@ -505,21 +505,29 @@ public final class Scatter {
             Expr wx = east == 1 ? v(fx) : sub(f(1), v(fx));
             Expr wy = north == 1 ? v(fy) : sub(f(1), v(fy));
             LocalVar w = b.let("w", mul(wx, wy));
+            LocalVar wm = b.let("wm", mul(v(w), v(m)));
             LocalVar node = b.let("node", add(v(corner), i(north * nx + east)));
-            return new Deposit(node, w, this);
+            return new Deposit(node, w, wm, this);
         }
     }
 
-    /** One corner's share: the node, its weight, and so the mass and momentum it receives. */
-    record Deposit(LocalVar node, LocalVar w, Particle particle) {
+    /**
+     * One corner's share: the node, its weight, its mass {@code wm}, and so the momentum it receives.
+     *
+     * <p>Momentum is the corner's mass times the velocity, {@code (w·m)·u}, and not {@code w·(m·u)}: if
+     * {@code w·m} underflows to zero, so does the momentum, and a node never holds momentum with no mass. In
+     * the other order the mass can flush while the momentum does not. cott-lean, {@code Scatter/Rounding.lean}:
+     * {@code massFirst_zero} and {@code momentumFirst_omega}. It is also the order {@link #gather} and the
+     * tests' reference take.
+     */
+    record Deposit(LocalVar node, LocalVar w, LocalVar wm, Particle particle) {
         /** Field {@code f}: 0 mass, 1 x-momentum, 2 y-momentum. */
         Expr amount(int f) {
-            LocalVar of = switch (f) {
-                case 0 -> particle.m();
-                case 1 -> particle.mu();
-                default -> particle.mv();
+            return switch (f) {
+                case 0 -> v(wm);
+                case 1 -> mul(v(wm), v(particle.velU()));
+                default -> mul(v(wm), v(particle.velV()));
             };
-            return mul(v(w), v(of));
         }
     }
 }
