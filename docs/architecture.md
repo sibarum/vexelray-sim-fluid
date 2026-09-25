@@ -111,8 +111,9 @@ velocities would be physically wrong. Three rules follow:
 - **Accumulation order does not matter.** `⊕` is commutative and associative in exact arithmetic, which is
   what licenses any schedule for particle-to-grid transfer — gather, graph colouring, or sort-and-reduce.
 
-On the GPU these are `f32` pairs, so exactness and associativity are gone. The semantics survive, and for a
-simulator they are the valuable part.
+On the GPU these are mostly `f32` pairs, so exactness and associativity are gone. The semantics survive, and
+for a simulator they are the valuable part. (The fixed-point scatter keeps the exactness too; see
+[where it is literal](#two-levels-why-the-rules-are-forced-and-where-division-lives).)
 
 ### Two readings of one algebra
 
@@ -167,15 +168,18 @@ number is `|u|` over `√(gh)`, with `u` itself a ratio. Three results say what 
 carry over, as above. Level-two arithmetic compounds magnitudes — every `+` multiplies denominators — so in
 `f32` it overflows or loses precision within a few steps; it belongs at the projections, where a value is
 consumed, not in inner loops. `cott-engine` does the same: it computes at level two and flattens once. And
-algebra does not reach discretisation: the collocated-grid instability recorded in `docs/TODO.md` is a
-property of where pressure and velocity sit, which no number representation changes.
+algebra does not reach discretisation. The first particle step, FLIP with pressure differenced on a
+collocated grid, went unstable through a checkerboard the force could not see — a property of where pressure
+and velocity sat, which no number representation changes. It took a change of scheme, to MLS-MPM, which never
+stores or differences a node pressure.
 
-**Where it could be literal.** A fixed-point scatter — mass and momentum as integer pairs, accumulated with
-integer atomics — makes `⊕` genuinely exact and associative on the device. The scatter is then bitwise
-deterministic in any order, which replays and lockstep networking need; cott-lean's theorems apply as proved
-rather than by analogy; and level two describes the division at the edge exactly, including when it loses
-information. The costs are a fixed-point scale per field and 32-bit range, since there are no 64-bit atomics.
-That is an experiment to measure, not a decision.
+**Where it is literal.** A fixed-point scatter — mass and momentum as integer pairs, accumulated with integer
+atomics — makes `⊕` genuinely exact and associative on the device. `FixedScatter` is that scatter: every
+schedule, order and backend gives the same grid to the bit, which replays and lockstep networking need;
+cott-lean's `Scatter/` theorems apply as proved rather than by analogy; and level two describes the division
+at the edge exactly, including when it loses information. The costs are a fixed-point scale per field and
+32-bit range: 64-bit atomics are an optional capability, not yet lowered by SupirVast. It is measured, not yet
+used by the particle step; `docs/TODO.md` has the numbers and what is open.
 
 Traction has other readings the later work may want — `⊗` is angle addition without the tangent formula's
 collapse at a quarter turn, for the orientation of rigid bodies — but for the fluid, the two levels are the

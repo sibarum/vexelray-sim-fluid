@@ -84,16 +84,35 @@ cannot be fixed from here at all.
       scatter's cost, nothing lost. Close to the dispatch floor (0.021 ms, upstream) at every density; the
       rest is the twelve-value scan. *An earlier table was twice as slow at 1 and 4 ppc: idle clocks.*
 
-- [ ] **A fixed-point integer scatter.** Store the conserved pair — mass and momentum — as integers at a
-      fixed scale, and accumulate them with integer atomic adds. Integer addition is exactly associative and
-      commutative, so `⊕` really is on the GPU what it is on paper: any order of the deposits gives the same
-      grid to the bit, in every schedule, where f32 gives conservation but not the bits (`Scatter`, *Why
-      atomics*). It also drops the optional `AtomicFloat32AddEXT` and `shaderSharedFloat32AtomicAdd`, since
-      integer atomics are core (`Scatter`, *Portability*). Quantise so conservation is exact too: round three
-      corners' shares and give the fourth the particle's amount minus their sum. To decide: the scale against
-      the range — the heaviest node must not overflow, the lightest deposit must not round to zero — and
-      whether that needs i64 (atomics on it are optional, `shaderInt64Atomics`) or fits i32. Then measure it
-      against the f32 segmented scatter.
+- [ ] **The fixed-point scatter works; nothing uses it yet, and i32 is coarse.** `FixedScatter`, direct and
+      segmented, is the cott-lean `Scatter/` scheme: every schedule, order and backend gives the host's grid
+      to the bit, mass and momentum are conserved exactly, a massless node holds no momentum, and it needs no
+      optional capability (`FixedScatterTest`). `FixedScatterTest.gpuFixedScatterCost`, 2²⁰ particles, RTX,
+      ms, typical of two runs, each density at the finest scale `forRange` fits:
+
+      | ppc | bits (m, v) | f32 direct | fixed direct | f32 segmented | fixed segmented |
+      | --- | --- | --- | --- | --- | --- |
+      | 1 | 12, 12 | 0.07 | 0.07 | 0.07 | 0.07 |
+      | 4 | 11, 11 | 0.10 | 0.10 | 0.058 | 0.058–0.09 |
+      | 16 | 10, 10 | 0.26 | 0.26 | 0.058 | 0.058–0.09 |
+      | 64 | 9, 9 | 0.77–0.88 | **0.033** | 0.058 | 0.07–0.09 |
+
+      So the bits cost nothing. From random order all four are 0.35–0.45. At 64 ppc the direct integer scatter
+      beats every f32 schedule, correctly (checked at that density). Likely cause: the hardware or driver
+      combines one subgroup's integer adds to the same address, which a subgroup in cell order all is, and
+      does not do this for float. Not confirmed. The fixed segmented column wavers between two levels.
+
+      Open: (1) **Precision.** At these densities i32 leaves 9–12 bits each for mass and velocity, a quantum
+      of 2⁻⁹ to 2⁻¹², against f32's 2⁻²⁴ relative. Two ways past it: i64 atomics (optional,
+      `shaderInt64Atomics`; supirvast does not lower them yet), or each field as a high and a low i32
+      register. The split is not free: each register wraps on its own, so a low total that overflows loses its
+      carries into the high one, which `Accumulate.lean` does not cover. Keep the low parts narrow enough that
+      every node's low total fits, e.g. 16 bits with `2·K·2^16 < 2^32`. Then `read_exact_of_bound` holds for
+      each register separately, and read-back folds the carries in: `Σhi·2^16 + Σlo`. The headroom costs
+      bits. (2) **The offset is quantised to 2⁻¹⁰ of a cell** (`FixedScatter.OFFSET_BITS`). Float weights
+      floored differently on the device: its compiler reordered `(ax·ay)·M` into `ax·(ay·M)`. Integer weights
+      leave nothing to reorder, but a finer offset needs wider registers. (3) **Use it in the particle step**
+      once MLS-MPM settles, which needs a 3×3 quadratic stencil version of the quantised shares.
 
 - [ ] **Sorting to gather does not pay for itself every step.** `particle.Sort` is a five-pass counting
       sort (count and rank by integer atomic, a three-pass workgroup-memory scan, permute), exact against
@@ -122,18 +141,13 @@ cannot be fixed from here at all.
 Limits of the stack that `-core`'s IR runs on, found while setting this project up. Whether each one
 matters depends on the approach.
 
-- [ ] **Every separate dispatch costs ~0.021 ms; a `DispatchSequence` pays it once** (in `supirvast`,
-      uncommitted). Measured by `SortTest.gpuSortCost` with an empty kernel on the RTX: 0.022 ms one at a
-      time, 0.003 ms each in a sequence of five. The sort uses one now (entry above) and gains ~0.045 ms.
-      Not yet used: the shallow-water step and the scatters dispatch one pass per step, so their gain is in
-      recording several steps per submission — the shallow-water rotation of two states, three speed
-      buffers and two budgets repeats every six steps, so a sequence of six steps is a fixed set of buffers
-      — and, for FLIP, recording the whole step (scatter, solve, grid-to-particle) as one.
-
-- [ ] **Workgroup memory, barriers, subgroup operations, device selection and dispatch sequences are
-      in `supirvast` uncommitted** (fix belongs in `supirvast`). This repo builds against all five through
-      the local `.m2`, so a fresh clone cannot build until `supirvast` commits and installs them. Measured with them
-      (entries above): the workgroup pre-reduction is worth 10–20%, the subgroup segmented sum 1.7–10×.
+- [ ] **Every separate dispatch costs ~0.021 ms; a `DispatchSequence` pays it once.** Measured by
+      `SortTest.gpuSortCost` with an empty kernel on the RTX: 0.022 ms one at a time, 0.003 ms each in a
+      sequence of five. The sort uses one (entry above) and gains ~0.045 ms, and `ParticleSimulation` records
+      the particle step and the sort as one sequence each. Not yet used by the shallow-water step, which
+      dispatches one pass per step, so its gain is in recording several steps per submission — the rotation
+      of two states, three speed buffers and two budgets repeats every six steps, so a sequence of six steps
+      is a fixed set of buffers.
 
 - [ ] **The engine cannot dispatch compute inside a frame** (fix belongs in `vexelray`).
       `TechniqueContext` names pure compute only as a future technique kind, so the demo runs the simulation

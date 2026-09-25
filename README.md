@@ -12,7 +12,7 @@ what is known and not done.
 
 | Module | What it holds |
 | --- | --- |
-| `vexelray-sim-fluid-core` | The kernels, in SupirVast IR — today a first-order shallow-water step with an adaptive time step and a budgeted integer clock, FLIP's particle-to-grid scatter with its benchmark, and a weakly compressible MLS-MPM particle step — and the diagnostics that judge a state. No engine, no window. |
+| `vexelray-sim-fluid-core` | The kernels, in SupirVast IR — today a first-order shallow-water step with an adaptive time step and a budgeted integer clock, FLIP's particle-to-grid scatter in f32 and in exact fixed point with their benchmarks, a counting sort by cell, and a weakly compressible MLS-MPM particle step — and the diagnostics that judge a state. No engine, no window. |
 | `vexelray-sim-fluid-gui` | The simulation on the stack: a runner that steps a patch on resident GPU buffers, and a debug view that colours what the state holds. |
 | `vexelray-sim-fluid-demo` | A framework application showing the experiments, with their readings. |
 
@@ -25,7 +25,8 @@ The stack's siblings must be installed to the local Maven repository first: `sup
 mvn install
 ```
 
-Runs every test; add `-Dsupirvast.requireGpu=true` to fail rather than skip where there is no GPU.
+Runs every test; add `-Dsupirvast.requireGpu=true` to fail rather than skip where there is no GPU. The slow
+particle sweep, `FlipSweepTest`, is not an assertion and runs only with `-Dflip.sweep=true`.
 
 ```bash
 mvn -pl vexelray-sim-fluid-demo exec:exec
