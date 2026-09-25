@@ -21,7 +21,7 @@ final class Controls {
     static final double UNSTABLE_COURANT = 0.9;
 
     private volatile View view = View.DEPTH;
-    private volatile Scenario scenario = Scenario.DAM_BREAK;
+    private volatile Scenario scenario = Scenario.DAM_BREAK_PARTICLES;
     private volatile boolean paused;
     private volatile boolean unstable;
     private volatile double timeScale = 1;

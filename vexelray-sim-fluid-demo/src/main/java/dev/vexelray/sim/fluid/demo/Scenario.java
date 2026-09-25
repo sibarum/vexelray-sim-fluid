@@ -1,28 +1,31 @@
 package dev.vexelray.sim.fluid.demo;
 
 /**
- * The starting states, each chosen to exercise one thing: shallow water on a 100 m square patch walled on every
- * side, and one dam break as particles in a walled vertical slice.
+ * The starting states, each chosen to exercise one thing: one dam break as particles in a walled vertical slice,
+ * first because it is the one to show, then shallow water on a 100 m square patch walled on every side.
  */
 enum Scenario {
 
-    /** Water held behind the middle line over dry ground: the wet/dry front, the hardest case. */
-    DAM_BREAK("dam break onto dry ground", 1.0) {
-        @Override
-        double depth(double x, double y) {
-            return x < SIZE / 2 ? 1.0 : 0.0;
-        }
-    },
-
     /**
-     * The same dam break stood on its side: a column of water against the left wall of a walled vertical slice,
-     * gravity down, as particles — MLS-MPM, weakly compressible. The picture is the grid the particles scatter onto:
-     * density where the depth views show depth, and velocity as momentum over mass.
+     * A column of water against the left wall of a walled vertical slice, gravity down, as particles — MLS-MPM,
+     * weakly compressible. The picture is the grid the particles scatter onto: density where the depth views show
+     * depth, and velocity as momentum over mass.
      */
     DAM_BREAK_PARTICLES("dam break, particles (MLS-MPM)", 1.3, true) {
         @Override
         double depth(double x, double y) {
             return 0;
+        }
+    },
+
+    /**
+     * A dam break as shallow water, seen from above: water held behind the middle line over dry ground, the wet/dry
+     * front, the hardest case.
+     */
+    DAM_BREAK("dam break onto dry ground", 1.0) {
+        @Override
+        double depth(double x, double y) {
+            return x < SIZE / 2 ? 1.0 : 0.0;
         }
     },
 

@@ -274,6 +274,9 @@ final class Session implements AutoCloseable {
     }
 
     private void latchParticles(Diagnostics d) {
+        if (particles.steps() == 0) {
+            return;   // nothing has been scattered yet, so the grid is empty rather than drained
+        }
         if (d.nonFinite() > 0) {
             alarms.putIfAbsent("broken", String.format("t=%.3fs  %d broken nodes", flipTime, d.nonFinite()));
         }
