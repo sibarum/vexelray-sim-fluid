@@ -70,8 +70,9 @@ import static dev.vexelray.sim.fluid.ir.Body.v;
  * <h2>Portability</h2>
  * Float atomic add is an optional device capability ({@code AtomicFloat32AddEXT}), unlike everything the
  * shallow-water step asks for, and on workgroup memory it is a second one ({@code shaderSharedFloat32AtomicAdd})
- * that a device may lack while having the first. A device without them gets the kernel on the CPU. Fixed-point
- * integer atomics would run anywhere, and deterministically; that is a variant to measure, not yet a decision.
+ * that a device may lack while having the first. A device without them gets the kernel on the CPU.
+ * {@link FixedScatter} is the same transfer on integer atomics: it runs anywhere, and gives the same bits in every
+ * order.
  */
 public final class Scatter {
 
@@ -376,8 +377,10 @@ public final class Scatter {
         LocalVar p = b.let("p", new Expr.InvocationId());
         LocalVar key = b.let("key", i(-1));
         LocalVar[] amounts = new LocalVar[corners * fields];
+        // The amounts are the grids' type: f32 here, i32 for FixedScatter.
+        Expr zero = grids.getFirst().element() instanceof Type.Float ? f(0) : i(0);
         for (int j = 0; j < amounts.length; j++) {
-            amounts[j] = b.let("amount", f(0));
+            amounts[j] = b.let("amount", zero);
         }
         b.when(lt(v(p), new Expr.InvocationCount()), t -> load.into(t, p, key, amounts));
 
@@ -510,14 +513,21 @@ public final class Scatter {
 
         /** Corner {@code k} of the cell: bit 0 east, bit 1 north. */
         Deposit deposit(Body b, int k, int nx) {
-            int east = k & 1;
-            int north = k >> 1;
-            Expr wx = east == 1 ? v(fx) : sub(f(1), v(fx));
-            Expr wy = north == 1 ? v(fy) : sub(f(1), v(fy));
-            LocalVar w = b.let("w", mul(wx, wy));
+            LocalVar w = weight(b, k);
             LocalVar wm = b.let("wm", mul(v(w), v(m)));
-            LocalVar node = b.let("node", add(v(corner), i(north * nx + east)));
-            return new Deposit(node, w, wm, this);
+            return new Deposit(node(b, k, nx), w, wm, this);
+        }
+
+        /** Corner {@code k}'s bilinear weight. */
+        LocalVar weight(Body b, int k) {
+            Expr wx = (k & 1) == 1 ? v(fx) : sub(f(1), v(fx));
+            Expr wy = (k >> 1) == 1 ? v(fy) : sub(f(1), v(fy));
+            return b.let("w", mul(wx, wy));
+        }
+
+        /** Corner {@code k}'s node. */
+        LocalVar node(Body b, int k, int nx) {
+            return b.let("node", add(v(corner), i((k >> 1) * nx + (k & 1))));
         }
     }
 
