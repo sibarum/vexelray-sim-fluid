@@ -1,7 +1,6 @@
 package dev.vexelray.sim.fluid.particle;
 
 import dev.vexelray.sim.fluid.particle.ScatterTest.Backend;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
@@ -13,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Whether a whole FLIP step works — judged against what the physics allows, on each backend on its own.
+ * Whether a whole particle step ({@link Flip}, MLS-MPM) works — judged against what the physics allows, on each backend on its own.
  */
 class FlipTest {
 
@@ -22,8 +21,8 @@ class FlipTest {
     /**
      * One particle, nothing to push against: every node it touches has its velocity, so gravity is all that
      * acts, and it falls exactly as {@code v = k·g·dt}, {@code y = y₀ + g·dt²·k(k+1)/2} after {@code k} steps —
-     * the grid moves it by the velocity after the step. Exact to rounding, whether the particle keeps its own
-     * velocity (FLIP) or takes the grid's (PIC), since the two agree when the grid's velocity is uniform.
+     * the grid moves it by the velocity after the step. Exact to rounding: the grid's velocity is uniform over
+     * the particle's corners, so its gradient, the particle's {@code C}, stays zero, and so does {@code tr C}.
      */
     @ParameterizedTest
     @EnumSource(Backend.class)
@@ -34,7 +33,7 @@ class FlipTest {
         FlipStep step = new FlipStep(16, 16, 1);
         try (Rig rig = Rig.on(backend, step)) {
             load(rig, new float[] {7.3f}, new float[] {12.6f}, new float[] {0.25f},
-                    Flip.params(dt, 0, g, 0, 1, 0.95));
+                    Flip.params(dt, 0, g, 0, 1));
             for (int k = 0; k < steps; k++) {
                 rig.run(step.step());
             }
@@ -70,8 +69,6 @@ class FlipTest {
      *       from counting particles, failed this one — it boiled and filled the box — while passing the rest.</li>
      * </ul>
      */
-    @Disabled("fails with the collocated scheme in Flip, as recorded in docs/TODO.md; the MLS-MPM step must pass it"
-            + " -- remove this when it does")
     @ParameterizedTest
     @EnumSource(Backend.class)
     void aDamBreakStaysWaterInItsBox(Backend backend) {
@@ -85,7 +82,7 @@ class FlipTest {
         float[][] particles = column(new Random(71));
         FlipStep step = new FlipStep(N, N, particles[0].length);
         try (Rig rig = Rig.on(backend, step)) {
-            load(rig, particles[0], particles[1], particles[2], Flip.params(dt, 0, -G, bulk, RHO0, 0.95));
+            load(rig, particles[0], particles[1], particles[2], Flip.params(dt, 0, -G, bulk, RHO0));
             double moved = 0;
             for (int k = 0; k < steps; k++) {
                 if (k % 10 == 0) {

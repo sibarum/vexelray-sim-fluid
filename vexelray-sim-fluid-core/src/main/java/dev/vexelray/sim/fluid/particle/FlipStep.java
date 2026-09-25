@@ -53,7 +53,9 @@ public final class FlipStep {
         int nodes = nx * ny;
         int length = Sort.length(nx, ny);
 
-        for (String field : List.of("x", "y", "u", "v", "m", "j", "sx", "sy", "su", "sv", "sm", "sj")) {
+        List<String> particle = List.of("x", "y", "u", "v", "m", "j", "c00", "c01", "c10", "c11");
+        List<String> sorted = particle.stream().map(field -> "s" + field).toList();
+        for (String field : concat(particle, sorted)) {
             add(field, Body.F32, particles);
         }
         add("keys", Body.I32, particles);
@@ -61,24 +63,23 @@ public final class FlipStep {
         add("counts", Body.I32, length);
         add("starts", Body.I32, length);
         add("sums", Body.I32, Sort.blocks(length));
-        for (String field : List.of("gm", "gmu", "gmv", "gmj", "pressure", "uOld", "vOld", "uNew", "vNew")) {
+        for (String field : List.of("gm", "gmu", "gmv", "gu", "gv")) {
             add(field, Body.F32, nodes);
         }
         add("params", Body.F32, Flip.PARAM_COUNT);
 
         List<String> grid = List.of("gm", "gmu", "gmv");
-        List<String> particle = List.of("x", "y", "u", "v", "m", "j");
-        List<String> sorted = List.of("sx", "sy", "su", "sv", "sm", "sj");
+        List<String> affine = List.of("c00", "c01", "c10", "c11");
         step = List.of(
-                new Pass("clear", Flip.clear(nx, ny), Flip.CLEAR_BUFFERS, concat(grid, List.of("gmj")), nodes),
+                new Pass("clear", Flip.clear(nx, ny), Flip.CLEAR_BUFFERS, grid, nodes),
                 new Pass("scatter", Flip.scatter(nx, ny), Flip.SCATTER_BUFFERS,
-                        concat(grid, List.of("x", "y", "u", "v", "m", "gmj", "j")), particles),
-                new Pass("pressure", Flip.pressure(nx, ny), Flip.PRESSURE_BUFFERS,
-                        List.of("gm", "gmj", "pressure", "params"), nodes),
-                new Pass("forces", Flip.forces(nx, ny), Flip.FORCES_BUFFERS,
-                        concat(grid, List.of("pressure", "params", "uOld", "vOld", "uNew", "vNew")), nodes),
+                        concat(concat(grid, List.of("x", "y", "u", "v", "m", "j")), concat(affine, List.of("params"))),
+                        particles),
+                new Pass("grid", Flip.grid(nx, ny), Flip.GRID_BUFFERS, concat(grid, List.of("params", "gu", "gv")),
+                        nodes),
                 new Pass("advect", Flip.advect(nx, ny), Flip.ADVECT_BUFFERS,
-                        List.of("x", "y", "u", "v", "uOld", "vOld", "uNew", "vNew", "params", "j"), particles));
+                        concat(concat(List.of("x", "y", "u", "v", "j"), affine), List.of("gu", "gv", "params")),
+                        particles));
         sort = List.of(
                 new Pass("count", Sort.count(nx, ny), Sort.COUNT_BUFFERS,
                         List.of("x", "y", "counts", "keys", "ranks"), particles),
@@ -97,7 +98,10 @@ public final class FlipStep {
         return buffers;
     }
 
-    /** One step: clear, scatter, pressure, forces, advect. Particles carry {@code x, y, u, v, m, j}; start {@code j} at 1. */
+    /**
+     * One step: clear, scatter, grid, advect. Particles carry {@code x, y, u, v, m, j} and the affine velocity
+     * {@code c00, c01, c10, c11}; start {@code j} at 1 and {@code C} at zero.
+     */
     public List<Pass> step() {
         return step;
     }

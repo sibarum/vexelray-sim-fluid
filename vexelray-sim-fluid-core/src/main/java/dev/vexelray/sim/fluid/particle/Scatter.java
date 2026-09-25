@@ -361,11 +361,21 @@ public final class Scatter {
      * run starts, the shuffle scan within runs, and the run's last lane taking the atomics. See {@link #segmented}.
      */
     static void segmentedDeposit(Body b, int nx, List<Buffer> grids, Load load) {
+        segmentedDeposit(b, nx, 2, grids, load);
+    }
+
+    /**
+     * {@link #segmentedDeposit(Body, int, List, Load)} over a {@code width × width} stencil of nodes, not the
+     * cell's four corners: the key is the stencil's lower-left node, and corner {@code k} is {@code k % width} along
+     * and {@code k / width} up from it. A quadratic B-spline's stencil is 3 wide.
+     */
+    static void segmentedDeposit(Body b, int nx, int width, List<Buffer> grids, Load load) {
         int fields = grids.size();
+        int corners = width * width;
         LocalVar lane = b.let("lane", new Expr.SubgroupInvocationId());
         LocalVar p = b.let("p", new Expr.InvocationId());
         LocalVar key = b.let("key", i(-1));
-        LocalVar[] amounts = new LocalVar[4 * fields];
+        LocalVar[] amounts = new LocalVar[corners * fields];
         for (int j = 0; j < amounts.length; j++) {
             amounts[j] = b.let("amount", f(0));
         }
@@ -399,8 +409,8 @@ public final class Scatter {
         b.when(eq(v(lane), i(SUBGROUP - 1)), t -> t.set(last, i(1)));
         b.when(not(eq(v(above), v(key))), t -> t.set(last, i(1)));
         b.when(not(lt(v(key), i(0))), t -> t.when(eq(v(last), i(1)), s -> {
-            for (int k = 0; k < 4; k++) {
-                LocalVar node = s.let("node", add(v(key), i((k >> 1) * nx + (k & 1))));
+            for (int k = 0; k < corners; k++) {
+                LocalVar node = s.let("node", add(v(key), i((k / width) * nx + k % width)));
                 for (int f = 0; f < fields; f++) {
                     s.atomic(AtomicOp.ADD, grids.get(f), v(node), v(amounts[fields * k + f]));
                 }

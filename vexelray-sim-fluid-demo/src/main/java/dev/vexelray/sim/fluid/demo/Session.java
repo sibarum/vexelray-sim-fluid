@@ -66,7 +66,6 @@ final class Session implements AutoCloseable {
     private static final double FALL_SPEED = Math.sqrt(2 * FLIP_G * COLUMN_HEIGHT);
     private static final double SOUND = 5 * FALL_SPEED;
     private static final double BULK = SOUND * SOUND * RHO0;
-    private static final double FLIP_RATIO = 0.95;
     private static final int SORT_EVERY = 10;
     /** Compression past this, relative to rest, latches an alarm: weakly compressible has stopped being weak. */
     private static final double COMPRESSION_ALARM = 1.5;
@@ -289,7 +288,7 @@ final class Session implements AutoCloseable {
     }
 
     private void particleReadings(Diagnostics d, int steps, boolean behind, double dt) {
-        readout.heading("particles · FLIP, weakly compressible");
+        readout.heading("particles · MLS-MPM, weakly compressible");
         commonReadings();
         String scale = switch (shown) {
             case DEPTH -> String.format("density, dry, then 0 .. %.2f of rest", scales.depth());
@@ -322,7 +321,7 @@ final class Session implements AutoCloseable {
     }
 
     private int[] flipParams() {
-        return Flip.params(flipStep(), 0, -FLIP_G, BULK, RHO0, FLIP_RATIO);
+        return Flip.params(flipStep(), 0, -FLIP_G, BULK, RHO0);
     }
 
     /** {@code PPC} particles jittered in each cell of the column, at rest, masses making rest density: x, y, m. */

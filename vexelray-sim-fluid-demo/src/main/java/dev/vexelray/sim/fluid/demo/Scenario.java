@@ -16,10 +16,10 @@ enum Scenario {
 
     /**
      * The same dam break stood on its side: a column of water against the left wall of a walled vertical slice,
-     * gravity down, as particles — FLIP, weakly compressible. The picture is the grid the particles scatter onto:
+     * gravity down, as particles — MLS-MPM, weakly compressible. The picture is the grid the particles scatter onto:
      * density where the depth views show depth, and velocity as momentum over mass.
      */
-    DAM_BREAK_PARTICLES("dam break, particles (FLIP)", 1.3, true) {
+    DAM_BREAK_PARTICLES("dam break, particles (MLS-MPM)", 1.3, true) {
         @Override
         double depth(double x, double y) {
             return 0;
@@ -76,7 +76,7 @@ enum Scenario {
         this.particles = particles;
     }
 
-    /** Whether this is a particle scenario, run by FLIP, rather than a shallow-water one. */
+    /** Whether this is a particle scenario, run by MLS-MPM, rather than a shallow-water one. */
     boolean particles() {
         return particles;
     }

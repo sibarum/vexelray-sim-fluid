@@ -16,8 +16,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * A FLIP fluid in one walled box, stepped on resident buffers: the counterpart of {@link PatchSimulation} for
- * particles. The step and the sort are {@link FlipStep}'s, each recorded once as a {@link DispatchSequence},
+ * A particle fluid ({@code Flip}, MLS-MPM) in one walled box, stepped on resident buffers: the counterpart of
+ * {@link PatchSimulation} for particles. The step and the sort are {@link FlipStep}'s, each recorded once as a {@link DispatchSequence},
  * so a step is one submission however many passes it holds.
  *
  * <p>The step is fixed, not measured — a weakly compressible fluid's is bounded by its sound speed, which the
@@ -79,6 +79,9 @@ public final class ParticleSimulation implements AutoCloseable {
         float[] rest = new float[m.length];
         java.util.Arrays.fill(rest, 1f);   // every particle starts at its rest volume
         write("j", rest);
+        for (String affine : List.of("c00", "c01", "c10", "c11")) {
+            write(affine, new float[m.length]);   // and with no affine velocity
+        }
         buffers.get("params").write(params);
         steps = 0;
     }

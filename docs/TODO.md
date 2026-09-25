@@ -38,53 +38,25 @@ cannot be fixed from here at all.
       first change that is a *second scheme* — the point at which the discretisation level of the tower
       earns its place ([architecture.md](architecture.md#built-from-the-bottom-up-with-the-output-written-by-hand-first)).
 
-- [ ] **FLIP: the next step is MLS-MPM** (decided 2026-09-24). A fluid library without a particle method is
-      not taken seriously, and it suits the shared core: particles carry the fluid and a patch grid does the
-      forces. Decided so far: 2D first, a vertical slice with gravity; **weakly compressible**, so every pass
-      is local and a step is one `DispatchSequence`; shown as a scenario of the existing demo, the grid's
-      mass and momentum through the debug view (`ParticleSimulation` in `-gui`, "dam break, particles").
+- [ ] **The particle readout reads node density, which is sampling noise.** The demo's MLS-MPM scenario
+      reuses the shallow-water diagnostics with grid mass standing in for depth. Four jittered particles a cell
+      make that density speckled, up to ~2× rest, so the density alarm fires at t = 0.007 s and the acoustic
+      Courant alarm, which is computed from it, fires at 0.51 of 0.50. Meanwhile the particles' `J`, the
+      compression the step actually uses, stays within a few percent of rest (`FlipSweepTest`: 0.96 .. 1.01 at
+      5× sound speed). Read `J` back for the density line and alarm, and take the Courant number from the sound
+      speed the step was sized by.
 
-      *What exists and works:* the scatter in four schedules (`Scatter`; the segmented one's lane machinery is
-      `Scatter.segmentedDeposit`, any number of fields per corner), the device sort (`Sort`, any number of
-      fields). *With `Flip`, committed as the experiment it is:* a step described as data (`FlipStep`), run by a
-      test rig (`Rig`) or the demo's runner (`ParticleSimulation`, the scenario in `Session`), one submission
-      per step; that plumbing works, and a lone particle falls exactly
-      (`FlipTest.aLoneParticleFallsAsGravitySays`). Reuse it; replace what `Flip` computes.
+- [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
+      keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key
+      and half the next, interleaved, so the segmented scatter's runs are about half as long as they could be.
+      Offset the sort's key by half a cell. Then measure the scatter as it now is: 27 amounts a lane (nine
+      nodes, three fields), five shuffle rounds each, against the benchmark's twelve.
 
-      *What was tried and failed — do not repeat it* (`Flip`, and the demo's particle scenario, which shows it):
-      1. Pressure from node density, `B · max(m/ρ₀ − 1, 0)`. Four jittered particles a cell make that
-         density noisy by ±20%; the stiffness turns it into pressure hundreds of times gravity, and a
-         pressure that only pushes rectifies it outward. The water boiled and filled the box.
-      2. Pressure from a per-particle `J` carried by `J ← J(1 + dt ∇·v)`, as MPM does, but with forces
-         still from a central difference of node pressure on the collocated grid. Unstable at demo size
-         (128², column 40 × 80 cells) at every Courant number down to 0.1 with FLIP 0.95; only FLIP 0.5 at
-         C = 0.1 stays sane, too slow and too viscous (`FlipSweepTest` is the sweep; run it with
-         `-Dflip.sweep=true`). Diagnosis: pressure and velocity on the same nodes with a central-difference gradient admit a checkerboard the
-         force cannot see, FLIP does not damp it, and `J` drifts to its bounds (0.1 .. 2.4 seen).
-      3. Found on the way, and fixed: the wall was on the outermost node ring, which particles kept one
-         spacing inside never reach, so the grid never felt the floor. The wall is the ring they do reach
-         (`Flip.WALL`, `WALL_NODE`). Keep that fix.
-
-      *The plan, MLS-MPM* (Hu et al. 2018, "A moving least squares material point method"; Taichi's
-      `mpm88` is the reference, a weakly compressible fluid in ~88 lines):
-      - Particles carry `x, v, m, J` and the affine velocity `C` (2×2, APIC), which replaces the FLIP/PIC
-        blend: velocity comes back as PIC plus `C`, with no noise to damp and no dissipation to fight.
-      - Particle-to-grid scatters mass and momentum `m·(v + C·(xᵢ − xₚ))`, **plus the stress as a force**:
-        `−dt · V₀ · 4/Δx² · J · (J−1) · E · (xᵢ − xₚ)` for `mpm88`'s equation of state, or the equivalent for
-        `B·(1/J − 1)`. Pressure never sits on a node and is never differenced, which is what removes the
-        checkerboard; the force is the weight gradient's, consistent with how momentum was deposited.
-      - The grid update is only `v = mv/m` (the conserved pair's ratio, zero where empty), gravity, and the
-        walls — on the ring the particles reach.
-      - Grid-to-particle gathers `v` and `C = 4/Δx² · Σ w·vᵢ⊗(xᵢ − xₚ)`, updates `J ← J(1 + dt·tr C)`,
-        and moves `x += dt·v`.
-      - It fits what exists. The momentum amount per corner now depends on the corner, which
-        `segmentedDeposit` already allows (twelve fields → mass, two momentum, per corner), and `J` and `C`
-        make the particle six floats more, which `Sort` and `Flip.copy` take as a field count. Quadratic
-        B-spline weights (3×3 nodes) are `mpm88`'s; bilinear is simpler and fits the existing corner
-        machinery but is noisier — try bilinear first, switch if it shows.
-      - Judge it with the stricter `FlipTest.aDamBreakStaysWaterInItsBox`, which the collocated scheme
-        fails and so is `@Disabled` until the new step passes it: front under Ritter's `2√(gH)`; `J`
-        within a few percent of rest for 98% of particles; 95% of the water below its starting height. Then rerun `FlipSweepTest` at demo size, and look at the demo.
+- [ ] **MLS-MPM: what the dam break has not tested.** Taller columns, more particles per cell, a second
+      body of water, and a scenario run for long enough to see whether `J` drifts. `J` is carried, not
+      re-measured, so any error in `tr C` accumulates. `mpm88` does the same thing and it holds there, but that
+      has not been checked here beyond 3 s. If it drifts, reset `J` from the node density every so often, or
+      move to a per-particle deformation gradient.
 
 - [ ] **The scatter: a segmented subgroup sum, or a gather.** `ScatterTest.gpuScatterCost`, 2²⁰
       particles, workgroup 256, subgroup 32, RTX 5070 Ti, ms per scatter, typical of three runs after a
