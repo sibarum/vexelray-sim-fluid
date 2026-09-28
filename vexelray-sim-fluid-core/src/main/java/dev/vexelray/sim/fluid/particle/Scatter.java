@@ -536,9 +536,9 @@ public final class Scatter {
      *
      * <p>Momentum is the corner's mass times the velocity, {@code (w·m)·u}, and not {@code w·(m·u)}: if
      * {@code w·m} underflows to zero, so does the momentum, and a node never holds momentum with no mass. In
-     * the other order the mass can flush while the momentum does not. cott-lean, {@code Scatter/Rounding.lean}:
-     * {@code massFirst_zero} and {@code momentumFirst_omega}. It is also the order {@link #gather} and the
-     * tests' reference take.
+     * the other order the mass can flush while the momentum does not. vexelray-lean-proofs,
+     * {@code Scatter/Rounding.lean}: {@code massFirst_zero} and {@code momentumFirst_massless}. It is also the
+     * order {@link #gather} and the tests' reference take.
      */
     record Deposit(LocalVar node, LocalVar w, LocalVar wm, Particle particle) {
         /** Field {@code f}: 0 mass, 1 x-momentum, 2 y-momentum. */

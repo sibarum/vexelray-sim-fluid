@@ -27,9 +27,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Whether the fixed-point scatter is what cott-lean's {@code Scatter/} files say it is — one grid from every
- * schedule and order, exact conservation, no momentum without mass, wrapping that costs nothing — and what it
- * costs against the f32 scatters.
+ * Whether the fixed-point scatter is what vexelray-lean-proofs' {@code Scatter/} files say it is — one grid from
+ * every schedule and order, exact conservation, no momentum without mass, wrapping that costs nothing — and what
+ * it costs against the f32 scatters.
  */
 class FixedScatterTest {
 

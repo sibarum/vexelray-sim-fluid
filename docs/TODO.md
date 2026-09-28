@@ -85,7 +85,7 @@ cannot be fixed from here at all.
       rest is the twelve-value scan. *An earlier table was twice as slow at 1 and 4 ppc: idle clocks.*
 
 - [ ] **The fixed-point scatter works; nothing uses it yet, and i32 is coarse.** `FixedScatter`, direct and
-      segmented, is the cott-lean `Scatter/` scheme: every schedule, order and backend gives the host's grid
+      segmented, is the vexelray-lean-proofs `Scatter/` scheme: every schedule, order and backend gives the host's grid
       to the bit, mass and momentum are conserved exactly, a massless node holds no momentum, and it needs no
       optional capability (`FixedScatterTest`). `FixedScatterTest.gpuFixedScatterCost`, 2²⁰ particles, RTX,
       ms, typical of two runs, each density at the finest scale `forRange` fits:
@@ -112,8 +112,8 @@ cannot be fixed from here at all.
       bits. (2) **The offset is quantised to 2⁻¹⁰ of a cell** (`FixedScatter.OFFSET_BITS`). Float weights
       floored differently on the device: its compiler reordered `(ax·ay)·M` into `ax·(ay·M)`. Integer weights
       leave nothing to reorder, but a finer offset needs wider registers. (3) **Use it in the particle step**
-      once MLS-MPM settles. The 3×3 scheme is proved (cott-lean `Scatter/Stencil.lean`), against `Flip.Stencil`'s
-      weights, numbering and closed clamp. Mass: floor every node's share but the centre's (`k = 4`), and give
+      once MLS-MPM settles. The 3×3 scheme is proved (vexelray-lean-proofs `Scatter/Stencil.lean`), against
+      `Flip.Stencil`'s weights, numbering and closed clamp. Mass: floor every node's share but the centre's (`k = 4`), and give
       the centre the rest. It is exact and never negative (`sum_quadraticShares`, `quadraticShares_nonneg`). The
       centre weighs at least ¼ wherever the particle is, so it takes the remainder's error of under 8 quanta
       on a large share (`quadraticShares_center`). A corner could weigh nothing. Momentum is not mass share ×

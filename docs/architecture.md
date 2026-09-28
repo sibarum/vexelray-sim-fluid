@@ -176,7 +176,7 @@ stores or differences a node pressure.
 **Where it is literal.** A fixed-point scatter — mass and momentum as integer pairs, accumulated with integer
 atomics — makes `⊕` genuinely exact and associative on the device. `FixedScatter` is that scatter: every
 schedule, order and backend gives the same grid to the bit, which replays and lockstep networking need;
-cott-lean's `Scatter/` theorems apply as proved rather than by analogy; and level two describes the division
+vexelray-lean-proofs' `Scatter/` theorems apply as proved rather than by analogy; and level two describes the division
 at the edge exactly, including when it loses information. The costs are a fixed-point scale per field and
 32-bit range: 64-bit atomics are an optional capability, not yet lowered by SupirVast. It is measured, not yet
 used by the particle step; `docs/TODO.md` has the numbers and what is open.

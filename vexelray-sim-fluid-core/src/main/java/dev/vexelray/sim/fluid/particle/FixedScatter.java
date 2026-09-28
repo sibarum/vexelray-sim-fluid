@@ -28,7 +28,7 @@ import static dev.vexelray.sim.fluid.ir.Body.v;
  * <h2>Why integers</h2>
  * Integer addition is associative and commutative exactly, so {@code ⊕} is on the device what it is on paper: every
  * order of the atomics and every grouping of them gives the same grid, to the bit. The f32 scatters conserve but
- * differ in the last bits from run to run. cott-lean, {@code Scatter/Accumulate.lean}: {@code run_eq_grid},
+ * differ in the last bits from run to run. vexelray-lean-proofs, {@code Scatter/Accumulate.lean}: {@code run_eq_grid},
  * {@code grouped_eq_grid}. Integer atomics are also core, so this needs none of the float-atomic capabilities
  * {@link Scatter} does, and runs on any device.
  *
@@ -48,7 +48,7 @@ import static dev.vexelray.sim.fluid.ir.Body.v;
  * leaves at these densities, so it costs little that the registers did not already.
  *
  * <p>A corner's momentum is its mass share times {@code U}, never rounded on its own: rounded separately, a corner
- * can get momentum with no mass, which is {@code ω} at the division ({@code independent_rounding_omega}). As a
+ * can get momentum with no mass, which is {@code ω} at the division ({@code independent_rounding_massless}). As a
  * product, momentum is conserved exactly and a node with no mass has none ({@code sum_momentumShares},
  * {@code node_momentum_eq_zero}), and a node's velocity lies between its particles' ({@code node_velocity_between}).
  *
