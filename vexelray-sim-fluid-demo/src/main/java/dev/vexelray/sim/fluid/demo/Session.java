@@ -7,6 +7,7 @@ import dev.vexelray.sim.fluid.gui.PatchSimulation;
 import dev.vexelray.sim.fluid.gui.Scales;
 import dev.vexelray.sim.fluid.gui.View;
 import dev.vexelray.sim.fluid.particle.Flip;
+import dev.vexelray.sim.fluid.particle.ParticleDiagnostics;
 import dev.vexelray.sim.fluid.stencil.Clock;
 import dev.vexelray.sim.fluid.stencil.Diagnostics;
 import dev.vexelray.sim.fluid.stencil.Edge;
@@ -65,6 +66,8 @@ final class Session implements AutoCloseable {
     /** The fastest the water can fall, and a sound speed five times that: density then varies by a few percent. */
     private static final double FALL_SPEED = Math.sqrt(2 * FLIP_G * COLUMN_HEIGHT);
     private static final double SOUND = 5 * FALL_SPEED;
+    /** The step is sized for this speed: the splash up the far wall was measured at 2.3 times the fall speed. */
+    private static final double SPEED_BOUND = 2.5 * FALL_SPEED;
     private static final double BULK = SOUND * SOUND * RHO0;
     private static final int SORT_EVERY = 10;
     /** Compression past this, relative to rest, latches an alarm: weakly compressible has stopped being weak. */
@@ -265,32 +268,36 @@ final class Session implements AutoCloseable {
                 state[f][k] = (float) (grid[f][k] / RHO0);
             }
         }
-        // As shallow water reads a state: volume is the particles' total mass, depth is density, and with g set to
-        // c² the wave speed √(gh) is the sound speed, so Froude reads as Mach and Courant as the acoustic one.
+        // The grid gives the picture, and the mass, the speed and the broken nodes. The density and the acoustic
+        // Courant number are not the grid's: node mass is speckled by where the particles fell, and a sound speed
+        // rebuilt from it is too. They come from the particles' J and from the sound speed the step was sized by.
         Diagnostics d = Diagnostics.of(state[0], state[1], state[2], BULK / RHO0, FLIP_DRY, dt, 1, 1);
-        latchParticles(d);
-        particleReadings(d, steps, behind, dt);
+        ParticleDiagnostics p = ParticleDiagnostics.of(particles.compression(), d.maxSpeed(), SOUND, dt);
+        latchParticles(d, p);
+        particleReadings(d, p, steps, behind, dt);
         return new Picture(state, FLIP_N, FLIP_N);
     }
 
-    private void latchParticles(Diagnostics d) {
+    private void latchParticles(Diagnostics d, ParticleDiagnostics p) {
         if (particles.steps() == 0) {
             return;   // nothing has been scattered yet, so the grid is empty rather than drained
         }
-        if (d.nonFinite() > 0) {
-            alarms.putIfAbsent("broken", String.format("t=%.3fs  %d broken nodes", flipTime, d.nonFinite()));
+        if (d.nonFinite() > 0 || p.nonFinite() > 0) {
+            alarms.putIfAbsent("broken", String.format("t=%.3fs  %d broken nodes, %d broken particles", flipTime,
+                    d.nonFinite(), p.nonFinite()));
         }
-        if (!d.stable()) {
+        if (p.courant() > Diagnostics.COURANT_LIMIT) {
             alarms.putIfAbsent("unstable", String.format("t=%.3fs  acoustic Courant %.2f past %.2f", flipTime,
-                    d.maxCourant(), Diagnostics.COURANT_LIMIT));
+                    p.courant(), Diagnostics.COURANT_LIMIT));
         }
-        if (d.maxDepth() > COMPRESSION_ALARM) {
-            alarms.putIfAbsent("compressed", String.format("t=%.3fs  density %.2f of rest", flipTime, d.maxDepth()));
+        if (p.maxDensity() > COMPRESSION_ALARM) {
+            alarms.putIfAbsent("compressed", String.format("t=%.3fs  density %.2f of rest", flipTime,
+                    p.maxDensity()));
         }
         latchDrift(d, flipTime);
     }
 
-    private void particleReadings(Diagnostics d, int steps, boolean behind, double dt) {
+    private void particleReadings(Diagnostics d, ParticleDiagnostics p, int steps, boolean behind, double dt) {
         readout.heading("particles · MLS-MPM, weakly compressible");
         commonReadings();
         String scale = switch (shown) {
@@ -308,10 +315,11 @@ final class Session implements AutoCloseable {
                 dt * 1000, SORT_EVERY, particles.steps(), behind ? " · BEHIND" : ""));
         double drift = initialVolume == 0 ? 0 : (d.volume() - initialVolume) / initialVolume;
         readout.set(Line.VOLUME, String.format("mass      %10.2f · drift %+.1e", d.volume(), drift));
-        readout.set(Line.DEPTH, String.format("density   max %.3f of rest · %d wet nodes", d.maxDepth(), d.wet()));
+        readout.set(Line.DEPTH, String.format("density   %.3f .. %.3f of rest (J) · %d wet nodes", p.minDensity(),
+                p.maxDensity(), d.wet()));
         readout.set(Line.FROUDE, String.format("speed     max %.2f m/s · Mach %.2f", d.maxSpeed() / (FLIP_N - 1),
-                d.maxFroude()));
-        readout.set(Line.COURANT, String.format("Courant   acoustic %.2f of %.2f · target %.2f%s", d.maxCourant(),
+                p.mach()));
+        readout.set(Line.COURANT, String.format("Courant   acoustic %.2f of %.2f · target %.2f%s", p.courant(),
                 Diagnostics.COURANT_LIMIT, controls.courant(),
                 controls.courant() > Diagnostics.COURANT_LIMIT ? " UNSTABLE BY CHOICE" : ""));
         readout.set(Line.BROKEN, String.format("broken    %d NaN/inf nodes", d.nonFinite()));
@@ -320,7 +328,7 @@ final class Session implements AutoCloseable {
 
     /** The step the sound speed allows at the Courant number the keys chose. */
     private double flipStep() {
-        return Flip.stableStep(BULK, RHO0, FALL_SPEED, controls.courant());
+        return Flip.stableStep(BULK, RHO0, SPEED_BOUND, controls.courant());
     }
 
     private int[] flipParams() {

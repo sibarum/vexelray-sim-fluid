@@ -40,14 +40,6 @@ cannot be fixed from here at all.
       first change that is a *second scheme* — the point at which the discretisation level of the tower
       earns its place ([architecture.md](architecture.md#built-from-the-bottom-up-with-the-output-written-by-hand-first)).
 
-- [ ] **The particle readout reads node density, which is sampling noise.** The demo's MLS-MPM scenario
-      reuses the shallow-water diagnostics with grid mass standing in for depth. Four jittered particles a cell
-      make that density speckled, up to ~2× rest, so the density alarm fires at t = 0.007 s and the acoustic
-      Courant alarm, which is computed from it, fires at 0.51 of 0.50. Meanwhile the particles' `J`, the
-      compression the step actually uses, stays within a few percent of rest (`FlipSweepTest`: 0.96 .. 1.01 at
-      5× sound speed). Read `J` back for the density line and alarm, and take the Courant number from the sound
-      speed the step was sized by.
-
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
       keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key
       and half the next, interleaved, so the segmented scatter's runs are about half as long as they could be.

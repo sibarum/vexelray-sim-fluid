@@ -116,6 +116,11 @@ public final class ParticleSimulation implements AutoCloseable {
         return new float[][] {read("x"), read("y")};
     }
 
+    /** Every particle's {@code J}, its volume over its volume at rest. A readback, like {@link #grid}. */
+    public float[] compression() {
+        return read("j");
+    }
+
     /** Steps taken since the last {@link #load}. */
     public long steps() {
         return steps;
