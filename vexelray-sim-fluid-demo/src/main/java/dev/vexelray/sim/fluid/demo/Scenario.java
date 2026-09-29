@@ -102,6 +102,35 @@ enum Scenario {
     },
 
     /**
+     * A lake at rest with a hot spot in it, and heat conducting through the water: the spot spreads, its peak falls, and
+     * the total heat stays what it was. The water does not move, since nothing here makes heat push it; that is the
+     * next step. The temperature view (key 8) is the picture.
+     */
+    HOT_SPOT("heat: a hot spot spreads through still water", 1.3, true) {
+        @Override
+        double depth(double x, double y) {
+            return 0;
+        }
+
+        @Override
+        double density(int col, int row) {
+            return col < BOX_WIDTH && row < 2 * LAYER_ROWS ? WATER : 0;
+        }
+
+        @Override
+        double kappa() {
+            return 8;
+        }
+
+        @Override
+        double temperature(double x, double y) {
+            double dx = x - 63;
+            double dy = y - 30;
+            return Math.exp(-(dx * dx + dy * dy) / (2 * 8 * 8));
+        }
+    },
+
+    /**
      * A rectangle of liquid floating free, no gravity, with surface tension: it pulls its corners in and swings between
      * a long and a tall oval. The tension is weak on purpose: it holds together for ten seconds or so, where a strong
      * one throws particles off the rim at once, and after that the drop drifts (see {@code docs/TODO.md}).
@@ -219,6 +248,16 @@ enum Scenario {
 
     /** A particle scenario's surface tension, in rest density times node spacings cubed per second squared; none if 0. */
     double sigma() {
+        return 0;
+    }
+
+    /** A particle scenario's heat conductivity, in node spacings squared per second; none, and no temperatures, if 0. */
+    double kappa() {
+        return 0;
+    }
+
+    /** The temperature of a particle at {@code (x, y)} in node units, from 0 (coldest) to 1 (hottest); for a scenario with heat. */
+    double temperature(double x, double y) {
         return 0;
     }
 

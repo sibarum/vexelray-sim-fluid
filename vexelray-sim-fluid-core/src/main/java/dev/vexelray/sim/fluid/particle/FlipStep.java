@@ -53,6 +53,14 @@ public final class FlipStep {
      * force is {@code σ} of the parameters, and none if that is zero.
      */
     public FlipStep(int nx, int ny, int particles, boolean tension) {
+        this(nx, ny, particles, tension, false);
+    }
+
+    /**
+     * As above, and with {@code heat}, the passes of {@link Heat}: each particle carries a temperature {@code t}, which
+     * conducts at the {@code κ} of the parameters and is carried by the flow. The sort moves it with the rest.
+     */
+    public FlipStep(int nx, int ny, int particles, boolean tension, boolean heat) {
         if (particles < 1) {
             throw new IllegalArgumentException("a step needs particles, got " + particles);
         }
@@ -62,7 +70,9 @@ public final class FlipStep {
         int nodes = nx * ny;
         int length = Sort.length(nx, ny);
 
-        List<String> particle = List.of("x", "y", "u", "v", "m", "j", "c00", "c01", "c10", "c11");
+        List<String> particle = heat
+                ? List.of("x", "y", "u", "v", "m", "j", "c00", "c01", "c10", "c11", "t")
+                : List.of("x", "y", "u", "v", "m", "j", "c00", "c01", "c10", "c11");
         List<String> sorted = particle.stream().map(field -> "s" + field).toList();
         for (String field : concat(particle, sorted)) {
             add(field, Body.F32, particles);
@@ -81,6 +91,11 @@ public final class FlipStep {
                 add(field, Body.F32, nodes);
             }
         }
+        if (heat) {
+            for (String field : List.of("ght", "gdt")) {
+                add(field, Body.F32, nodes);
+            }
+        }
 
         List<String> grid = List.of("gm", "gmu", "gmv");
         List<String> affine = List.of("c00", "c01", "c10", "c11");
@@ -89,6 +104,13 @@ public final class FlipStep {
         passes.add(new Pass("scatter", Flip.scatter(nx, ny), Flip.SCATTER_BUFFERS,
                 concat(concat(grid, List.of("x", "y", "u", "v", "m", "j")), concat(affine, List.of("params"))),
                 particles));
+        if (heat) {
+            passes.add(new Pass("heatClear", Heat.clear(nx, ny), Heat.CLEAR_BUFFERS, List.of("ght"), nodes));
+            passes.add(new Pass("heatScatter", Heat.scatter(nx, ny), Heat.SCATTER_BUFFERS,
+                    List.of("ght", "x", "y", "m", "t"), particles));
+            passes.add(new Pass("heatDiffuse", Heat.diffuse(nx, ny), Heat.DIFFUSE_BUFFERS,
+                    List.of("gm", "ght", "gdt", "params"), nodes));
+        }
         if (tension) {
             // The mass to a colour, then blurred; the two colour buffers take turns, and the last one written is read.
             String from = "gm";
@@ -106,6 +128,10 @@ public final class FlipStep {
             passes.add(new Pass("grid", Flip.grid(nx, ny), Flip.GRID_BUFFERS,
                     concat(grid, List.of("params", "gu", "gv")), nodes));
         }
+        if (heat) {
+            passes.add(new Pass("heatGather", Heat.gather(nx, ny), Heat.GATHER_BUFFERS,
+                    List.of("x", "y", "t", "gdt"), particles));
+        }
         passes.add(new Pass("advect", Flip.advect(nx, ny), Flip.ADVECT_BUFFERS,
                 concat(concat(List.of("x", "y", "u", "v", "j"), affine), List.of("gu", "gv", "params")), particles));
         step = List.copyOf(passes);
@@ -117,9 +143,10 @@ public final class FlipStep {
                 new Pass("scanSums", Sort.scanSums(length), Sort.SCAN_SUMS_BUFFERS, List.of("sums"), Sort.BLOCK),
                 new Pass("addOffsets", Sort.addOffsets(length), Sort.ADD_OFFSETS_BUFFERS,
                         List.of("starts", "sums", "counts"), length),
-                new Pass("permute", Sort.permute(Flip.FIELDS), Sort.permuteBuffers(Flip.FIELDS),
+                new Pass("permute", Sort.permute(particle.size()), Sort.permuteBuffers(particle.size()),
                         concat(List.of("keys", "ranks", "starts"), concat(particle, sorted)), particles),
-                new Pass("copy", Flip.copy(), Flip.COPY_BUFFERS, concat(sorted, particle), particles));
+                new Pass("copy", Flip.copy(particle.size()), Flip.copyBuffers(particle.size()), concat(sorted, particle),
+                        particles));
     }
 
     /** Every buffer the passes name, in a stable order. The counts must start at zero; the sort leaves them so. */

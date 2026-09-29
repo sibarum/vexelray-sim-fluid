@@ -75,6 +75,17 @@ public enum View {
         public String legend(Scales s) {
             return "blue lightest .. red heaviest";
         }
+    },
+
+    /**
+     * Temperature, for a scene that has one: blue for the coldest, red for the hottest, grey between. The scale is the
+     * scenario's, not fitted to the data, so a field that is cooling reads as cooling.
+     */
+    TEMPERATURE("temperature", "T") {
+        @Override
+        public String legend(Scales s) {
+            return "blue cold .. red hot";
+        }
     };
 
     private final String label;

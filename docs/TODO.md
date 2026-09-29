@@ -62,6 +62,13 @@ cannot be fixed from here at all.
       impulse carries both, and re-measure `J` from the density now and then. A beading puddle under gravity was
       dropped: at `σ` = 8000 the capillary length is 2.5 nodes, too thin to resolve.
 
+- [ ] **A lake at rest is not at rest, and its node mass creeps.** Started with every `J` at 1, the hot-spot lake
+      settles into slow currents (max 0.2 m/s, steady for 30 s) that shear a hot spot into an ellipse: good
+      evidence that temperature travels with the fluid, but not still water. And its node mass maximum rises
+      from 1.5 to 2.7 of rest over those 30 s while every `J` stays within 5%, with blocky specks along the walls
+      where `keepInside` pins particles. Not traced. Starting the lake at its own hydrostatic `J`, and looking at
+      whether the pile-up is at the walls, are the first two things to try.
+
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
       keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key
       and half the next, interleaved, so the segmented scatter's runs are about half as long as they could be.

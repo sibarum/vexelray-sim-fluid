@@ -25,7 +25,7 @@ final class Readout {
 
     /** The lines, top to bottom. */
     enum Line {
-        SCENARIO, VIEW, SCALE, BACKEND, TIME, STEPS, VOLUME, DEPTH, FROUDE, COURANT, BROKEN, ALARM, KEYS
+        SCENARIO, VIEW, SCALE, BACKEND, TIME, STEPS, VOLUME, DEPTH, FROUDE, COURANT, BROKEN, HEAT, ALARM, KEYS
     }
 
     private final Node panel;
@@ -55,7 +55,7 @@ final class Readout {
             children[line.ordinal() + 1] = node;
         }
         panel.children(children);
-        set(Line.KEYS, "1-7 view · N scenario · R reset\nspace pause · . step · C stability · = - speed");
+        set(Line.KEYS, "1-8 view · N scenario · R reset\nspace pause · . step · C stability · = - speed");
     }
 
     Node node() {

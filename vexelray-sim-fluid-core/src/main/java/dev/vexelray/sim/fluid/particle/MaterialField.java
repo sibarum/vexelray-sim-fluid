@@ -27,6 +27,19 @@ public final class MaterialField {
      */
     public static float[] tags(float[] x, float[] y, float[] m, int nx, int ny, double lightest, double heaviest) {
         boolean two = heaviest > lightest;
+        float[] tag = new float[x.length];
+        for (int p = 0; p < x.length; p++) {
+            tag[p] = two ? (float) Math.min(1, Math.max(0, (m[p] - lightest) / (heaviest - lightest))) : 0.5f;
+        }
+        return average(x, y, m, tag, nx, ny);
+    }
+
+    /**
+     * The mass-weighted average of a quantity the particles carry, on every node of an {@code nx × ny} grid, row by
+     * row from the south-west: {@code Σ w·m·value / Σ w·m} over the step's own stencil, and {@code 0} on a node no
+     * particle weighs on. A temperature, for a view, as much as a tag.
+     */
+    public static float[] average(float[] x, float[] y, float[] m, float[] value, int nx, int ny) {
         double[] weighted = new double[nx * ny];
         double[] mass = new double[nx * ny];
         double[] wx = new double[3];
@@ -38,11 +51,10 @@ public final class MaterialField {
             int row = (int) Math.min(py - 0.5, ny - 3);
             weights(px - col, wx);
             weights(py - row, wy);
-            double tag = two ? Math.min(1, Math.max(0, (m[p] - lightest) / (heaviest - lightest))) : 0.5;
             for (int k = 0; k < 9; k++) {
                 int node = (row + k / 3) * nx + col + k % 3;
                 double w = wx[k % 3] * wy[k / 3] * m[p];
-                weighted[node] += w * tag;
+                weighted[node] += w * value[p];
                 mass[node] += w;
             }
         }

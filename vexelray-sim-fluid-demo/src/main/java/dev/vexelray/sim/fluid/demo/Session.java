@@ -96,6 +96,10 @@ final class Session implements AutoCloseable {
     private double heaviestMass;
     /** Which fluid is on each node, as of the last frame that showed it; null when nothing has. */
     private float[] materials;
+    /** The temperature on each node, scaled for the view; null when nothing has shown it. */
+    private float[] temperatures;
+    /** The heat the particles started with, {@code Σ m·T}, which conduction must keep. */
+    private double heatStart;
 
     /** Simulated time of the particles, and the fraction of a step carried to the next frame. */
     private double flipTime;
@@ -157,7 +161,8 @@ final class Session implements AutoCloseable {
         }
         onScreen = display;
         float blend = (float) smooth(progress(now, viewFadeStart, VIEW_FADE_NANOS));
-        view.show(app, display[0], display[1], display[2], display[3], picture.nx(), picture.ny(), fadingFrom, shown, blend,
+        view.show(app, display[0], display[1], display[2], display[3], display[4], picture.nx(), picture.ny(), fadingFrom, shown,
+                blend,
                 scales.stepped(lastStep, 1, 1));
     }
 
@@ -194,7 +199,7 @@ final class Session implements AutoCloseable {
         lastStep = allowed / DX;
 
         float[][] read = sim.read();
-        float[][] state = {read[0], read[1], read[2], noFluid(read[0].length)};
+        float[][] state = {read[0], read[1], read[2], noFluid(read[0].length), noFluid(read[0].length)};
         Diagnostics d = Diagnostics.of(state[0], state[1], state[2], G, DRY, allowed, DX, DX);
         int clamps = sim.clamped();
         latchWater(d, clamps, allowed);
@@ -239,6 +244,7 @@ final class Session implements AutoCloseable {
                 controls.courant() > Diagnostics.COURANT_LIMIT ? " UNSTABLE BY CHOICE" : ""));
         readout.set(Line.BROKEN, String.format("broken    %d NaN/inf · %d negative · %d clamped", d.nonFinite(),
                 d.negative(), clamps));
+        heatReading();
         alarmReading();
     }
 
@@ -270,7 +276,7 @@ final class Session implements AutoCloseable {
         lastStep = dt;
 
         float[][] grid = particles.grid();
-        float[][] state = new float[4][];
+        float[][] state = new float[5][];
         for (int f = 0; f < 3; f++) {
             state[f] = new float[grid[f].length];
             for (int k = 0; k < grid[f].length; k++) {
@@ -278,6 +284,7 @@ final class Session implements AutoCloseable {
             }
         }
         state[3] = materialPlane(grid[0].length);
+        state[4] = particles.heat() ? temperaturePlane(grid[0].length) : noFluid(grid[0].length);
         // The grid gives the picture, and the mass, the speed and the broken nodes. The density and the acoustic
         // Courant number are not the grid's: node mass is speckled by where the particles fell, and a sound speed
         // rebuilt from it is too. They come from the particles' J and from the sound speed the step was sized by.
@@ -299,6 +306,24 @@ final class Session implements AutoCloseable {
                     heaviestMass);
         }
         return materials.length == cells ? materials : noFluid(cells);
+    }
+
+    /**
+     * The temperature on each node, scaled so the scenario's 0 is -1 and its 1 is +1, for the view: the mass-weighted
+     * average of the particles', as {@link #materialPlane} does for the fluid. Read back and splatted only while a view
+     * of it is on screen or fading.
+     */
+    private float[] temperaturePlane(int cells) {
+        if (shown == View.TEMPERATURE || fadingFrom == View.TEMPERATURE || temperatures == null) {
+            float[][] at = particles.positions();
+            float[] average = MaterialField.average(at[0], at[1], particles.masses(), particles.temperatures(), FLIP_N,
+                    FLIP_N);
+            temperatures = new float[average.length];
+            for (int k = 0; k < average.length; k++) {
+                temperatures[k] = 2 * average[k] - 1;
+            }
+        }
+        return temperatures.length == cells ? temperatures : noFluid(cells);
     }
 
     private float[] noFluid(int cells) {
@@ -355,6 +380,7 @@ final class Session implements AutoCloseable {
                 controls.courant() > Diagnostics.COURANT_LIMIT ? " UNSTABLE BY CHOICE" : ""));
         readout.set(Line.BROKEN, String.format("broken    %d NaN/inf nodes · node mass max %.2f", d.nonFinite(),
                 d.maxDepth()));
+        heatReading();
         alarmReading();
     }
 
@@ -372,7 +398,8 @@ final class Session implements AutoCloseable {
     }
 
     private int[] flipParams() {
-        return Flip.params(flipStep(), 0, -FLIP_G * scenario.gravity(), BULK, RHO0, scenario.sigma());
+        return Flip.params(flipStep(), 0, -FLIP_G * scenario.gravity(), BULK, RHO0, scenario.sigma(),
+                scenario.kappa());
     }
 
     /**
@@ -416,11 +443,13 @@ final class Session implements AutoCloseable {
             float[][] column = fill(next);
             int count = column[0].length;
             boolean tension = next.sigma() > 0;
-            if (particles == null || particles.particles() != count || particles.tension() != tension) {
+            boolean heat = next.kappa() > 0;
+            if (particles == null || particles.particles() != count || particles.tension() != tension
+                    || particles.heat() != heat) {
                 if (particles != null) {
                     particles.close();
                 }
-                particles = new ParticleSimulation(FLIP_N, FLIP_N, count, tension);
+                particles = new ParticleSimulation(FLIP_N, FLIP_N, count, tension, heat);
             }
             lightestMass = Double.POSITIVE_INFINITY;
             heaviestMass = 0;
@@ -430,7 +459,16 @@ final class Session implements AutoCloseable {
             }
             materials = null;
             particles.load(column[0], column[1], new float[count], new float[count], column[2], flipParams());
-            flipTime = 0;
+            heatStart = 0;
+            if (heat) {
+                float[] temperature = new float[count];
+                for (int p = 0; p < count; p++) {
+                    temperature[p] = (float) next.temperature(column[0][p], column[1][p]);
+                    heatStart += column[2][p] * temperature[p];
+                }
+                particles.temperatures(temperature);
+            }
+            temperatures = null;            flipTime = 0;
             flipCarry = 0;
             double front = 2 * Math.sqrt(FLIP_G * Scenario.COLUMN_HEIGHT);
             // g = c² makes the shader's √(gh) the sound speed, so its Froude and Courant views are Mach and acoustic.
@@ -473,6 +511,33 @@ final class Session implements AutoCloseable {
         readout.set(Line.VIEW, fading
                 ? String.format("view      %s -> %s", fadingFrom.label(), shown.label())
                 : String.format("view      %-10s %s", shown.label(), shown.quantity()));
+    }
+
+    /**
+     * The temperatures the particles carry: their range, and the total heat {@code Σ m·T} against what it started as,
+     * which conduction must keep; drift is a bug, as it is for mass. Blank for a scene without heat.
+     */
+    private void heatReading() {
+        if (particles == null || !scenario.particles() || !particles.heat()) {
+            readout.set(Line.HEAT, "");
+            return;
+        }
+        float[] t = particles.temperatures();
+        float[] m = particles.masses();
+        double low = Double.POSITIVE_INFINITY;
+        double high = Double.NEGATIVE_INFINITY;
+        double total = 0;
+        for (int p = 0; p < t.length; p++) {
+            low = Math.min(low, t[p]);
+            high = Math.max(high, t[p]);
+            total += m[p] * t[p];
+        }
+        double drift = heatStart == 0 ? 0 : (total - heatStart) / heatStart;
+        readout.set(Line.HEAT, String.format("heat      T %.3f .. %.3f · total %.2f · drift %+.1e", low, high, total,
+                drift));
+        if (Math.abs(drift) > DRIFT_ALARM) {
+            alarms.putIfAbsent("heat", String.format("t=%.3fs  heat drifted %.1e", flipTime, drift));
+        }
     }
 
     private void alarmReading() {

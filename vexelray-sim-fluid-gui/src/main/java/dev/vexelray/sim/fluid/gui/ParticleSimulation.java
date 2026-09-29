@@ -31,6 +31,7 @@ public final class ParticleSimulation implements AutoCloseable {
 
     private final FlipStep step;
     private final boolean tension;
+    private final boolean heat;
     private final Accelerator accelerator = new Accelerator();
     private final Map<String, ResidentBuffer> buffers = new LinkedHashMap<>();
     private final List<KernelHandle> handles = new ArrayList<>();
@@ -45,8 +46,14 @@ public final class ParticleSimulation implements AutoCloseable {
 
     /** As above, and with surface tension's passes if {@code tension}; its strength is a parameter. */
     public ParticleSimulation(int nx, int ny, int particles, boolean tension) {
+        this(nx, ny, particles, tension, false);
+    }
+
+    /** As above, and with each particle carrying a temperature if {@code heat}; its conductivity is a parameter. */
+    public ParticleSimulation(int nx, int ny, int particles, boolean tension, boolean heat) {
         this.tension = tension;
-        step = new FlipStep(nx, ny, particles, tension);
+        this.heat = heat;
+        step = new FlipStep(nx, ny, particles, tension, heat);
         step.buffers().forEach((name, spec) -> {
             ResidentBuffer buffer = accelerator.allocate(spec.element(), spec.length());
             buffer.write(new int[spec.length()]);   // the sort's counts must start at zero, and it leaves them so
@@ -66,6 +73,11 @@ public final class ParticleSimulation implements AutoCloseable {
 
     public int particles() {
         return step.particles;
+    }
+
+    /** Whether the particles carry a temperature. */
+    public boolean heat() {
+        return heat;
     }
 
     /** Whether this step has surface tension's passes, which its parameters then set the strength of. */
@@ -96,6 +108,19 @@ public final class ParticleSimulation implements AutoCloseable {
         }
         buffers.get("params").write(params);
         steps = 0;
+    }
+
+    /** Sets every particle's temperature, for a simulation with heat. */
+    public void temperatures(float[] t) {
+        if (!heat) {
+            throw new IllegalStateException("this simulation has no heat");
+        }
+        write("t", t);
+    }
+
+    /** Every particle's temperature. A readback, like {@link #grid}. */
+    public float[] temperatures() {
+        return read("t");
     }
 
     /** Replaces the parameters without touching the particles — the step changed mid-run, say. */

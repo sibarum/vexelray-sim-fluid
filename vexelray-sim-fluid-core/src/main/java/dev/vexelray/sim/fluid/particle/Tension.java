@@ -182,7 +182,7 @@ public final class Tension {
     }
 
     /** The index of the node {@code (di, dj)} from {@code (ni, nj)}, each coordinate held to the wall ring. */
-    private static Expr at(int nx, int ny, Expr ni, Expr nj, int di, int dj) {
+    static Expr at(int nx, int ny, Expr ni, Expr nj, int di, int dj) {
         Expr x = toInt(clamp(add(toFloat(ni), f(di)), f(Flip.WALL), f(nx - 1 - Flip.WALL)));
         Expr y = toInt(clamp(add(toFloat(nj), f(dj)), f(Flip.WALL), f(ny - 1 - Flip.WALL)));
         return add(mul(y, i(nx)), x);

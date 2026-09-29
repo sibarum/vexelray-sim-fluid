@@ -85,7 +85,7 @@ final class FluidDemoWiring extends Wiring {
 
     /** Every control is one key, and every key only records a request; see {@link Controls}. */
     private static void keys(Gui gui, Controls controls) {
-        Key[] digits = {Key.DIGIT_1, Key.DIGIT_2, Key.DIGIT_3, Key.DIGIT_4, Key.DIGIT_5, Key.DIGIT_6, Key.DIGIT_7};
+        Key[] digits = {Key.DIGIT_1, Key.DIGIT_2, Key.DIGIT_3, Key.DIGIT_4, Key.DIGIT_5, Key.DIGIT_6, Key.DIGIT_7, Key.DIGIT_8};
         View[] views = View.values();
         for (int k = 0; k < views.length && k < digits.length; k++) {
             View v = views[k];

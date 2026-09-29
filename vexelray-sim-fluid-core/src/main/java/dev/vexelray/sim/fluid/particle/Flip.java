@@ -92,18 +92,19 @@ import static dev.vexelray.sim.fluid.ir.Body.v;
  */
 public final class Flip {
 
-    /** {@code [dt, gx, gy, bulk, rho0, sigma]}, see {@link #params}. */
-    public static final int PARAM_COUNT = 6;
+    /** {@code [dt, gx, gy, bulk, rho0, sigma, kappa]}, see {@link #params}. */
+    public static final int PARAM_COUNT = 7;
 
     /** How many times the colour is blurred before its gradient is taken; see {@link Tension}. */
     public static final int TENSION_BLURS = 6;
 
-    private static final int DT = 0;
+    static final int DT = 0;
     private static final int GX = 1;
     private static final int GY = 2;
     private static final int BULK = 3;
     static final int RHO0 = 4;
     private static final int SIGMA = 5;
+    static final int KAPPA = 6;
 
     /**
      * Particles are kept this far inside the grid, so they deposit on nodes {@code 1 .. n−2} only. The wall is the
@@ -137,11 +138,19 @@ public final class Flip {
      * second squared, which a step built with tension turns into a force at the interface. Zero is none.
      */
     public static int[] params(double dt, double gx, double gy, double bulk, double rho0, double sigma) {
+        return params(dt, gx, gy, bulk, rho0, sigma, 0);
+    }
+
+    /**
+     * As above, with heat conducted at {@code kappa}, a diffusivity in node spacings squared per second, which a step
+     * built with heat turns into the spreading of the particles' temperatures. Zero is none.
+     */
+    public static int[] params(double dt, double gx, double gy, double bulk, double rho0, double sigma, double kappa) {
         if (!(dt > 0) || !(bulk >= 0) || !(rho0 > 0)) {
             throw new IllegalArgumentException("dt > 0, bulk >= 0 and rho0 > 0, got dt " + dt + ", bulk " + bulk
                     + ", rho0 " + rho0);
         }
-        return new int[] {bits(dt), bits(gx), bits(gy), bits(bulk), bits(rho0), bits(sigma)};
+        return new int[] {bits(dt), bits(gx), bits(gy), bits(bulk), bits(rho0), bits(sigma), bits(kappa)};
     }
 
     /** The largest stable step for sound speed {@code √(bulk/rho0)} and flow up to {@code speed}: {@code C·1/(c+|v|)}. */
@@ -387,7 +396,7 @@ public final class Flip {
      * <p>The position is clamped to {@code [½, n − 3/2]} and the base to {@code n − 3} at most, so the stencil stays
      * on the grid and no weight goes negative wherever a particle is. A particle inside the walls is never clamped.
      */
-    private record Stencil(LocalVar base, LocalVar fx, LocalVar fy, LocalVar[] wx, LocalVar[] wy) {
+    record Stencil(LocalVar base, LocalVar fx, LocalVar fy, LocalVar[] wx, LocalVar[] wy) {
         static Stencil of(Body b, Expr p, int nx, int ny, Buffer px, Buffer py) {
             LocalVar x = b.let("x", clamp(load(px, p), f(0.5), f(nx - 1.5)));
             LocalVar y = b.let("y", clamp(load(py, p), f(0.5), f(ny - 1.5)));
@@ -427,19 +436,33 @@ public final class Flip {
     /** The fields a particle of this fluid has, {@code x, y, u, v, m, J, c00, c01, c10, c11}, which a sort must move. */
     public static final int FIELDS = 10;
 
-    private static final String[] NAMES = {"X", "Y", "U", "V", "M", "J", "C00", "C01", "C10", "C11"};
+    /** The fields of a heated particle: those above, then its temperature. */
+    public static final int HEAT_FIELDS = FIELDS + 1;
+
+    private static final String[] NAMES = {"X", "Y", "U", "V", "M", "J", "C00", "C01", "C10", "C11", "T"};
 
     /** The sorted fields in, then the particle fields out, in {@link #FIELDS}'s order each. */
-    public static final List<Buffer> COPY_BUFFERS = IntStream.range(0, 2 * FIELDS)
-            .mapToObj(k -> new Buffer((k < FIELDS ? "sorted" : "p") + NAMES[k % FIELDS], k, F32))
-            .toList();
+    public static final List<Buffer> COPY_BUFFERS = copyBuffers(FIELDS);
+
+    /** The sorted fields in, then the particle fields out, for a particle of {@code fields} fields. */
+    public static List<Buffer> copyBuffers(int fields) {
+        return IntStream.range(0, 2 * fields)
+                .mapToObj(k -> new Buffer((k < fields ? "sorted" : "p") + NAMES[k % fields], k, F32))
+                .toList();
+    }
 
     /** One invocation per particle: the sort's output copied back over the particles, so they stay in one place. */
     public static Function copy() {
+        return copy(FIELDS);
+    }
+
+    /** {@link #copy()} for a particle of {@code fields} fields. */
+    public static Function copy(int fields) {
+        List<Buffer> buffers = copyBuffers(fields);
         Body b = new Body();
         LocalVar p = b.let("p", new Expr.InvocationId());
-        for (int f = 0; f < FIELDS; f++) {
-            b.store(COPY_BUFFERS.get(FIELDS + f), v(p), load(COPY_BUFFERS.get(f), v(p)));
+        for (int f = 0; f < fields; f++) {
+            b.store(buffers.get(fields + f), v(p), load(buffers.get(f), v(p)));
         }
         return function("flipCopy", b);
     }
