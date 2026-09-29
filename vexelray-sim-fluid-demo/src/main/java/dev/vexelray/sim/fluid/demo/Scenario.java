@@ -189,6 +189,154 @@ enum Scenario {
     },
 
     /**
+     * The convection box, with the lid warm and the water started below the boiling point, and a density law with a
+     * step in it: above 0.72 the fluid weighs a tenth of what it did, and below it the weight comes back. The floor is at
+     * 1, so a hot layer at the floor foams, the foam rises fast and dies where it cools below the threshold. A sixth of the nodes have a nucleation site, so the foam
+     * starts at the boiling point and in many small places: a rolling boil. Key 7 shows the foam, in blue; key 8 the heat.
+     */
+    BOILING_WITH_STONES("boiling with stones: foam forms early and everywhere", 1.3, true) {
+        @Override
+        double depth(double x, double y) {
+            return 0;
+        }
+
+        @Override
+        double density(int col, int row) {
+            return col < BOX_WIDTH && row < BOX_WIDTH ? WATER : 0;
+        }
+
+        @Override
+        double kappa() {
+            return 25;
+        }
+
+        @Override
+        double beta() {
+            return 0.3;
+        }
+
+        @Override
+        double gravity() {
+            return 0.3;
+        }
+
+        @Override
+        double compression() {
+            return 0.97;
+        }
+
+        @Override
+        double relaxation() {
+            return 1;
+        }
+
+        @Override
+        double foamBoil() {
+            return 0.72;
+        }
+
+        @Override
+        double foamDrop() {
+            return 0.9;
+        }
+
+        @Override
+        double cold() {
+            return 0.2;
+        }
+
+        @Override
+        double superheat() {
+            return 0.12;
+        }
+
+        @Override
+        double stones() {
+            return 0.15;
+        }
+
+        @Override
+        double temperature(double x, double y) {
+            double noise = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+            noise -= Math.floor(noise);
+            return 0.6 + 0.04 * (noise - 0.5);
+        }
+    },
+
+    /**
+     * As with stones, with none: no node has a nucleation site, so the water climbs 0.12 past the boiling point before it
+     * foams, and then a whole superheated region goes at once, in a few large pockets. Bumping.
+     */
+    BOILING_WITHOUT_STONES("boiling without stones: superheat, then big pockets at once", 1.3, true) {
+        @Override
+        double depth(double x, double y) {
+            return 0;
+        }
+
+        @Override
+        double density(int col, int row) {
+            return col < BOX_WIDTH && row < BOX_WIDTH ? WATER : 0;
+        }
+
+        @Override
+        double kappa() {
+            return 25;
+        }
+
+        @Override
+        double beta() {
+            return 0.3;
+        }
+
+        @Override
+        double gravity() {
+            return 0.3;
+        }
+
+        @Override
+        double compression() {
+            return 0.97;
+        }
+
+        @Override
+        double relaxation() {
+            return 1;
+        }
+
+        @Override
+        double foamBoil() {
+            return 0.72;
+        }
+
+        @Override
+        double foamDrop() {
+            return 0.9;
+        }
+
+        @Override
+        double cold() {
+            return 0.2;
+        }
+
+        @Override
+        double superheat() {
+            return 0.12;
+        }
+
+        @Override
+        double stones() {
+            return 0;
+        }
+
+        @Override
+        double temperature(double x, double y) {
+            double noise = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+            noise -= Math.floor(noise);
+            return 0.6 + 0.04 * (noise - 0.5);
+        }
+    },
+
+    /**
      * A rectangle of liquid floating free, no gravity, with surface tension: it pulls its corners in and swings between
      * a long and a tall oval. The tension is weak on purpose: it holds together for ten seconds or so, where a strong
      * one throws particles off the rim at once, and after that the drop drifts (see {@code docs/TODO.md}).
@@ -330,6 +478,41 @@ enum Scenario {
      */
     double beta() {
         return 0;
+    }
+
+    /** The temperature the floor is held at in a convection scenario. */
+    double hot() {
+        return 1;
+    }
+
+    /** The temperature the top is held at in a convection scenario. */
+    double cold() {
+        return 0;
+    }
+
+    /** How much the fluid weighs less by, as a fraction of its weight, where it is past the boiling point; none if 0. */
+    double foamDrop() {
+        return 0;
+    }
+
+    /** The temperature above which the fluid is foam, where there is a nucleation site. */
+    double foamBoil() {
+        return 0.5;
+    }
+
+    /** The temperature range the foam comes on over: sharp if small. */
+    double foamWidth() {
+        return 0.03;
+    }
+
+    /** How far past the boiling point a node with no nucleation site must be before it foams. */
+    double superheat() {
+        return 0;
+    }
+
+    /** The fraction of nodes that have a nucleation site, boiling stones: 1 is foam wherever it is hot enough. */
+    double stones() {
+        return 1;
     }
 
     /** The temperature of a particle at {@code (x, y)} in node units, from 0 (coldest) to 1 (hottest); for a scenario with heat. */

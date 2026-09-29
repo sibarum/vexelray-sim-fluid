@@ -146,6 +146,17 @@ public final class ParticleSimulation implements AutoCloseable {
         write("t", t);
     }
 
+    /**
+     * Sets which nodes have a nucleation site, 1 there and 0 elsewhere, for a simulation with convection: boiling stones,
+     * where the foam forms at the boiling point and not {@code superheat} above it.
+     */
+    public void sites(float[] site) {
+        if (!convection) {
+            throw new IllegalStateException("this simulation has no convection");
+        }
+        write("gsite", site);
+    }
+
     /** Every particle's temperature. A readback, like {@link #grid}. */
     public float[] temperatures() {
         return read("t");

@@ -66,15 +66,30 @@ class ConvectionTest {
 
     /** How far the hot fluid's mean height moved, in cells, over {@code seconds}. */
     private static double rise(Backend backend, double beta, double seconds) {
+        return rise(backend, beta, 1, 0, 0, seconds);
+    }
+
+    /** As above, with the bubble at {@code hot} and foam: {@code drop} of the weight lost above {@code boil}. */
+    private static double rise(Backend backend, double beta, double hot, double boil, double drop, double seconds) {
+        return rise(backend, beta, hot, boil, drop, 0, 0, seconds);
+    }
+
+    /** As above, and a node with no nucleation site needs {@code superheat} more; {@code site} is 1 everywhere or 0. */
+    private static double rise(Backend backend, double beta, double hot, double boil, double drop, double superheat,
+            double site, double seconds) {
         double bulk = SOUND * SOUND;
         double dt = Flip.stableStep(bulk, 1, 60, 0.3);
-        Cloud c = box(0, 1);
+        Cloud c = box(0, hot);
         int count = c.x().length;
         FlipStep step = new FlipStep(N, N, count, false, true, true);
         try (Rig rig = Rig.on(backend, step)) {
-            // Reference 0: the cold fluid weighs what it does; the hot is lighter by beta. Neither hot nor cold is used,
-            // since the thermostat's bands are far from this bubble and it starts at the temperatures it should have.
-            load(rig, c, Flip.params(dt, 0, -G, bulk, 1, 0, 0, beta, 0, 0, 0));
+            // Reference 0: the cold fluid weighs what it does; the hot is lighter by beta, and by foam above the boiling
+            // point. Neither hot nor cold is used, since the thermostat's bands are far from this bubble and it starts at
+            // the temperatures it should have.
+            load(rig, c, Flip.params(dt, 0, -G, bulk, 1, 0, 0, beta, 0, 0, 0, 0, boil, 0.02, drop, superheat));
+            float[] sites = new float[N * N];
+            java.util.Arrays.fill(sites, (float) site);
+            rig.write("gsite", bits(sites));
             double before = hotHeight(c.y(), c.t());
             int steps = (int) Math.ceil(seconds / dt);
             for (int s = 0; s < steps; s++) {
@@ -91,7 +106,7 @@ class ConvectionTest {
         double sum = 0;
         int n = 0;
         for (int p = 0; p < y.length; p++) {
-            if (t[p] > 0.5) {
+            if (t[p] > 0.1) {
                 sum += y[p];
                 n++;
             }
@@ -108,6 +123,39 @@ class ConvectionTest {
                 backend, without, with);
         assertTrue(without < 1, backend + ": with no thermal expansion the bubble moved " + without);
         assertTrue(with > without + 2.5, backend + ": the bubble rose only " + (with - without) + " cells");
+    }
+
+    /**
+     * Foam is a threshold: the same bubble just under the boiling point stays where it is, and just over it rises. There
+     * is no thermal expansion here, so the foam is the only thing that makes the bubble lighter.
+     */
+    @ParameterizedTest
+    @EnumSource(Backend.class)
+    void aBubbleRisesOnlyOnceItIsPastTheBoilingPoint(Backend backend) {
+        double under = rise(backend, 0, 0.45, 0.5, 0.8, 0.5);
+        double over = rise(backend, 0, 0.55, 0.5, 0.8, 0.5);
+        double none = rise(backend, 0, 0.55, 0.5, 0, 0.5);
+        System.out.printf("[foam] %s: the bubble's height moved %+.2f cells at 0.45, %+.2f at 0.55, and %+.2f at 0.55 with no foam"
+                + " (boiling point 0.5)%n", backend, under, over, none);
+        assertTrue(over > under + 2.5, backend + ": past the boiling point it rose only " + (over - under) + " cells");
+        assertTrue(over > none + 2.5, backend + ": foam did not lift it: " + over + " against " + none);
+        assertEquals(none, under, 1.0, backend + ": under the boiling point it moved by " + (under - none));
+    }
+
+    /**
+     * Boiling stones: liquid at 0.7, with the boiling point at 0.5 and 0.4 of superheat needed where there is no stone,
+     * stays liquid without stones and foams with them.
+     */
+    @ParameterizedTest
+    @EnumSource(Backend.class)
+    void stonesLetFoamFormAtTheBoilingPointAndWithoutThemItWaitsForSuperheat(Backend backend) {
+        double without = rise(backend, 0, 0.7, 0.5, 0.8, 0.4, 0, 0.5);
+        double with = rise(backend, 0, 0.7, 0.5, 0.8, 0.4, 1, 0.5);
+        double none = rise(backend, 0, 0.7, 0.5, 0, 0.4, 1, 0.5);
+        System.out.printf("[stones] %s: at 0.7 the bubble moved %+.2f cells with no stones, %+.2f with stones, %+.2f with stones and no foam%n",
+                backend, without, with, none);
+        assertEquals(none, without, 1.0, backend + ": with no stones it foamed anyway: " + without);
+        assertTrue(with > without + 2.5, backend + ": stones did not let it foam: " + with + " against " + without);
     }
 
     @ParameterizedTest

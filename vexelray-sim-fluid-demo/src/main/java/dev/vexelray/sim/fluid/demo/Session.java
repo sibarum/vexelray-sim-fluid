@@ -96,6 +96,8 @@ final class Session implements AutoCloseable {
     private double heaviestMass;
     /** Which fluid is on each node, as of the last frame that showed it; null when nothing has. */
     private float[] materials;
+    /** Which nodes have a nucleation site, 1 or 0; null outside a convection scenario. */
+    private float[] sites;
     /** The temperature on each node, scaled for the view; null when nothing has shown it. */
     private float[] temperatures;
     /** The heat the particles started with, {@code Σ m·T}, which conduction must keep. */
@@ -300,6 +302,9 @@ final class Session implements AutoCloseable {
      * view that shows it is on screen or fading; otherwise the last plane stands, unseen.
      */
     private float[] materialPlane(int cells) {
+        if (scenario.foamDrop() > 0 && particles.convection()) {
+            return foamPlane(cells);
+        }
         if (shown == View.MATERIAL || fadingFrom == View.MATERIAL || materials == null) {
             float[][] at = particles.positions();
             materials = MaterialField.tags(at[0], at[1], particles.masses(), FLIP_N, FLIP_N, lightestMass,
@@ -320,10 +325,30 @@ final class Session implements AutoCloseable {
                     FLIP_N);
             temperatures = new float[average.length];
             for (int k = 0; k < average.length; k++) {
-                temperatures[k] = 2 * average[k] - 1;
+                temperatures[k] = (float) (2 * (average[k] - scenario.cold()) / (scenario.hot() - scenario.cold()) - 1);
             }
         }
         return temperatures.length == cells ? temperatures : noFluid(cells);
+    }
+
+    /**
+     * Where the fluid is foam, for the material view, as the grid's density law has it: from the nodes' mean temperature,
+     * a smooth step past the boiling point, which is {@code superheat} higher where there is no nucleation site. Foam is 0,
+     * the lightest, and liquid 1, so the view shows foam blue. Read back only while the view is up.
+     */
+    private float[] foamPlane(int cells) {
+        if (shown == View.MATERIAL || fadingFrom == View.MATERIAL || materials == null) {
+            float[][] at = particles.positions();
+            float[] average = MaterialField.average(at[0], at[1], particles.masses(), particles.temperatures(), FLIP_N,
+                    FLIP_N);
+            materials = new float[average.length];
+            for (int k = 0; k < average.length; k++) {
+                double threshold = scenario.foamBoil() + scenario.superheat() * (1 - (sites == null ? 0 : sites[k]));
+                double into = Math.min(1, Math.max(0, (average[k] - threshold) / Math.max(scenario.foamWidth(), 1e-6)));
+                materials[k] = (float) (1 - into * into * (3 - 2 * into));
+            }
+        }
+        return materials.length == cells ? materials : noFluid(cells);
     }
 
     private float[] noFluid(int cells) {
@@ -399,7 +424,8 @@ final class Session implements AutoCloseable {
 
     private int[] flipParams() {
         return Flip.params(flipStep(), 0, -FLIP_G * scenario.gravity(), BULK, RHO0, scenario.sigma(),
-                scenario.kappa(), scenario.beta(), 0.5, 1, 0, scenario.relaxation());
+                scenario.kappa(), scenario.beta(), 0.5, scenario.hot(), scenario.cold(), scenario.relaxation(), scenario.foamBoil(),
+                scenario.foamWidth(), scenario.foamDrop(), scenario.superheat());
     }
 
     /**
@@ -470,6 +496,15 @@ final class Session implements AutoCloseable {
                     heatStart += column[2][p] * temperature[p];
                 }
                 particles.temperatures(temperature);
+            }
+            if (convection) {
+                // Boiling stones: a fixed random set of nodes, a fraction of them the scenario's; the same set each reset.
+                sites = new float[FLIP_N * FLIP_N];
+                Random stones = new Random(7);
+                for (int k = 0; k < sites.length; k++) {
+                    sites[k] = stones.nextDouble() < next.stones() ? 1f : 0f;
+                }
+                particles.sites(sites);
             }
             if (next.compression() != 1) {
                 float[] compressed = new float[count];
@@ -542,8 +577,8 @@ final class Session implements AutoCloseable {
         }
         if (scenario.beta() > 0) {
             // The floor and the lid add and take away heat, so there is no total to keep; the mean is what shows the balance.
-            readout.set(Line.HEAT, String.format("heat      T %.3f .. %.3f · mean %.3f · floor 1, lid 0", low, high,
-                    total / totalMass(m)));
+            readout.set(Line.HEAT, String.format("heat      T %.3f .. %.3f · mean %.3f · floor %.2f, lid %.2f", low, high,
+                    total / totalMass(m), scenario.hot(), scenario.cold()));
             return;
         }
         double drift = heatStart == 0 ? 0 : (total - heatStart) / heatStart;

@@ -92,8 +92,8 @@ import static dev.vexelray.sim.fluid.ir.Body.v;
  */
 public final class Flip {
 
-    /** {@code [dt, gx, gy, bulk, rho0, sigma, kappa, beta, reference, hot, cold, relax]}, see {@link #params}. */
-    public static final int PARAM_COUNT = 12;
+    /** {@code [dt, gx, gy, bulk, rho0, sigma, kappa, beta, reference, hot, cold, relax, boil, width, drop, superheat]}, see {@link #params}. */
+    public static final int PARAM_COUNT = 16;
 
     /** How many times the colour is blurred before its gradient is taken; see {@link Tension}. */
     public static final int TENSION_BLURS = 6;
@@ -110,6 +110,10 @@ public final class Flip {
     static final int HOT = 9;
     static final int COLD = 10;
     static final int RELAX = 11;
+    static final int BOIL = 12;
+    static final int WIDTH = 13;
+    static final int DROP = 14;
+    static final int SUPERHEAT = 15;
 
     /**
      * Particles are kept this far inside the grid, so they deposit on nodes {@code 1 .. n−2} only. The wall is the
@@ -171,12 +175,34 @@ public final class Flip {
      */
     public static int[] params(double dt, double gx, double gy, double bulk, double rho0, double sigma, double kappa,
             double beta, double reference, double hot, double cold, double relax) {
+        return params(dt, gx, gy, bulk, rho0, sigma, kappa, beta, reference, hot, cold, relax, 0, 1, 0);
+    }
+
+    /**
+     * As above, with foam: fluid hotter than {@code boil} weighs less by {@code drop} of its weight, the change coming on
+     * over {@code width} in temperature by a smooth step, so the density falls sharply across the threshold and rises
+     * back below it. A step built with convection applies it in the same place as the thermal expansion.
+     */
+    public static int[] params(double dt, double gx, double gy, double bulk, double rho0, double sigma, double kappa,
+            double beta, double reference, double hot, double cold, double relax, double boil, double width,
+            double drop) {
+        return params(dt, gx, gy, bulk, rho0, sigma, kappa, beta, reference, hot, cold, relax, boil, width, drop, 0);
+    }
+
+    /**
+     * As above, with {@code superheat}: a node with no nucleation site, in the site buffer a convection step reads, foams
+     * only {@code superheat} above the boiling point, and one with a site at it. With no sites, or all, it is the plain
+     * threshold; with few, the liquid climbs past the boiling point until it goes all at once.
+     */
+    public static int[] params(double dt, double gx, double gy, double bulk, double rho0, double sigma, double kappa,
+            double beta, double reference, double hot, double cold, double relax, double boil, double width,
+            double drop, double superheat) {
         if (!(dt > 0) || !(bulk >= 0) || !(rho0 > 0)) {
             throw new IllegalArgumentException("dt > 0, bulk >= 0 and rho0 > 0, got dt " + dt + ", bulk " + bulk
                     + ", rho0 " + rho0);
         }
         return new int[] {bits(dt), bits(gx), bits(gy), bits(bulk), bits(rho0), bits(sigma), bits(kappa), bits(beta), bits(reference),
-                bits(hot), bits(cold), bits(relax)};
+                bits(hot), bits(cold), bits(relax), bits(boil), bits(width), bits(drop), bits(superheat)};
     }
 
     /** The largest stable step for sound speed {@code √(bulk/rho0)} and flow up to {@code speed}: {@code C·1/(c+|v|)}. */
@@ -297,9 +323,11 @@ public final class Flip {
     }
 
     public static final Buffer GRID_HEAT = new Buffer("gridHt", 6, F32);
-    /** {@link #GRID_BUFFERS}, then the heat the scatter left, for {@link #gridWithBuoyancy}. */
+    /** Per node, 1 where there is a nucleation site and 0 where there is none; written by the host, read by the grid. */
+    public static final Buffer GRID_SITE = new Buffer("gridSite", 7, F32);
+    /** {@link #GRID_BUFFERS}, then the heat the scatter left and the nucleation sites, for {@link #gridWithBuoyancy}. */
     public static final List<Buffer> BUOYANT_GRID_BUFFERS = List.of(GRID_M, GRID_MU, GRID_MV, GRID_PARAMS, GRID_U,
-            GRID_V, GRID_HEAT);
+            GRID_V, GRID_HEAT, GRID_SITE);
 
     /**
      * {@link #grid}, with gravity scaled on each node by {@code 1 − β·(T − T_ref)}, {@code T} being the node's heat over its
@@ -328,9 +356,16 @@ public final class Flip {
                 // What gravity is worth here: 1, or less where the fluid is hotter than the reference and more where colder.
                 LocalVar weight = wet.let("weight", f(1));
                 if (buoyancy) {
-                    Expr temperature = div(load(GRID_HEAT, v(node)), v(m));
+                    LocalVar temperature = wet.let("temperature", div(load(GRID_HEAT, v(node)), v(m)));
                     wet.set(weight, sub(f(1), mul(load(GRID_PARAMS, i(BETA)),
-                            sub(temperature, load(GRID_PARAMS, i(REFERENCE))))));
+                            sub(v(temperature), load(GRID_PARAMS, i(REFERENCE))))));
+                    // Foam: a smooth step from 0 at the boiling point to 1 a width above it, times the drop in weight.
+                    Expr threshold = add(load(GRID_PARAMS, i(BOIL)),
+                            mul(load(GRID_PARAMS, i(SUPERHEAT)), sub(f(1), load(GRID_SITE, v(node)))));
+                    LocalVar into = wet.let("into", clamp(div(sub(v(temperature), threshold),
+                            max(load(GRID_PARAMS, i(WIDTH)), f(1e-6))), f(0), f(1)));
+                    LocalVar foam = wet.let("foam", mul(mul(v(into), v(into)), sub(f(3), mul(f(2), v(into)))));
+                    wet.set(weight, sub(v(weight), mul(load(GRID_PARAMS, i(DROP)), v(foam))));
                 }
                 wet.set(u, add(div(load(GRID_MU, v(node)), v(m)),
                         mul(v(dt), mul(load(GRID_PARAMS, i(GX)), v(weight)))));

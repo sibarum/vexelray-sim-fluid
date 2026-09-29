@@ -73,6 +73,18 @@ cannot be fixed from here at all.
       and with it the node mass stays at 1.9 of rest instead of climbing to 2.8. It is for one fluid and only where
       the mass is at least 0.8 of rest, and no other scenario uses it yet; the lake at rest would be the test.
 
+- [ ] **Foam has a threshold but no memory and no latent heat, so it is not yet a roaring boil.** The density law
+      (`Flip.gridWithBuoyancy`: weight falls by `drop` across `boil` over `width`, and by `superheat` more where a
+      node has no nucleation site) makes stones give a fine grain of small pockets and no stones give a few
+      coherent ones (`ConvectionTest`; the two boiling scenarios). But foam is a function of a node's temperature
+      at that instant: nothing holds a liquid at the boiling point while it foams, so if the whole bulk climbed past
+      the threshold everything would go light at once and buoyancy would have nothing left to drive. The scenarios
+      are tuned to keep the core under it (floor 1, lid 0.2, boiling point 0.72). What real boiling does is latent
+      heat, which spends the heat on the foam and holds T near the boiling point, and a lag, so foam takes time to
+      form and collapse: a per-particle fraction `phi` that follows T with a rate and takes heat from it. The
+      fraction of nodes with a stone is `Scenario.stones()`. The void at the lid, where the cold plume pulls the
+      fluid away, is still there at 16 s.
+
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
       keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key
       and half the next, interleaved, so the segmented scatter's runs are about half as long as they could be.

@@ -117,6 +117,9 @@ public final class FlipStep {
                 add(field, Body.F32, nodes);
             }
         }
+        if (convection) {
+            add("gsite", Body.F32, nodes);   // the nucleation sites; written by the host, zero if none
+        }
 
         List<String> grid = List.of("gm", "gmu", "gmv");
         List<String> affine = List.of("c00", "c01", "c10", "c11");
@@ -147,7 +150,7 @@ public final class FlipStep {
                     concat(grid, List.of("params", "gu", "gv", "txx", "tyy", "txy", from)), nodes));
         } else if (convection) {
             passes.add(new Pass("grid", Flip.gridWithBuoyancy(nx, ny), Flip.BUOYANT_GRID_BUFFERS,
-                    concat(grid, List.of("params", "gu", "gv", "ght")), nodes));
+                    concat(grid, List.of("params", "gu", "gv", "ght", "gsite")), nodes));
         } else {
             passes.add(new Pass("grid", Flip.grid(nx, ny), Flip.GRID_BUFFERS,
                     concat(grid, List.of("params", "gu", "gv")), nodes));
