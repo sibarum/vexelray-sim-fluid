@@ -92,8 +92,8 @@ import static dev.vexelray.sim.fluid.ir.Body.v;
  */
 public final class Flip {
 
-    /** {@code [dt, gx, gy, bulk, rho0, sigma, kappa]}, see {@link #params}. */
-    public static final int PARAM_COUNT = 7;
+    /** {@code [dt, gx, gy, bulk, rho0, sigma, kappa, beta, reference, hot, cold, relax]}, see {@link #params}. */
+    public static final int PARAM_COUNT = 12;
 
     /** How many times the colour is blurred before its gradient is taken; see {@link Tension}. */
     public static final int TENSION_BLURS = 6;
@@ -105,6 +105,11 @@ public final class Flip {
     static final int RHO0 = 4;
     private static final int SIGMA = 5;
     static final int KAPPA = 6;
+    static final int BETA = 7;
+    static final int REFERENCE = 8;
+    static final int HOT = 9;
+    static final int COLD = 10;
+    static final int RELAX = 11;
 
     /**
      * Particles are kept this far inside the grid, so they deposit on nodes {@code 1 .. n−2} only. The wall is the
@@ -146,11 +151,32 @@ public final class Flip {
      * built with heat turns into the spreading of the particles' temperatures. Zero is none.
      */
     public static int[] params(double dt, double gx, double gy, double bulk, double rho0, double sigma, double kappa) {
+        return params(dt, gx, gy, bulk, rho0, sigma, kappa, 0, 0, 0, 0);
+    }
+
+    /**
+     * As above, with buoyancy: gravity on a node is scaled by {@code 1 − beta·(T − reference)}, so fluid hotter than
+     * {@code reference} is lighter and rises, and colder sinks; and a thermostat that holds the particles in a band at the
+     * floor at {@code hot} and those at the top at {@code cold}. A step built with convection takes these; one without
+     * ignores them.
+     */
+    public static int[] params(double dt, double gx, double gy, double bulk, double rho0, double sigma, double kappa,
+            double beta, double reference, double hot, double cold) {
+        return params(dt, gx, gy, bulk, rho0, sigma, kappa, beta, reference, hot, cold, 0);
+    }
+
+    /**
+     * As above, with {@code relax}: the rate per second at which each particle's {@code J} is drawn toward the volume its
+     * neighbourhood's mass says it has, in a step built with relaxation. Zero is none.
+     */
+    public static int[] params(double dt, double gx, double gy, double bulk, double rho0, double sigma, double kappa,
+            double beta, double reference, double hot, double cold, double relax) {
         if (!(dt > 0) || !(bulk >= 0) || !(rho0 > 0)) {
             throw new IllegalArgumentException("dt > 0, bulk >= 0 and rho0 > 0, got dt " + dt + ", bulk " + bulk
                     + ", rho0 " + rho0);
         }
-        return new int[] {bits(dt), bits(gx), bits(gy), bits(bulk), bits(rho0), bits(sigma), bits(kappa)};
+        return new int[] {bits(dt), bits(gx), bits(gy), bits(bulk), bits(rho0), bits(sigma), bits(kappa), bits(beta), bits(reference),
+                bits(hot), bits(cold), bits(relax)};
     }
 
     /** The largest stable step for sound speed {@code √(bulk/rho0)} and flow up to {@code speed}: {@code C·1/(c+|v|)}. */
@@ -270,7 +296,25 @@ public final class Flip {
         return grid(nx, ny, true);
     }
 
+    public static final Buffer GRID_HEAT = new Buffer("gridHt", 6, F32);
+    /** {@link #GRID_BUFFERS}, then the heat the scatter left, for {@link #gridWithBuoyancy}. */
+    public static final List<Buffer> BUOYANT_GRID_BUFFERS = List.of(GRID_M, GRID_MU, GRID_MV, GRID_PARAMS, GRID_U,
+            GRID_V, GRID_HEAT);
+
+    /**
+     * {@link #grid}, with gravity scaled on each node by {@code 1 − β·(T − T_ref)}, {@code T} being the node's heat over its
+     * mass: Boussinesq buoyancy, in which the only thing temperature does to the fluid is make it lighter or heavier
+     * under gravity. It does not run with tension, which takes the same bindings.
+     */
+    public static Function gridWithBuoyancy(int nx, int ny) {
+        return grid(nx, ny, false, true);
+    }
+
     private static Function grid(int nx, int ny, boolean tension) {
+        return grid(nx, ny, tension, false);
+    }
+
+    private static Function grid(int nx, int ny, boolean tension, boolean buoyancy) {
         Body b = new Body();
         LocalVar node = b.let("node", new Expr.InvocationId());
         b.when(lt(v(node), i(nx * ny)), t -> {
@@ -281,8 +325,17 @@ public final class Flip {
             LocalVar w = t.let("w", f(0));
             t.when(gt(v(m), f(EMPTY)), wet -> {
                 LocalVar dt = wet.let("dt", load(GRID_PARAMS, i(DT)));
-                wet.set(u, add(div(load(GRID_MU, v(node)), v(m)), mul(v(dt), load(GRID_PARAMS, i(GX)))));
-                wet.set(w, add(div(load(GRID_MV, v(node)), v(m)), mul(v(dt), load(GRID_PARAMS, i(GY)))));
+                // What gravity is worth here: 1, or less where the fluid is hotter than the reference and more where colder.
+                LocalVar weight = wet.let("weight", f(1));
+                if (buoyancy) {
+                    Expr temperature = div(load(GRID_HEAT, v(node)), v(m));
+                    wet.set(weight, sub(f(1), mul(load(GRID_PARAMS, i(BETA)),
+                            sub(temperature, load(GRID_PARAMS, i(REFERENCE))))));
+                }
+                wet.set(u, add(div(load(GRID_MU, v(node)), v(m)),
+                        mul(v(dt), mul(load(GRID_PARAMS, i(GX)), v(weight)))));
+                wet.set(w, add(div(load(GRID_MV, v(node)), v(m)),
+                        mul(v(dt), mul(load(GRID_PARAMS, i(GY)), v(weight)))));
                 if (tension) {
                     LocalVar[] force = Tension.force(wet, nx, ny, GRID_COLOUR, GRID_TXX, GRID_TYY, GRID_TXY, v(ni), v(nj));
                     // dt · σ · F / max(m, floor · ρ₀)
@@ -299,7 +352,7 @@ public final class Flip {
             t.store(GRID_U, v(node), v(u));
             t.store(GRID_V, v(node), v(w));
         });
-        return function(tension ? "flipGridWithTension" : "flipGrid", b);
+        return function(tension ? "flipGridWithTension" : buoyancy ? "flipGridWithBuoyancy" : "flipGrid", b);
     }
 
     // --- advect --------------------------------------------------------------------------------------------
@@ -327,9 +380,38 @@ public final class Flip {
      * inside, with the velocity into the wall dropped.
      */
     public static Function advect(int nx, int ny) {
+        return advect(nx, ny, false);
+    }
+
+    public static final Buffer ADVECT_GRID_M = new Buffer("gridM", 12, F32);
+    /** {@link #ADVECT_BUFFERS}, then the mass the scatter left, for {@link #advectRelaxing}. */
+    public static final List<Buffer> RELAXING_ADVECT_BUFFERS = List.of(ADVECT_X, ADVECT_Y, ADVECT_U, ADVECT_V, ADVECT_J,
+            ADVECT_C.get(0), ADVECT_C.get(1), ADVECT_C.get(2), ADVECT_C.get(3), ADVECT_GRID_U, ADVECT_GRID_V,
+            ADVECT_PARAMS, ADVECT_GRID_M);
+
+    /** Below this fraction of rest density the node mass is not taken as evidence of a volume: it is the fluid's edge. */
+    static final float RELAX_MIN_DENSITY = 0.8f;
+
+    /**
+     * {@link #advect}, and each particle's {@code J} is drawn toward {@code ρ₀ / ρ}, {@code ρ} the mass density its stencil
+     * gives it, at the rate {@code relax} per second, wherever that is at least {@link #RELAX_MIN_DENSITY} of rest.
+     *
+     * <p>{@code J} is carried, {@code J ← J(1 + dt·tr C)}, and each step's error stays: over a long run the particles pile
+     * up while every {@code J} still reads near one, the fluid loses volume, and it pulls away from a lid it should fill.
+     * Node mass counts the particles, so it is the volume, but a few particles a cell make it speckled, and using it
+     * outright made the fluid boil. A slow pull averages the speckle over thousands of steps and still holds the
+     * volume. It reads the mass as of {@code ρ₀}, one fluid's, so it is not for a mixture, and it leaves the edge alone,
+     * where the mass is low because the fluid ends and not because it is stretched.
+     */
+    public static Function advectRelaxing(int nx, int ny) {
+        return advect(nx, ny, true);
+    }
+
+    private static Function advect(int nx, int ny, boolean relax) {
         Body b = new Body();
         LocalVar p = b.let("p", new Expr.InvocationId());
         Stencil stencil = Stencil.of(b, v(p), nx, ny, ADVECT_X, ADVECT_Y);
+        LocalVar density = b.let("density", f(0));
         LocalVar u = b.let("u", f(0));
         LocalVar w = b.let("w", f(0));
         LocalVar b00 = b.let("b00", f(0));
@@ -345,6 +427,9 @@ public final class Flip {
             LocalVar vi = b.let("vi", mul(v(wgt), load(ADVECT_GRID_V, v(node))));
             b.set(u, add(v(u), v(ui)));
             b.set(w, add(v(w), v(vi)));
+            if (relax) {
+                b.set(density, add(v(density), mul(v(wgt), load(ADVECT_GRID_M, v(node)))));
+            }
             b.set(b00, add(v(b00), mul(v(ui), v(dx))));
             b.set(b01, add(v(b01), mul(v(ui), v(dy))));
             b.set(b10, add(v(b10), mul(v(vi), v(dx))));
@@ -368,8 +453,14 @@ public final class Flip {
         b.store(ADVECT_C.get(2), v(p), v(c10));
         b.store(ADVECT_C.get(3), v(p), v(c11));
         LocalVar j = b.let("j", mul(load(ADVECT_J, v(p)), add(f(1), mul(v(dt), add(v(c00), v(c11))))));
+        if (relax) {
+            b.when(gt(v(density), mul(f(RELAX_MIN_DENSITY), load(ADVECT_PARAMS, i(RHO0)))), t -> {
+                Expr measured = div(load(ADVECT_PARAMS, i(RHO0)), v(density));
+                t.set(j, add(v(j), mul(mul(load(ADVECT_PARAMS, i(RELAX)), v(dt)), sub(measured, v(j)))));
+            });
+        }
         b.store(ADVECT_J, v(p), clamp(v(j), f(1 / J_BOUND), f(J_BOUND)));
-        return function("flipAdvect", b);
+        return function(relax ? "flipAdvectRelaxing" : "flipAdvect", b);
     }
 
     /** A coordinate past a wall back to the wall's inside, and the velocity into that wall dropped. */

@@ -61,6 +61,27 @@ public final class FlipStep {
      * conducts at the {@code κ} of the parameters and is carried by the flow. The sort moves it with the rest.
      */
     public FlipStep(int nx, int ny, int particles, boolean tension, boolean heat) {
+        this(nx, ny, particles, tension, heat, false);
+    }
+
+    /**
+     * As above, and with {@code convection}: the grid scales gravity by the node's temperature, so hot fluid rises, and
+     * a last pass holds the particles at the floor at the {@code hot} temperature and those at the top at {@code cold}.
+     * It needs heat, and does not run with tension.
+     */
+    public FlipStep(int nx, int ny, int particles, boolean tension, boolean heat, boolean convection) {
+        this(nx, ny, particles, tension, heat, convection, false);
+    }
+
+    /**
+     * As above, and with {@code relax}: {@link Flip#advectRelaxing}, which draws each particle's {@code J} toward the volume
+     * its neighbourhood's mass says it has, at the parameters' rate. For one fluid.
+     */
+    public FlipStep(int nx, int ny, int particles, boolean tension, boolean heat, boolean convection,
+            boolean relax) {
+        if (convection && (!heat || tension)) {
+            throw new IllegalArgumentException("convection needs heat and does not run with tension");
+        }
         if (particles < 1) {
             throw new IllegalArgumentException("a step needs particles, got " + particles);
         }
@@ -124,6 +145,9 @@ public final class FlipStep {
                     List.of(from, "txx", "tyy", "txy"), nodes));
             passes.add(new Pass("grid", Flip.gridWithTension(nx, ny), Flip.TENSION_GRID_BUFFERS,
                     concat(grid, List.of("params", "gu", "gv", "txx", "tyy", "txy", from)), nodes));
+        } else if (convection) {
+            passes.add(new Pass("grid", Flip.gridWithBuoyancy(nx, ny), Flip.BUOYANT_GRID_BUFFERS,
+                    concat(grid, List.of("params", "gu", "gv", "ght")), nodes));
         } else {
             passes.add(new Pass("grid", Flip.grid(nx, ny), Flip.GRID_BUFFERS,
                     concat(grid, List.of("params", "gu", "gv")), nodes));
@@ -132,8 +156,16 @@ public final class FlipStep {
             passes.add(new Pass("heatGather", Heat.gather(nx, ny), Heat.GATHER_BUFFERS,
                     List.of("x", "y", "t", "gdt"), particles));
         }
-        passes.add(new Pass("advect", Flip.advect(nx, ny), Flip.ADVECT_BUFFERS,
-                concat(concat(List.of("x", "y", "u", "v", "j"), affine), List.of("gu", "gv", "params")), particles));
+        passes.add(relax
+                ? new Pass("advect", Flip.advectRelaxing(nx, ny), Flip.RELAXING_ADVECT_BUFFERS,
+                        concat(concat(List.of("x", "y", "u", "v", "j"), affine), List.of("gu", "gv", "params", "gm")),
+                        particles)
+                : new Pass("advect", Flip.advect(nx, ny), Flip.ADVECT_BUFFERS,
+                        concat(concat(List.of("x", "y", "u", "v", "j"), affine), List.of("gu", "gv", "params")),
+                        particles));
+        if (convection) {
+            passes.add(new Pass("heatPin", Heat.pin(nx, ny), Heat.PIN_BUFFERS, List.of("y", "t", "params"), particles));
+        }
         step = List.copyOf(passes);
         sort = List.of(
                 new Pass("count", Sort.count(nx, ny), Sort.COUNT_BUFFERS,

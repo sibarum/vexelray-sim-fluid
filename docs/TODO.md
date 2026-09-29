@@ -68,6 +68,10 @@ cannot be fixed from here at all.
       from 1.5 to 2.7 of rest over those 30 s while every `J` stays within 5%, with blocky specks along the walls
       where `keepInside` pins particles. Not traced. Starting the lake at its own hydrostatic `J`, and looking at
       whether the pile-up is at the walls, are the first two things to try.
+      Update: `J` re-measurement now exists as an option (`Flip.advectRelaxing`, the `relax` parameter), and the
+      convection box needs it: without it the fluid lost about a fifth of its volume in 40 s and left the lid,
+      and with it the node mass stays at 1.9 of rest instead of climbing to 2.8. It is for one fluid and only where
+      the mass is at least 0.8 of rest, and no other scenario uses it yet; the lake at rest would be the test.
 
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
       keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key

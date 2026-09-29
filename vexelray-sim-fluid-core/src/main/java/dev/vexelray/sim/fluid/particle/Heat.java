@@ -165,6 +165,33 @@ public final class Heat {
         return function("heatGather", b);
     }
 
+    // --- the thermostat ------------------------------------------------------------------------------------
+
+    /** Particles this many cells from the floor, or from the top, are held at the thermostat's temperatures. */
+    public static final float PIN_BAND = 2;
+
+    public static final Buffer PIN_Y = new Buffer("py", 0, F32);
+    public static final Buffer PIN_T = new Buffer("pt", 1, F32);
+    public static final Buffer PIN_PARAMS = new Buffer("params", 2, F32);
+    public static final List<Buffer> PIN_BUFFERS = List.of(PIN_Y, PIN_T, PIN_PARAMS);
+
+    /**
+     * One invocation per particle: a particle within {@link #PIN_BAND} cells of the floor is set to the {@code hot}
+     * temperature and one within the band of the top to {@code cold}, the parameters'. That is a heated floor and a
+     * cooled lid, by the only means a particle fluid has: the particles that are there are what they are told to be.
+     * It adds or removes heat, so heat is no longer conserved while it runs, and it should run last, after the
+     * particles have moved.
+     */
+    public static Function pin(int nx, int ny) {
+        Body b = new Body();
+        LocalVar p = b.let("p", new Expr.InvocationId());
+        LocalVar y = b.let("y", load(PIN_Y, v(p)));
+        b.when(lt(v(y), f(Flip.WALL + PIN_BAND)), t -> t.store(PIN_T, v(p), load(PIN_PARAMS, i(Flip.HOT))));
+        b.when(gt(v(y), f(ny - 1 - Flip.WALL - PIN_BAND)),
+                t -> t.store(PIN_T, v(p), load(PIN_PARAMS, i(Flip.COLD))));
+        return function("heatPin", b);
+    }
+
     private static Function function(String name, Body b) {
         return new Function(name, new Type.FunctionType(Type.VOID, List.of()), b.finish());
     }

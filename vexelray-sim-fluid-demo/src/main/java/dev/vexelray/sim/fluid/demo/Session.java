@@ -399,7 +399,7 @@ final class Session implements AutoCloseable {
 
     private int[] flipParams() {
         return Flip.params(flipStep(), 0, -FLIP_G * scenario.gravity(), BULK, RHO0, scenario.sigma(),
-                scenario.kappa());
+                scenario.kappa(), scenario.beta(), 0.5, 1, 0, scenario.relaxation());
     }
 
     /**
@@ -444,12 +444,15 @@ final class Session implements AutoCloseable {
             int count = column[0].length;
             boolean tension = next.sigma() > 0;
             boolean heat = next.kappa() > 0;
+            boolean convection = next.beta() > 0;
+            boolean relax = next.relaxation() > 0;
             if (particles == null || particles.particles() != count || particles.tension() != tension
-                    || particles.heat() != heat) {
+                    || particles.heat() != heat || particles.convection() != convection
+                    || particles.relax() != relax) {
                 if (particles != null) {
                     particles.close();
                 }
-                particles = new ParticleSimulation(FLIP_N, FLIP_N, count, tension, heat);
+                particles = new ParticleSimulation(FLIP_N, FLIP_N, count, tension, heat, convection, relax);
             }
             lightestMass = Double.POSITIVE_INFINITY;
             heaviestMass = 0;
@@ -467,6 +470,11 @@ final class Session implements AutoCloseable {
                     heatStart += column[2][p] * temperature[p];
                 }
                 particles.temperatures(temperature);
+            }
+            if (next.compression() != 1) {
+                float[] compressed = new float[count];
+                java.util.Arrays.fill(compressed, (float) next.compression());
+                particles.compression(compressed);
             }
             temperatures = null;            flipTime = 0;
             flipCarry = 0;
@@ -532,12 +540,26 @@ final class Session implements AutoCloseable {
             high = Math.max(high, t[p]);
             total += m[p] * t[p];
         }
+        if (scenario.beta() > 0) {
+            // The floor and the lid add and take away heat, so there is no total to keep; the mean is what shows the balance.
+            readout.set(Line.HEAT, String.format("heat      T %.3f .. %.3f · mean %.3f · floor 1, lid 0", low, high,
+                    total / totalMass(m)));
+            return;
+        }
         double drift = heatStart == 0 ? 0 : (total - heatStart) / heatStart;
         readout.set(Line.HEAT, String.format("heat      T %.3f .. %.3f · total %.2f · drift %+.1e", low, high, total,
                 drift));
         if (Math.abs(drift) > DRIFT_ALARM) {
             alarms.putIfAbsent("heat", String.format("t=%.3fs  heat drifted %.1e", flipTime, drift));
         }
+    }
+
+    private static double totalMass(float[] m) {
+        double total = 0;
+        for (float mass : m) {
+            total += mass;
+        }
+        return total;
     }
 
     private void alarmReading() {

@@ -32,6 +32,8 @@ public final class ParticleSimulation implements AutoCloseable {
     private final FlipStep step;
     private final boolean tension;
     private final boolean heat;
+    private final boolean convection;
+    private final boolean relax;
     private final Accelerator accelerator = new Accelerator();
     private final Map<String, ResidentBuffer> buffers = new LinkedHashMap<>();
     private final List<KernelHandle> handles = new ArrayList<>();
@@ -51,9 +53,25 @@ public final class ParticleSimulation implements AutoCloseable {
 
     /** As above, and with each particle carrying a temperature if {@code heat}; its conductivity is a parameter. */
     public ParticleSimulation(int nx, int ny, int particles, boolean tension, boolean heat) {
+        this(nx, ny, particles, tension, heat, false);
+    }
+
+    /**
+     * As above, and with {@code convection}: temperature makes fluid lighter or heavier under gravity, and the floor and
+     * top are held at the parameters' temperatures. It needs heat and does not run with tension.
+     */
+    public ParticleSimulation(int nx, int ny, int particles, boolean tension, boolean heat, boolean convection) {
+        this(nx, ny, particles, tension, heat, convection, false);
+    }
+
+    /** As above, and with {@code relax}: {@code J} is drawn toward the volume the mass gives, at a rate that is a parameter. */
+    public ParticleSimulation(int nx, int ny, int particles, boolean tension, boolean heat, boolean convection,
+            boolean relax) {
+        this.relax = relax;
         this.tension = tension;
         this.heat = heat;
-        step = new FlipStep(nx, ny, particles, tension, heat);
+        this.convection = convection;
+        step = new FlipStep(nx, ny, particles, tension, heat, convection, relax);
         step.buffers().forEach((name, spec) -> {
             ResidentBuffer buffer = accelerator.allocate(spec.element(), spec.length());
             buffer.write(new int[spec.length()]);   // the sort's counts must start at zero, and it leaves them so
@@ -78,6 +96,16 @@ public final class ParticleSimulation implements AutoCloseable {
     /** Whether the particles carry a temperature. */
     public boolean heat() {
         return heat;
+    }
+
+    /** Whether {@code J} is drawn toward the volume the mass gives. */
+    public boolean relax() {
+        return relax;
+    }
+
+    /** Whether temperature moves the fluid, and the floor and top are held at temperatures. */
+    public boolean convection() {
+        return convection;
     }
 
     /** Whether this step has surface tension's passes, which its parameters then set the strength of. */
@@ -156,6 +184,14 @@ public final class ParticleSimulation implements AutoCloseable {
     /** {@code {x, y}} of every particle. A readback, like {@link #grid}. */
     public float[][] positions() {
         return new float[][] {read("x"), read("y")};
+    }
+
+    /**
+     * Sets every particle's {@code J}, which {@link #load} starts at 1. Below 1 a fluid starts compressed, and pushes
+     * outward with the pressure that gives: a box filled with it stays full against the lid.
+     */
+    public void compression(float[] j) {
+        write("j", j);
     }
 
     /** Every particle's {@code J}, its volume over its volume at rest. A readback, like {@link #grid}. */

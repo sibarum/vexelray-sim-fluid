@@ -131,6 +131,64 @@ enum Scenario {
     },
 
     /**
+     * A box of water filling it, with a hot floor and a cold lid, the temperature falling from one to the other and the
+     * fluid made lighter by heat: the warm water at the floor is unstable under the cold, and rises in plumes as the
+     * cold falls in sheets. Rayleigh–Bénard convection with a fluid that has almost no viscosity, so the plumes do not
+     * settle into tidy rolls. The temperature view (key 8) is the picture.
+     */
+    CONVECTION("convection: a hot floor and a cold lid", 1.3, true) {
+        @Override
+        double depth(double x, double y) {
+            return 0;
+        }
+
+        @Override
+        double density(int col, int row) {
+            return col < BOX_WIDTH && row < BOX_WIDTH ? WATER : 0;
+        }
+
+        @Override
+        double kappa() {
+            return 6;
+        }
+
+        @Override
+        double beta() {
+            return 1.0;
+        }
+
+        @Override
+        double gravity() {
+            // Under a third of gravity: the fluid's weight is then small beside the pressure it is started with, and
+            // buoyancy still drives it.
+            return 0.3;
+        }
+
+        @Override
+        double relaxation() {
+            // J is carried and loses the volume over a long run; the box, which must stay full against its lid, needs
+            // it drawn back toward what the mass says.
+            return 1;
+        }
+
+        @Override
+        double compression() {
+            // A closed box is pressurised, and a free one is not: with no pressure at the lid, any flow that turns away
+            // from it opens a gap, which nothing pushes the fluid to fill. Started at J = 0.97 the fluid pushes out on
+            // every wall, which is three times the weight of the column at this gravity.
+            return 0.97;
+        }
+
+        @Override
+        double temperature(double x, double y) {
+            // Linear from the floor to the lid, and a few percent of fixed noise for the plumes to grow from.
+            double noise = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+            noise -= Math.floor(noise);
+            return Math.min(1, Math.max(0, 1 - (y - 1) / 125 + 0.06 * (noise - 0.5)));
+        }
+    },
+
+    /**
      * A rectangle of liquid floating free, no gravity, with surface tension: it pulls its corners in and swings between
      * a long and a tall oval. The tension is weak on purpose: it holds together for ten seconds or so, where a strong
      * one throws particles off the rim at once, and after that the drop drifts (see {@code docs/TODO.md}).
@@ -251,8 +309,26 @@ enum Scenario {
         return 0;
     }
 
+    /** How fast, per second, each particle's {@code J} is drawn toward the volume its neighbourhood's mass gives; none if 0. */
+    double relaxation() {
+        return 0;
+    }
+
+    /** The {@code J} the particles start at; below 1 the fluid starts compressed, as a pressurised box. */
+    double compression() {
+        return 1;
+    }
+
     /** A particle scenario's heat conductivity, in node spacings squared per second; none, and no temperatures, if 0. */
     double kappa() {
+        return 0;
+    }
+
+    /**
+     * A particle scenario's thermal expansion: gravity is scaled by {@code 1 − β·(T − 0.5)}, so hot fluid is lighter. If
+     * above 0 the floor is held at temperature 1 and the top at 0, and the scenario needs {@link #kappa}.
+     */
+    double beta() {
         return 0;
     }
 
