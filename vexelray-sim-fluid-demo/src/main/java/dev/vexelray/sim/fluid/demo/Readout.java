@@ -55,7 +55,8 @@ final class Readout {
             children[line.ordinal() + 1] = node;
         }
         panel.children(children);
-        set(Line.KEYS, "1-8 view · N scenario · R reset\nspace pause · . step · C stability · = - speed");
+        set(Line.KEYS, "1-8 view · N scenario · R reset\nspace pause · . step · C stability · = - speed\n"
+                + "B budget mode · [ ] budget");
     }
 
     Node node() {

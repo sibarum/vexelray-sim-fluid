@@ -96,6 +96,9 @@ final class FluidDemoWiring extends Wiring {
         gui.shortcut(Key.SPACE, controls::togglePause);
         gui.shortcut(Key.PERIOD, controls::step);
         gui.shortcut(Key.C, controls::toggleStability);
+        gui.shortcut(Key.B, controls::toggleBudget);
+        gui.shortcut(Key.LEFT_BRACKET, controls::lessBudget);
+        gui.shortcut(Key.RIGHT_BRACKET, controls::moreBudget);
         gui.shortcut(Key.EQUAL, controls::faster);
         gui.shortcut(Key.MINUS, controls::slower);
     }

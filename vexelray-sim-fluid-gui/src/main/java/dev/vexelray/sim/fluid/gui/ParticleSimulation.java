@@ -6,6 +6,7 @@ import dev.supirvast.vastir.tools.KernelColumn;
 import dev.supirvast.vastir.tools.KernelHandle;
 import dev.supirvast.vastir.tools.KernelSpec;
 import dev.supirvast.vastir.tools.ResidentBuffer;
+import dev.vexelray.sim.fluid.particle.Flip;
 import dev.vexelray.sim.fluid.particle.FlipStep;
 import dev.vexelray.sim.fluid.particle.FlipStep.Pass;
 import dev.vexelray.sim.fluid.particle.Scatter;
@@ -134,6 +135,10 @@ public final class ParticleSimulation implements AutoCloseable {
         for (String affine : List.of("c00", "c01", "c10", "c11")) {
             write(affine, new float[m.length]);   // and with no affine velocity
         }
+        this.params = params.clone();
+        phase = Phase.CLEAR;
+        cursor = 0;
+        stepInKeyframe = 0;
         buffers.get("params").write(params);
         steps = 0;
     }
@@ -164,6 +169,7 @@ public final class ParticleSimulation implements AutoCloseable {
 
     /** Replaces the parameters without touching the particles — the step changed mid-run, say. */
     public void params(int[] params) {
+        this.params = params.clone();
         buffers.get("params").write(params);
     }
 
@@ -208,6 +214,128 @@ public final class ParticleSimulation implements AutoCloseable {
     /** Every particle's {@code J}, its volume over its volume at rest. A readback, like {@link #grid}. */
     public float[] compression() {
         return read("j");
+    }
+
+    // --- work spread over ticks ----------------------------------------------------------------------------
+
+    /** What {@link #advanceBudgeted} left: the work it did not spend, and whether it stopped at a finished keyframe. */
+    public record Budgeted(long leftover, boolean completed) {}
+
+    private enum Phase { CLEAR, SCATTER, GRID, ADVECT }
+
+    private DispatchSequence clearOnly;
+    private DispatchSequence scatterSlice;
+    private DispatchSequence gridOnly;
+    private DispatchSequence advectSlice;
+    private int[] params = new int[Flip.PARAM_COUNT];
+    private Phase phase = Phase.CLEAR;
+    private int cursor;
+    private int stepInKeyframe;
+    private int keyframeSteps = 1;
+
+    /** Whether the step can be spread over ticks: it has none of tension, heat, convection or relaxation. */
+    public boolean sliceable() {
+        return step.sliced() != null;
+    }
+
+    /**
+     * Spends up to {@code work} on the step, in slices, and stops as soon as a keyframe of {@code keyframeSteps} steps is
+     * complete, or the work is spent. Work is particles: a slice of the scatter or of the advect costs its particles,
+     * so a whole step costs twice the particle count; the clear, the grid pass and the sort are not counted.
+     *
+     * <p>The step is the same one {@link #advance} takes, in the same order, each particle pass done in slices with
+     * the parameters' bounds written before each; only when it is done changes. A particle is moved only by the
+     * advect slice that holds it, so between keyframes the grid holds the scatter of the last step's start, and
+     * {@link #grid} is the keyframe's picture exactly when {@code completed} is true, and no other time.
+     */
+    public Budgeted advanceBudgeted(long work, int keyframeSteps, int sortEvery) {
+        if (!sliceable()) {
+            throw new IllegalStateException("this simulation has tension, heat, convection or relaxation, which are not sliced");
+        }
+        this.keyframeSteps = keyframeSteps;
+        if (scatterSlice == null) {
+            List<Pass> passes = step.sliced();
+            clearOnly = record(List.of(passes.get(0)));
+            scatterSlice = record(List.of(passes.get(1)));
+            gridOnly = record(List.of(passes.get(2)));
+            advectSlice = record(List.of(passes.get(3)));
+        }
+        int n = step.particles;
+        while (work > 0) {
+            switch (phase) {
+                case CLEAR -> {
+                    if (steps % sortEvery == 0) {
+                        sortSequence.run();
+                    }
+                    if (work >= 2L * n) {
+                        // A whole step fits in what is left: the recorded step, one submission and as fast as ever.
+                        // Slicing costs a submission and a parameter write per slice, so only a step that has to be
+                        // split pays it. It is the same step either way.
+                        stepSequence.run();
+                        work -= 2L * n;
+                        steps++;
+                        if (++stepInKeyframe >= keyframeSteps) {
+                            stepInKeyframe = 0;
+                            return new Budgeted(Math.max(work, 0), true);
+                        }
+                    } else {
+                        clearOnly.run();
+                        phase = Phase.SCATTER;
+                        cursor = 0;
+                    }
+                }
+                case SCATTER -> {
+                    int hi = Math.min(n, cursor + FlipStep.SLICE);
+                    bounds(cursor, hi);
+                    scatterSlice.run();
+                    work -= hi - cursor;
+                    cursor = hi;
+                    if (cursor >= n) {
+                        phase = Phase.GRID;
+                    }
+                }
+                case GRID -> {
+                    gridOnly.run();
+                    phase = Phase.ADVECT;
+                    cursor = 0;
+                }
+                case ADVECT -> {
+                    int hi = Math.min(n, cursor + FlipStep.SLICE);
+                    bounds(cursor, hi);
+                    advectSlice.run();
+                    work -= hi - cursor;
+                    cursor = hi;
+                    if (cursor >= n) {
+                        phase = Phase.CLEAR;
+                        steps++;
+                        if (++stepInKeyframe >= keyframeSteps) {
+                            stepInKeyframe = 0;
+                            return new Budgeted(Math.max(work, 0), true);
+                        }
+                    }
+                }
+            }
+        }
+        return new Budgeted(0, false);
+    }
+
+    /** How far through the keyframe being computed the work has got, from 0 to 1. */
+    public double keyframeProgress() {
+        int n = step.particles;
+        double inStep = switch (phase) {
+            case CLEAR -> 0;
+            case SCATTER -> 0.5 * cursor / n;
+            case GRID -> 0.5;
+            case ADVECT -> 0.5 + 0.5 * cursor / n;
+        };
+        return (stepInKeyframe + inStep) / keyframeSteps;
+    }
+
+    private void bounds(int lo, int hi) {
+        int[] with = params.clone();
+        with[Flip.SLICE_BASE] = Float.floatToRawIntBits(lo);
+        with[Flip.SLICE_END] = Float.floatToRawIntBits(hi);
+        buffers.get("params").write(with);
     }
 
     /** Steps taken since the last {@link #load}. */

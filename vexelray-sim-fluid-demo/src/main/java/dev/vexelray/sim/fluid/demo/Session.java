@@ -96,6 +96,11 @@ final class Session implements AutoCloseable {
     private double heaviestMass;
     /** Which fluid is on each node, as of the last frame that showed it; null when nothing has. */
     private float[] materials;
+    /** Budgeted mode: the last keyframe that finished, held until the next does; null outside the mode. */
+    private Picture keyPicture;
+    private long keyframes;
+    private long lastKeyframe;
+    private double keyframeRate;
     /** Which nodes have a nucleation site, 1 or 0; null outside a convection scenario. */
     private float[] sites;
     /** The temperature on each node, scaled for the view; null when nothing has shown it. */
@@ -258,6 +263,10 @@ final class Session implements AutoCloseable {
      * so velocity reads as momentum over mass just as it does for water.
      */
     private Picture particleFrame(double elapsed) {
+        if (controls.budgeted() && particles.sliceable()) {
+            return budgetedFrame();
+        }
+        keyPicture = null;
         double dt = flipStep();
         int steps = 0;
         boolean behind = false;
@@ -277,6 +286,15 @@ final class Session implements AutoCloseable {
         flipTime += steps * dt;
         lastStep = dt;
 
+        return observe(dt, steps, behind);
+    }
+
+    /**
+     * The picture the particles make now, and the readings that go with it. The grid gives the picture, the mass, the
+     * speed and the broken nodes; it is the scatter of the last step, so this is a keyframe's picture when the work has
+     * just finished one, and the last step's at any other time.
+     */
+    private Picture observe(double dt, int steps, boolean behind) {
         float[][] grid = particles.grid();
         float[][] state = new float[5][];
         for (int f = 0; f < 3; f++) {
@@ -353,6 +371,62 @@ final class Session implements AutoCloseable {
 
     private float[] noFluid(int cells) {
         return new float[cells];
+    }
+
+    /** Steps in a keyframe of the budgeted mode: about a frame of simulated time at the ordinary rate. */
+    private static final int KEYFRAME_STEPS = 100;
+
+    /**
+     * Budgeted mode: each tick spends at most the controls\x27 budget of particle work on the step, and the picture is the
+     * last keyframe that finished, held until the next does. The clock, the readings and the picture all advance
+     * together, when a keyframe completes, and not before; the step itself is the ordinary one, only spread over ticks,
+     * so a small budget makes the simulation slow and the picture stale, never wrong. Nothing is interpolated.
+     */
+    private Picture budgetedFrame() {
+        double dt = flipStep();
+        lastStep = dt;
+        if (keyPicture == null) {
+            // Nothing has completed yet: the grid is empty, and so is the picture.
+            keyPicture = observe(dt, 0, false);
+        }
+        boolean fresh = false;
+        if (controls.takeStep()) {
+            ParticleSimulation.Budgeted result;
+            do {
+                result = particles.advanceBudgeted(Long.MAX_VALUE / 4, KEYFRAME_STEPS, SORT_EVERY);
+            } while (!result.completed());
+            fresh = true;
+        } else if (!controls.paused()) {
+            long left = controls.budget();
+            while (left > 0) {
+                ParticleSimulation.Budgeted result = particles.advanceBudgeted(left, KEYFRAME_STEPS, SORT_EVERY);
+                left = result.leftover();
+                if (result.completed()) {
+                    fresh = true;
+                    break;
+                }
+            }
+        }
+        if (fresh) {
+            long now = System.nanoTime();
+            if (lastKeyframe != 0) {
+                double rate = 1e9 / (now - lastKeyframe);
+                keyframeRate = keyframeRate == 0 ? rate : 0.8 * keyframeRate + 0.2 * rate;
+            }
+            lastKeyframe = now;
+            flipTime += KEYFRAME_STEPS * dt;
+            keyframes++;
+            keyPicture = observe(dt, KEYFRAME_STEPS, false);
+        }
+        readout.set(Line.TIME, String.format("time      %8.3f s  keyframes %d %s", flipTime, keyframes,
+                controls.paused() ? "paused" : "running"));
+        readout.set(Line.STEPS, String.format("keyframe  %d steps · budget %s/tick · %.1f/s · next %2.0f%%",
+                KEYFRAME_STEPS, compact(controls.budget()), keyframeRate, 100 * particles.keyframeProgress()));
+        return keyPicture;
+    }
+
+    private static String compact(long value) {
+        return value >= 1_000_000 ? String.format("%.1fM", value / 1e6) : String.format("%dk", value / 1000);
     }
 
     private void latchParticles(Diagnostics d, ParticleDiagnostics p) {

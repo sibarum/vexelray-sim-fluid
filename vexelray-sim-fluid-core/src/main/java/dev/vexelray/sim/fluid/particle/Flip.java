@@ -92,8 +92,9 @@ import static dev.vexelray.sim.fluid.ir.Body.v;
  */
 public final class Flip {
 
-    /** {@code [dt, gx, gy, bulk, rho0, sigma, kappa, beta, reference, hot, cold, relax, boil, width, drop, superheat]}, see {@link #params}. */
-    public static final int PARAM_COUNT = 16;
+    /** {@code [dt, gx, gy, bulk, rho0, sigma, kappa, beta, reference, hot, cold, relax, boil, width, drop, superheat, sliceBase,
+     * sliceEnd]}, see {@link #params}. */
+    public static final int PARAM_COUNT = 18;
 
     /** How many times the colour is blurred before its gradient is taken; see {@link Tension}. */
     public static final int TENSION_BLURS = 6;
@@ -114,6 +115,9 @@ public final class Flip {
     static final int WIDTH = 13;
     static final int DROP = 14;
     static final int SUPERHEAT = 15;
+    /** The first particle of the slice a sliced pass takes, and the one after its last; see {@link #scatterSliced}. */
+    public static final int SLICE_BASE = 16;
+    public static final int SLICE_END = 17;
 
     /**
      * Particles are kept this far inside the grid, so they deposit on nodes {@code 1 .. n−2} only. The wall is the
@@ -202,7 +206,7 @@ public final class Flip {
                     + ", rho0 " + rho0);
         }
         return new int[] {bits(dt), bits(gx), bits(gy), bits(bulk), bits(rho0), bits(sigma), bits(kappa), bits(beta), bits(reference),
-                bits(hot), bits(cold), bits(relax), bits(boil), bits(width), bits(drop), bits(superheat)};
+                bits(hot), bits(cold), bits(relax), bits(boil), bits(width), bits(drop), bits(superheat), 0, 0};
     }
 
     /** The largest stable step for sound speed {@code √(bulk/rho0)} and flow up to {@code speed}: {@code C·1/(c+|v|)}. */
@@ -248,8 +252,24 @@ public final class Flip {
      * invocation per particle; register at the scatter's workgroup and subgroup.
      */
     public static Function scatter(int nx, int ny) {
+        return scatter(nx, ny, false);
+    }
+
+    /**
+     * {@link #scatter}, over the slice of the particles from the parameters' {@link #SLICE_BASE} up to {@link #SLICE_END}: a
+     * dispatch of any size at least the slice's covers it, the invocations past its end doing nothing. The scatter
+     * accumulates into the grid, so the slices of a step, run in turn with the grid cleared before the first, sum to
+     * what one scatter over every particle gives; it is what lets a step's work be spread across many ticks.
+     */
+    public static Function scatterSliced(int nx, int ny) {
+        return scatter(nx, ny, true);
+    }
+
+    private static Function scatter(int nx, int ny, boolean sliced) {
         Body b = new Body();
-        Scatter.segmentedDeposit(b, nx, 3, List.of(Scatter.GRID_M, Scatter.GRID_MU, Scatter.GRID_MV),
+        Expr base = sliced ? toInt(load(SCATTER_PARAMS, i(SLICE_BASE))) : null;
+        Expr end = sliced ? toInt(load(SCATTER_PARAMS, i(SLICE_END))) : null;
+        Scatter.segmentedDeposit(b, nx, 3, List.of(Scatter.GRID_M, Scatter.GRID_MU, Scatter.GRID_MV), base, end,
                 (t, p, key, amounts) -> {
                     Stencil stencil = Stencil.of(t, v(p), nx, ny, Scatter.PX, Scatter.PY);
                     LocalVar m = t.let("m", load(Scatter.PM, v(p)));
@@ -278,7 +298,7 @@ public final class Flip {
                         t.set(amounts[3 * k + 2], add(mul(v(wm), velV), mul(v(wgt), mul(v(s), v(dy)))));
                     }
                 });
-        return function("flipScatter", b);
+        return function(sliced ? "flipScatterSliced" : "flipScatter", b);
     }
 
     // --- grid ----------------------------------------------------------------------------------------------
@@ -442,9 +462,35 @@ public final class Flip {
         return advect(nx, ny, true);
     }
 
+    /**
+     * {@link #advect}, over the slice of the particles from the parameters' {@link #SLICE_BASE} up to {@link #SLICE_END}, as
+     * {@link #scatterSliced} takes its slice. Each particle reads only the grid and itself, so the slices of a step, run
+     * after its grid pass, are the whole advect in any order, and the step is the same as one taken in one dispatch.
+     */
+    public static Function advectSliced(int nx, int ny) {
+        return advect(nx, ny, false, true);
+    }
+
     private static Function advect(int nx, int ny, boolean relax) {
+        return advect(nx, ny, relax, false);
+    }
+
+    private static Function advect(int nx, int ny, boolean relax, boolean sliced) {
         Body b = new Body();
-        LocalVar p = b.let("p", new Expr.InvocationId());
+        if (sliced) {
+            LocalVar invocation = b.let("invocation", new Expr.InvocationId());
+            LocalVar p = b.let("p", add(v(invocation), toInt(load(ADVECT_PARAMS, i(SLICE_BASE)))));
+            Expr real = new Expr.Binary(dev.supirvast.vastir.core.BinaryOp.LOGICAL_AND,
+                    lt(v(invocation), new Expr.InvocationCount()),
+                    lt(v(p), toInt(load(ADVECT_PARAMS, i(SLICE_END)))));
+            b.when(real, t -> advectBody(t, p, nx, ny, relax));
+        } else {
+            advectBody(b, b.let("p", new Expr.InvocationId()), nx, ny, relax);
+        }
+        return function(sliced ? "flipAdvectSliced" : relax ? "flipAdvectRelaxing" : "flipAdvect", b);
+    }
+
+    private static void advectBody(Body b, LocalVar p, int nx, int ny, boolean relax) {
         Stencil stencil = Stencil.of(b, v(p), nx, ny, ADVECT_X, ADVECT_Y);
         LocalVar density = b.let("density", f(0));
         LocalVar u = b.let("u", f(0));
@@ -495,7 +541,6 @@ public final class Flip {
             });
         }
         b.store(ADVECT_J, v(p), clamp(v(j), f(1 / J_BOUND), f(J_BOUND)));
-        return function(relax ? "flipAdvectRelaxing" : "flipAdvect", b);
     }
 
     /** A coordinate past a wall back to the wall's inside, and the velocity into that wall dropped. */

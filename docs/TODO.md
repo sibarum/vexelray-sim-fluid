@@ -85,6 +85,17 @@ cannot be fixed from here at all.
       fraction of nodes with a stone is `Scenario.stones()`. The void at the lid, where the cold plume pulls the
       fluid away, is still there at 16 s.
 
+- [ ] **Budgeted mode is a proof of the mechanism, not yet a budget.** `B` spreads a keyframe of 100 steps over ticks
+      of at most a set particle work (`ParticleSimulation.advanceBudgeted`; `Flip.scatterSliced` and
+      `Flip.advectSliced` take a slice from two parameters), and the picture is the last keyframe that finished.
+      The sliced step matches the whole one to 7e-6 cells (`SlicedStepTest`). Still to do: (1) nothing sets the
+      budget from frame time, so the `[` `]` keys are the controller; (2) the clear, the grid pass and the sort are
+      not counted in the work, and the sort runs whole; (3) it is for the plain step only, since tension, heat,
+      convection and relaxation are not sliced; (4) each slice is a submission and a parameter write, which cost
+      about 35 times a whole step when every step had to be sliced, so a whole step now runs as the recorded one
+      whenever the budget covers it, and a step too big for it pays the price; (5) it does the same work as the
+      ordinary path, so it saves nothing at this size, and shows its worth only where a step is slower than a frame.
+
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
       keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key
       and half the next, interleaved, so the segmented scatter's runs are about half as long as they could be.

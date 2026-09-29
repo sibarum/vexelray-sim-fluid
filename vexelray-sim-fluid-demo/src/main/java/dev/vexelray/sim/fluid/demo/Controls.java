@@ -27,6 +27,8 @@ final class Controls {
     private volatile double timeScale = 1;
     private volatile boolean resetRequested = true;
     private volatile boolean stepRequested;
+    private volatile boolean budgeted;
+    private volatile long budget = 400_000;
 
     // --- what the keys call ------------------------------------------------------------------------------
 
@@ -57,6 +59,20 @@ final class Controls {
         unstable = !unstable;
     }
 
+    /** Work per tick, or the ordinary real-time stepping; a change of mode starts the scenario again. */
+    synchronized void toggleBudget() {
+        budgeted = !budgeted;
+        resetRequested = true;
+    }
+
+    synchronized void moreBudget() {
+        budget = Math.min(budget * 2, 64_000_000L);
+    }
+
+    synchronized void lessBudget() {
+        budget = Math.max(budget / 2, 2048);
+    }
+
     synchronized void faster() {
         timeScale = Math.min(timeScale * 2, 16);
     }
@@ -85,6 +101,14 @@ final class Controls {
 
     double timeScale() {
         return timeScale;
+    }
+
+    boolean budgeted() {
+        return budgeted;
+    }
+
+    long budget() {
+        return budget;
     }
 
     /** Whether a reset was asked for since the last call — which clears it. */

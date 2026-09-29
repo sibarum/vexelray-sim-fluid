@@ -40,6 +40,7 @@ public final class FlipStep {
 
     private final Map<String, BufferSpec> buffers = new LinkedHashMap<>();
     private final List<Pass> step;
+    private final List<Pass> sliced;
     private final List<Pass> sort;
 
     /** A step over an {@code nx × ny} grid of nodes and a fixed number of particles, without surface tension. */
@@ -170,6 +171,11 @@ public final class FlipStep {
             passes.add(new Pass("heatPin", Heat.pin(nx, ny), Heat.PIN_BUFFERS, List.of("y", "t", "params"), particles));
         }
         step = List.copyOf(passes);
+        // The plain step, for spreading across ticks: its two particle passes take a slice, the others are as they are.
+        sliced = tension || heat || convection || relax ? null : List.of(passes.get(0),
+                new Pass("scatter", Flip.scatterSliced(nx, ny), Flip.SCATTER_BUFFERS, passes.get(1).buffers(), SLICE),
+                passes.get(2),
+                new Pass("advect", Flip.advectSliced(nx, ny), Flip.ADVECT_BUFFERS, passes.get(3).buffers(), SLICE));
         sort = List.of(
                 new Pass("count", Sort.count(nx, ny), Sort.COUNT_BUFFERS,
                         List.of("x", "y", "counts", "keys", "ranks"), particles),
@@ -195,6 +201,20 @@ public final class FlipStep {
      */
     public List<Pass> step() {
         return step;
+    }
+
+    /** How many particles a slice of the sliced step covers at most; a multiple of the workgroup. */
+    public static final int SLICE = 2048;
+
+    /**
+     * The plain step as four passes for work spread over many ticks: clear, scatter over a slice, grid, advect over a
+     * slice. Run the clear, then the scatter once for each slice of {@link #SLICE} particles, writing the parameters'
+     * {@link Flip#SLICE_BASE} and {@link Flip#SLICE_END} before each, then the grid, then the advect the same way. That is the
+     * step, however the slices are spread in time, as long as the sort is not run between the first scatter and the
+     * last advect. Null for a step with tension, heat, convection or relaxation.
+     */
+    public List<Pass> sliced() {
+        return sliced;
     }
 
     /** The sort by cell, and the copy of its output back over the particles. */

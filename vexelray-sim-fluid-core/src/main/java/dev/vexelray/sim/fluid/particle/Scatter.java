@@ -371,10 +371,22 @@ public final class Scatter {
      * and {@code k / width} up from it. A quadratic B-spline's stencil is 3 wide.
      */
     static void segmentedDeposit(Body b, int nx, int width, List<Buffer> grids, Load load) {
+        segmentedDeposit(b, nx, width, grids, null, null, load);
+    }
+
+    /**
+     * {@link #segmentedDeposit(Body, int, int, List, Load)} over a slice of the particles: this dispatch's invocation
+     * {@code k} takes particle {@code base + k}, and a particle at or past {@code end} is not there, so a dispatch
+     * of a fixed size covers any slice, the last one short. The scatter accumulates, so a slice adds to the grid
+     * what its particles give and leaves the rest to the others; every slice, and no other work between them
+     * that moves a particle, is the whole scatter. {@code null} for both is every invocation, as before.
+     */
+    static void segmentedDeposit(Body b, int nx, int width, List<Buffer> grids, Expr base, Expr end, Load load) {
         int fields = grids.size();
         int corners = width * width;
         LocalVar lane = b.let("lane", new Expr.SubgroupInvocationId());
-        LocalVar p = b.let("p", new Expr.InvocationId());
+        LocalVar invocation = b.let("invocation", new Expr.InvocationId());
+        LocalVar p = b.let("p", base == null ? v(invocation) : add(v(invocation), base));
         LocalVar key = b.let("key", i(-1));
         LocalVar[] amounts = new LocalVar[corners * fields];
         // The amounts are the grids' type: f32 here, i32 for FixedScatter.
@@ -382,7 +394,11 @@ public final class Scatter {
         for (int j = 0; j < amounts.length; j++) {
             amounts[j] = b.let("amount", zero);
         }
-        b.when(lt(v(p), new Expr.InvocationCount()), t -> load.into(t, p, key, amounts));
+        Expr real = base == null
+                ? lt(v(p), new Expr.InvocationCount())
+                : new Expr.Binary(dev.supirvast.vastir.core.BinaryOp.LOGICAL_AND,
+                        lt(v(invocation), new Expr.InvocationCount()), lt(v(p), end));
+        b.when(real, t -> load.into(t, p, key, amounts));
 
         // Where this lane's run begins: its own lane if the lane below holds another cell, else that of the
         // lane below — which a max-scan over the lanes that begin a run gives every lane at once.
