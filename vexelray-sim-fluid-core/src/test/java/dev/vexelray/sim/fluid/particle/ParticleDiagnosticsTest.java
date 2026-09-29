@@ -25,6 +25,18 @@ class ParticleDiagnosticsTest {
     }
 
     @Test
+    void aFewSqueezedParticlesMoveTheMaximumButNotThePercentiles() {
+        float[] j = new float[1000];
+        java.util.Arrays.fill(j, 1f);
+        j[0] = 0.5f;
+        j[1] = 0.6f;
+        ParticleDiagnostics d = ParticleDiagnostics.of(j, 0, 1, 1);
+        assertEquals(2.0, d.maxDensity(), 1e-9);
+        assertEquals(1.0, d.highDensity(), 1e-9);
+        assertEquals(1.0, d.lowDensity(), 1e-9);
+    }
+
+    @Test
     void aBrokenJIsCountedAndLeftOutOfTheRange() {
         ParticleDiagnostics d = ParticleDiagnostics.of(new float[] {1f, Float.NaN, 0f, -1f, Float.POSITIVE_INFINITY},
                 0, 1, 1);

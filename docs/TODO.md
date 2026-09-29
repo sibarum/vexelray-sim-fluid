@@ -40,6 +40,15 @@ cannot be fixed from here at all.
       first change that is a *second scheme* — the point at which the discretisation level of the tower
       earns its place ([architecture.md](architecture.md#built-from-the-bottom-up-with-the-output-written-by-hand-first)).
 
+- [ ] **Two fluids stirred finer than a cell do not unmix.** In the oil-on-water dam break (0.8 : 1) the
+      returning wave folds the oil into filaments a cell or two wide, and twenty seconds later the box is
+      marbled: water-rich below, oil-rich above, blended between, at 0.5 m/s and falling. Particles inside one
+      stencil share the grid's velocity, so a mixture finer than the grid feels no buoyancy between its fluids;
+      only density differences the grid resolves move. A 0.8 : 1 contrast is also weak, and the mixture is the
+      first thing to test a higher ratio (`TwoFluidSweepTest`, `-Dflip.sweep=true`) and more particles a cell
+      against. Not a bug in the step, which keeps a layered lake still and overturns heavy over light
+      (`TwoFluidTest`), but it decides what the mercury demo can look like.
+
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
       keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key
       and half the next, interleaved, so the segmented scatter's runs are about half as long as they could be.

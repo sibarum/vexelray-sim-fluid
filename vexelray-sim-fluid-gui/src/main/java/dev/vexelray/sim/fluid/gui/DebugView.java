@@ -46,11 +46,12 @@ public final class DebugView implements AutoCloseable {
     }
 
     /**
-     * Draws the field — {@code h}, {@code hu}, {@code hv} over an {@code nx × ny} grid — blending from view
+     * Draws the field — {@code h}, {@code hu}, {@code hv} and which fluid ({@code tag}, or {@code null} for one), over an
+     * {@code nx × ny} grid — blending from view
      * {@code from} to view {@code to} by {@code blend}. Main thread only.
      */
-    public void show(GuiApp app, float[] h, float[] hu, float[] hv, int nx, int ny, View from, View to, float blend,
-            Scales scales) {
+    public void show(GuiApp app, float[] h, float[] hu, float[] hv, float[] tag, int nx, int ny, View from,
+            View to, float blend, Scales scales) {
         int cells = nx * ny;
         if (cells > MAX_CELLS) {
             throw new IllegalArgumentException(nx + " x " + ny + " is more than the " + MAX_CELLS
@@ -58,18 +59,23 @@ public final class DebugView implements AutoCloseable {
         }
         if (pipeline == null) {
             target = app.viewport(pixels, pixels);
-            field = app.storage(3 * MAX_CELLS, FieldShader.FIELD_BINDING);
+            field = app.storage(4 * MAX_CELLS, FieldShader.FIELD_BINDING);
             pipeline = target.pipelineFor(Fullscreen.triangleVertexWithUvSpirv(), Fullscreen.ENTRY_POINT,
                     FieldShader.fragmentSpirv(), "main", FieldShader.PUSH_BYTES,
                     new long[] {field.descriptorSetLayout()});
             node.image(target);
         }
-        if (packed.length != 3 * cells) {
-            packed = new float[3 * cells];
+        if (packed.length != 4 * cells) {
+            packed = new float[4 * cells];
         }
         System.arraycopy(h, 0, packed, 0, cells);
         System.arraycopy(hu, 0, packed, cells, cells);
         System.arraycopy(hv, 0, packed, 2 * cells, cells);
+        if (tag == null) {
+            java.util.Arrays.fill(packed, 3 * cells, 4 * cells, 0f);
+        } else {
+            System.arraycopy(tag, 0, packed, 3 * cells, cells);
+        }
         field.update(packed, packed.length);
         target.renderInto(pipeline, 0L, field.descriptorSet(), 3,
                 FieldShader.push(from, to, blend, nx, ny, scales), 0f, 0f, 0f, 1f);

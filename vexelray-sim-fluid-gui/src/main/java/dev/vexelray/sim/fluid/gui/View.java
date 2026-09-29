@@ -64,6 +64,17 @@ public enum View {
         public String legend(Scales s) {
             return String.format("0 .. %.2f, orange past it", s.courantLimit());
         }
+    },
+
+    /**
+     * Which fluid is here, for a scene of more than one: blue for the lightest, red for the heaviest, grey where they
+     * meet. A depth view cannot say, because a light fluid and a thin one look alike in it.
+     */
+    MATERIAL("material", "fluid") {
+        @Override
+        public String legend(Scales s) {
+            return "blue lightest .. red heaviest";
+        }
     };
 
     private final String label;

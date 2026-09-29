@@ -50,7 +50,7 @@ import static dev.vexelray.sim.fluid.ir.Body.vec4;
  * The debug view's fragment stage: one pixel, one cell, one colour — written by hand in SupirVast IR, beside
  * the kernel whose state it shows.
  *
- * <p>The field arrives as floats in a storage buffer, {@code [h…, hu…, hv…]}, and everything else — which view,
+ * <p>The field arrives as floats in a storage buffer, {@code [h…, hu…, hv…, tag…]}, and everything else — which view,
  * the scales, the physics a derived view needs — as push constants, so switching views or rescaling is a few
  * bytes and never a new pipeline. The colour is computed for two views and blended, which is how a view change
  * fades rather than cuts: the host moves {@code blend} from 0 to 1 over a few frames.
@@ -112,6 +112,8 @@ final class FieldShader {
         LocalVar h = b.let("h", load(FIELD, v(cell)));
         LocalVar hu = b.let("hu", load(FIELD, add(v(cell), v(n))));
         LocalVar hv = b.let("hv", load(FIELD, add(add(v(cell), v(n)), v(n))));
+        // The fourth plane is which fluid, 0 for the lightest to 1 for the heaviest; zero where there is only one.
+        LocalVar tag = b.let("tag", load(FIELD, add(add(add(v(cell), v(n)), v(n)), v(n))));
 
         // Velocity only where wet: the kernel's own 0/0 rule, so a dry cell shows no phantom speed.
         LocalVar wet = b.let("wet", gt(v(h), v(dry)));
@@ -123,7 +125,7 @@ final class FieldShader {
         });
         LocalVar c = b.let("c", sqrt(mul(v(g), max(v(h), f(0)))));
         LocalVar speed = b.let("speed", sqrt(add(mul(v(u), v(u)), mul(v(w), v(w)))));
-        Cell here = new Cell(h, hu, hv, u, w, c, speed, wet);
+        Cell here = new Cell(h, hu, hv, tag, u, w, c, speed, wet);
 
         LocalVar a = colour(b, "a", pushed(PUSH, 0), here);
         LocalVar z = colour(b, "b", pushed(PUSH, 1), here);
@@ -154,8 +156,8 @@ final class FieldShader {
 
     // --- one view's colour -------------------------------------------------------------------------------
 
-    private record Cell(LocalVar h, LocalVar hu, LocalVar hv, LocalVar u, LocalVar w, LocalVar c, LocalVar speed,
-                        LocalVar wet) {}
+    private record Cell(LocalVar h, LocalVar hu, LocalVar hv, LocalVar tag, LocalVar u, LocalVar w, LocalVar c,
+                        LocalVar speed, LocalVar wet) {}
 
     /** The colour {@code view} gives this cell. Every view is computed and one kept: the branch is uniform. */
     private static LocalVar colour(Body b, String name, Expr view, Cell cell) {
@@ -171,6 +173,8 @@ final class FieldShader {
                 t.set(rgb, diverging(div(v(cell.hv()), pushed(PUSH, 10)))));
         b.when(eq(v(which), f(View.FROUDE.ordinal())), t ->
                 t.set(rgb, diverging(sub(div(v(cell.speed()), max(v(cell.c()), f(1e-12))), f(1)))));
+        b.when(eq(v(which), f(View.MATERIAL.ordinal())), t ->
+                t.set(rgb, diverging(sub(mul(v(cell.tag()), f(2)), f(1)))));
         b.when(eq(v(which), f(View.COURANT.ordinal())), t -> {
             Expr local = mul(add(max(abs(v(cell.u())), abs(v(cell.w()))), v(cell.c())), pushed(PUSH, 7));
             LocalVar ratio = t.let(name + "Ratio", div(local, pushed(PUSH, 11)));

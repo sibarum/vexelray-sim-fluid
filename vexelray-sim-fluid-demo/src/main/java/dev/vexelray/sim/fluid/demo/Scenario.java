@@ -16,6 +16,49 @@ enum Scenario {
         double depth(double x, double y) {
             return 0;
         }
+
+        @Override
+        double density(int col, int row) {
+            return col < COLUMN_WIDTH && row < COLUMN_HEIGHT ? WATER : 0;
+        }
+    },
+
+    /**
+     * The same column, but a lower layer of water under a layer of oil, 0.8 as dense: released together, the oil
+     * rides over the water as it crosses the box. Two fluids that differ in nothing but their particles' mass.
+     */
+    OIL_ON_WATER("dam break, oil on water (MLS-MPM)", 1.3, true) {
+        @Override
+        double depth(double x, double y) {
+            return 0;
+        }
+
+        @Override
+        double density(int col, int row) {
+            if (col >= COLUMN_WIDTH || row >= COLUMN_HEIGHT) {
+                return 0;
+            }
+            return row < WATER_ROWS ? WATER : OIL;
+        }
+    },
+
+    /**
+     * Water under oil across the whole box, at rest: it should stay at rest and stay layered, so it is the noise
+     * floor of the two-fluid step, as the still lake is of the shallow-water one.
+     */
+    LAYERS_AT_REST("layers at rest: oil on water", 1.3, true) {
+        @Override
+        double depth(double x, double y) {
+            return 0;
+        }
+
+        @Override
+        double density(int col, int row) {
+            if (col >= BOX_WIDTH || row >= 2 * LAYER_ROWS) {
+                return 0;
+            }
+            return row < LAYER_ROWS ? WATER : OIL;
+        }
     },
 
     /**
@@ -57,6 +100,15 @@ enum Scenario {
         }
     };
 
+    /** Rest densities of the two fluids, and the cell counts the particle scenarios fill. */
+    static final double WATER = 1.0;
+    static final double OIL = 0.8;
+    static final int COLUMN_WIDTH = 40;
+    static final int COLUMN_HEIGHT = 80;
+    static final int WATER_ROWS = 50;
+    static final int BOX_WIDTH = 125;
+    static final int LAYER_ROWS = 30;
+
     /** Cells each way. */
     static final int N = 256;
 
@@ -85,6 +137,14 @@ enum Scenario {
     }
 
     abstract double depth(double x, double y);
+
+    /**
+     * A particle scenario's rest density in the cell {@code col} across and {@code row} up from the box's inside
+     * corner, or {@code 0} where there is no fluid.
+     */
+    double density(int col, int row) {
+        return 0;
+    }
 
     String description() {
         return description;

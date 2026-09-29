@@ -111,6 +111,11 @@ public final class ParticleSimulation implements AutoCloseable {
         return new float[][] {read("gm"), read("gmu"), read("gmv")};
     }
 
+    /** Every particle's mass, which is what tells the fluids apart. A readback, like {@link #grid}. */
+    public float[] masses() {
+        return read("m");
+    }
+
     /** {@code {x, y}} of every particle. A readback, like {@link #grid}. */
     public float[][] positions() {
         return new float[][] {read("x"), read("y")};

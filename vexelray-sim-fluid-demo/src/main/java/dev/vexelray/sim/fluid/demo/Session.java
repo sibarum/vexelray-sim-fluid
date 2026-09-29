@@ -7,6 +7,7 @@ import dev.vexelray.sim.fluid.gui.PatchSimulation;
 import dev.vexelray.sim.fluid.gui.Scales;
 import dev.vexelray.sim.fluid.gui.View;
 import dev.vexelray.sim.fluid.particle.Flip;
+import dev.vexelray.sim.fluid.particle.MaterialField;
 import dev.vexelray.sim.fluid.particle.ParticleDiagnostics;
 import dev.vexelray.sim.fluid.stencil.Clock;
 import dev.vexelray.sim.fluid.stencil.Diagnostics;
@@ -58,19 +59,20 @@ final class Session implements AutoCloseable {
     private static final int FLIP_N = 128;
     /** Gravity in node spacings per second squared. */
     private static final double FLIP_G = G * (FLIP_N - 1);
-    /** The column, in cells from the bottom-left corner of the box's inside, and particles per cell. */
-    private static final int COLUMN_WIDTH = 40;
-    private static final int COLUMN_HEIGHT = 80;
+    /** Particles per cell; what fills them is the scenario's. */
     private static final int PPC = 4;
     private static final double RHO0 = 1;
     /** The fastest the water can fall, and a sound speed five times that: density then varies by a few percent. */
-    private static final double FALL_SPEED = Math.sqrt(2 * FLIP_G * COLUMN_HEIGHT);
+    private static final double FALL_SPEED = Math.sqrt(2 * FLIP_G * Scenario.COLUMN_HEIGHT);
     private static final double SOUND = 5 * FALL_SPEED;
     /** The step is sized for this speed: the splash up the far wall was measured at 2.3 times the fall speed. */
     private static final double SPEED_BOUND = 2.5 * FALL_SPEED;
     private static final double BULK = SOUND * SOUND * RHO0;
     private static final int SORT_EVERY = 10;
-    /** Compression past this, relative to rest, latches an alarm: weakly compressible has stopped being weak. */
+    /**
+     * Compression past this, relative to rest, in 1% of the particles latches an alarm: weakly compressible has
+     * stopped being weak. Not the single most compressed particle, which a splash landing squeezes past it.
+     */
     private static final double COMPRESSION_ALARM = 1.5;
     /** Nodes lighter than this, relative to rest, show as dry. */
     private static final double FLIP_DRY = 0.05;
@@ -88,6 +90,12 @@ final class Session implements AutoCloseable {
     private double lastStep;
     private double appliedCourant;
     private long lastFrame;
+
+    /** The lightest and heaviest particle masses of the scenario, which the material view spans. */
+    private double lightestMass;
+    private double heaviestMass;
+    /** Which fluid is on each node, as of the last frame that showed it; null when nothing has. */
+    private float[] materials;
 
     /** Simulated time of the particles, and the fraction of a step carried to the next frame. */
     private double flipTime;
@@ -112,7 +120,7 @@ final class Session implements AutoCloseable {
         this.sim = new PatchSimulation(N, N, Edges.all(Edge.WALL));
     }
 
-    /** What a frame draws: a grid of {@code h, hu, hv} and its size. */
+    /** What a frame draws: a grid of {@code h, hu, hv} and which fluid, and its size. */
     private record Picture(float[][] state, int nx, int ny) {}
 
     /** The {@code FrameStage.APP} hook. */
@@ -149,7 +157,7 @@ final class Session implements AutoCloseable {
         }
         onScreen = display;
         float blend = (float) smooth(progress(now, viewFadeStart, VIEW_FADE_NANOS));
-        view.show(app, display[0], display[1], display[2], picture.nx(), picture.ny(), fadingFrom, shown, blend,
+        view.show(app, display[0], display[1], display[2], display[3], picture.nx(), picture.ny(), fadingFrom, shown, blend,
                 scales.stepped(lastStep, 1, 1));
     }
 
@@ -185,7 +193,8 @@ final class Session implements AutoCloseable {
         // The view's Courant scale is dt over the cell size; the particles' cell size is 1, so fold DX in here.
         lastStep = allowed / DX;
 
-        float[][] state = sim.read();
+        float[][] read = sim.read();
+        float[][] state = {read[0], read[1], read[2], noFluid(read[0].length)};
         Diagnostics d = Diagnostics.of(state[0], state[1], state[2], G, DRY, allowed, DX, DX);
         int clamps = sim.clamped();
         latchWater(d, clamps, allowed);
@@ -261,13 +270,14 @@ final class Session implements AutoCloseable {
         lastStep = dt;
 
         float[][] grid = particles.grid();
-        float[][] state = new float[3][];
+        float[][] state = new float[4][];
         for (int f = 0; f < 3; f++) {
             state[f] = new float[grid[f].length];
             for (int k = 0; k < grid[f].length; k++) {
                 state[f][k] = (float) (grid[f][k] / RHO0);
             }
         }
+        state[3] = materialPlane(grid[0].length);
         // The grid gives the picture, and the mass, the speed and the broken nodes. The density and the acoustic
         // Courant number are not the grid's: node mass is speckled by where the particles fell, and a sound speed
         // rebuilt from it is too. They come from the particles' J and from the sound speed the step was sized by.
@@ -276,6 +286,23 @@ final class Session implements AutoCloseable {
         latchParticles(d, p);
         particleReadings(d, p, steps, behind, dt);
         return new Picture(state, FLIP_N, FLIP_N);
+    }
+
+    /**
+     * Which fluid is on each node. The readback and the splat cost a frame something, so they are done only while a
+     * view that shows it is on screen or fading; otherwise the last plane stands, unseen.
+     */
+    private float[] materialPlane(int cells) {
+        if (shown == View.MATERIAL || fadingFrom == View.MATERIAL || materials == null) {
+            float[][] at = particles.positions();
+            materials = MaterialField.tags(at[0], at[1], particles.masses(), FLIP_N, FLIP_N, lightestMass,
+                    heaviestMass);
+        }
+        return materials.length == cells ? materials : noFluid(cells);
+    }
+
+    private float[] noFluid(int cells) {
+        return new float[cells];
     }
 
     private void latchParticles(Diagnostics d, ParticleDiagnostics p) {
@@ -290,9 +317,9 @@ final class Session implements AutoCloseable {
             alarms.putIfAbsent("unstable", String.format("t=%.3fs  acoustic Courant %.2f past %.2f", flipTime,
                     p.courant(), Diagnostics.COURANT_LIMIT));
         }
-        if (p.maxDensity() > COMPRESSION_ALARM) {
-            alarms.putIfAbsent("compressed", String.format("t=%.3fs  density %.2f of rest", flipTime,
-                    p.maxDensity()));
+        if (p.highDensity() > COMPRESSION_ALARM) {
+            alarms.putIfAbsent("compressed", String.format("t=%.3fs  density %.2f of rest (99%% of particles below)",
+                    flipTime, p.highDensity()));
         }
         latchDrift(d, flipTime);
     }
@@ -315,8 +342,8 @@ final class Session implements AutoCloseable {
                 dt * 1000, SORT_EVERY, particles.steps(), behind ? " · BEHIND" : ""));
         double drift = initialVolume == 0 ? 0 : (d.volume() - initialVolume) / initialVolume;
         readout.set(Line.VOLUME, String.format("mass      %10.2f · drift %+.1e", d.volume(), drift));
-        readout.set(Line.DEPTH, String.format("density   %.3f .. %.3f of rest (J) · %d wet nodes", p.minDensity(),
-                p.maxDensity(), d.wet()));
+        readout.set(Line.DEPTH, String.format("density   %.2f .. %.2f (1-99%%) · max %.2f of rest (J)", p.lowDensity(),
+                p.highDensity(), p.maxDensity()));
         readout.set(Line.FROUDE, String.format("speed     max %.2f m/s · Mach %.2f", d.maxSpeed() / (FLIP_N - 1),
                 p.mach()));
         readout.set(Line.COURANT, String.format("Courant   acoustic %.2f of %.2f · target %.2f%s", p.courant(),
@@ -335,20 +362,30 @@ final class Session implements AutoCloseable {
         return Flip.params(flipStep(), 0, -FLIP_G, BULK, RHO0);
     }
 
-    /** {@code PPC} particles jittered in each cell of the column, at rest, masses making rest density: x, y, m. */
-    private static float[][] column() {
-        int count = COLUMN_WIDTH * COLUMN_HEIGHT * PPC;
+    /**
+     * {@code PPC} particles jittered in each cell the scenario fills, at rest, each with the mass that makes its
+     * fluid's rest density: x, y, m. Cells run over the box's inside, from its bottom-left corner.
+     */
+    private static float[][] fill(Scenario scenario) {
+        int cells = FLIP_N - 3;
+        int count = 0;
+        for (int row = 0; row < cells; row++) {
+            for (int col = 0; col < cells; col++) {
+                count += scenario.density(col, row) > 0 ? PPC : 0;
+            }
+        }
         float[] x = new float[count];
         float[] y = new float[count];
         float[] m = new float[count];
         Random random = new Random(1);
         int k = 0;
-        for (int row = 0; row < COLUMN_HEIGHT; row++) {
-            for (int col = 0; col < COLUMN_WIDTH; col++) {
-                for (int s = 0; s < PPC; s++, k++) {
+        for (int row = 0; row < cells; row++) {
+            for (int col = 0; col < cells; col++) {
+                double rho = scenario.density(col, row);
+                for (int s = 0; rho > 0 && s < PPC; s++, k++) {
                     x[k] = Flip.WALL + col + random.nextFloat() * 0.999f;
                     y[k] = Flip.WALL + row + random.nextFloat() * 0.999f;
-                    m[k] = (float) (RHO0 / PPC);
+                    m[k] = (float) (rho / PPC);
                 }
             }
         }
@@ -363,15 +400,25 @@ final class Session implements AutoCloseable {
         lastStep = 0;
         alarms.clear();
         if (next.particles()) {
-            float[][] column = column();
-            if (particles == null) {
-                particles = new ParticleSimulation(FLIP_N, FLIP_N, column[0].length);
-            }
+            float[][] column = fill(next);
             int count = column[0].length;
+            if (particles == null || particles.particles() != count) {
+                if (particles != null) {
+                    particles.close();
+                }
+                particles = new ParticleSimulation(FLIP_N, FLIP_N, count);
+            }
+            lightestMass = Double.POSITIVE_INFINITY;
+            heaviestMass = 0;
+            for (float m : column[2]) {
+                lightestMass = Math.min(lightestMass, m);
+                heaviestMass = Math.max(heaviestMass, m);
+            }
+            materials = null;
             particles.load(column[0], column[1], new float[count], new float[count], column[2], flipParams());
             flipTime = 0;
             flipCarry = 0;
-            double front = 2 * Math.sqrt(FLIP_G * COLUMN_HEIGHT);
+            double front = 2 * Math.sqrt(FLIP_G * Scenario.COLUMN_HEIGHT);
             // g = c² makes the shader's √(gh) the sound speed, so its Froude and Courant views are Mach and acoustic.
             scales = new Scales((float) (BULK / RHO0), (float) FLIP_DRY, 0, (float) next.deepest(), (float) front,
                     (float) (0.5 * front), (float) Diagnostics.COURANT_LIMIT);
