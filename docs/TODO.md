@@ -44,10 +44,11 @@ cannot be fixed from here at all.
       returning wave folds the oil into filaments a cell or two wide, and twenty seconds later the box is
       marbled: water-rich below, oil-rich above, blended between, at 0.5 m/s and falling. Particles inside one
       stencil share the grid's velocity, so a mixture finer than the grid feels no buoyancy between its fluids;
-      only density differences the grid resolves move. A 0.8 : 1 contrast is also weak, and the mixture is the
-      first thing to test a higher ratio (`TwoFluidSweepTest`, `-Dflip.sweep=true`) and more particles a cell
-      against. Not a bug in the step, which keeps a layered lake still and overturns heavy over light
-      (`TwoFluidTest`), but it decides what the mercury demo can look like.
+      only density differences the grid resolves move. A 0.8 : 1 contrast is also weak: the same dam break with
+      mercury under the water (13.6 : 1) is a clean layer over a thin blended band by 15 s, and the 2 : 1
+      Rayleigh–Taylor run stirs, then settles light-over-heavy at the top. So the marbling is the weak contrast
+      more than the grid; more particles a cell would say how much is the grid. Not a bug in the step, which
+      keeps a layered lake still and overturns heavy over light (`TwoFluidTest`).
 
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
       keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key

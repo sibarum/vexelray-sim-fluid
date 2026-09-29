@@ -62,6 +62,46 @@ enum Scenario {
     },
 
     /**
+     * Water over a fluid half its density, across the whole box, with the interface rippled by a few cells: the
+     * heavy fluid falls through the light in fingers and the light rises in bubbles, growing from the ripple and the
+     * particles' jitter. Rayleigh–Taylor, at a density ratio of 2 : 1.
+     */
+    RAYLEIGH_TAYLOR("Rayleigh-Taylor: water over a fluid half as dense", 1.3, true) {
+        @Override
+        double depth(double x, double y) {
+            return 0;
+        }
+
+        @Override
+        double density(int col, int row) {
+            if (col >= BOX_WIDTH || row >= 2 * LAYER_ROWS + RIPPLE) {
+                return 0;
+            }
+            double surface = LAYER_ROWS + RIPPLE * Math.cos(2 * Math.PI * 2 * (col + 0.5) / BOX_WIDTH);
+            return row + 0.5 < surface ? HALF : WATER;
+        }
+    },
+
+    /**
+     * The oil-on-water dam break with mercury for the lower fluid, 13.6 times as dense as the water over it. The
+     * same step and the same sound speed, so the ratio costs no time step.
+     */
+    MERCURY_AND_WATER("dam break, water on mercury (MLS-MPM)", 1.3 * 13.6, true) {
+        @Override
+        double depth(double x, double y) {
+            return 0;
+        }
+
+        @Override
+        double density(int col, int row) {
+            if (col >= COLUMN_WIDTH || row >= COLUMN_HEIGHT) {
+                return 0;
+            }
+            return row < WATER_ROWS ? MERCURY : WATER;
+        }
+    },
+
+    /**
      * A dam break as shallow water, seen from above: water held behind the middle line over dry ground, the wet/dry
      * front, the hardest case.
      */
@@ -103,6 +143,10 @@ enum Scenario {
     /** Rest densities of the two fluids, and the cell counts the particle scenarios fill. */
     static final double WATER = 1.0;
     static final double OIL = 0.8;
+    static final double HALF = 0.5;
+    static final double MERCURY = 13.6;
+    /** The Rayleigh–Taylor interface's ripple, in cells. */
+    static final int RIPPLE = 4;
     static final int COLUMN_WIDTH = 40;
     static final int COLUMN_HEIGHT = 80;
     static final int WATER_ROWS = 50;

@@ -421,7 +421,7 @@ final class Session implements AutoCloseable {
             double front = 2 * Math.sqrt(FLIP_G * Scenario.COLUMN_HEIGHT);
             // g = c² makes the shader's √(gh) the sound speed, so its Froude and Courant views are Mach and acoustic.
             scales = new Scales((float) (BULK / RHO0), (float) FLIP_DRY, 0, (float) next.deepest(), (float) front,
-                    (float) (0.5 * front), (float) Diagnostics.COURANT_LIMIT);
+                    (float) (0.5 * front * Math.max(1, heaviestMass * PPC)), (float) Diagnostics.COURANT_LIMIT);
             double mass = 0;
             for (float m : column[2]) {
                 mass += m;

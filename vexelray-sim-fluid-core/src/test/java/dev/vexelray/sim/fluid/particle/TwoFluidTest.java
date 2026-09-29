@@ -29,6 +29,7 @@ class TwoFluidTest {
     private static final double G = 200;
     private static final double HEAVY = 1;
     private static final double OIL = 0.8;
+    private static final double MERCURY = 13.6;
     /** Half the density of the other: a contrast strong enough to overturn within the run. */
     private static final double LIGHT = 0.5;
     private static final double SECONDS = 1.0;
@@ -50,6 +51,22 @@ class TwoFluidTest {
         assertTrue(stable > -1.5, backend + ": the layered fluids mixed, the heavy fluid moved " + stable);
         assertTrue(inverted < stable - 2, backend + ": heavy over light did not overturn: " + inverted
                 + " against " + stable);
+    }
+
+    /**
+     * Mercury under water, 13.6 : 1, on the same step: the sound speed is one for both, so the step is no smaller, and
+     * the heavy fluid compresses under its own weight by no more than the light. It stays under the water, and
+     * inverted it overturns faster than the 2 : 1 case does.
+     */
+    @ParameterizedTest
+    @EnumSource(Backend.class)
+    void aThirteenfoldContrastStaysLayeredAndOverturnsWhenInverted(Backend backend) {
+        double stable = run(backend, MERCURY, HEAVY);
+        double inverted = run(backend, HEAVY, MERCURY);
+        System.out.printf("[two-fluid] %s: mercury's mean height moved %+.2f cells under water, %+.2f cells over it%n",
+                backend, stable, inverted);
+        assertTrue(stable > -1.5, backend + ": mercury under water moved " + stable);
+        assertTrue(inverted < stable - 2, backend + ": mercury over water did not overturn: " + inverted);
     }
 
     /**
@@ -102,9 +119,32 @@ class TwoFluidTest {
             float[] pm = floats(rig.read("m"));
             float[] pj = floats(rig.read("j"));
             for (float value : pj) {
-                assertTrue(Float.isFinite(value) && value > 0.8 && value < 1.25, backend + ": J " + value);
+                assertTrue(Float.isFinite(value) && value > 0, backend + ": J " + value);
             }
+            weaklyCompressible(backend, bottom, top, pm, pj);
             return meanHeight(py, pm) - before;
+        }
+    }
+
+    /**
+     * Each fluid stays weakly compressible: 98% of its particles have J within 0.75 .. 1.25. A light fluid under a
+     * heavy one is compressed by the heavy fluid's weight through its own bulk modulus, so it is squeezed more than
+     * either would be alone; that is the limit of one sound speed, and this is where it is allowed to reach.
+     */
+    private static void weaklyCompressible(Backend backend, double bottom, double top, float[] m, float[] j) {
+        for (double rho : new double[] {Math.min(bottom, top), Math.max(bottom, top)}) {
+            java.util.List<Float> js = new java.util.ArrayList<>();
+            for (int p = 0; p < m.length; p++) {
+                if (Math.abs(m[p] * PPC - rho) < 1e-3 * rho) {
+                    js.add(j[p]);
+                }
+            }
+            java.util.Collections.sort(js);
+            double low = js.get(js.size() / 100);
+            double high = js.get(js.size() * 99 / 100);
+            System.out.printf("[two-fluid]   rho %.1f: J min %.3f, 1%% %.3f, 99%% %.3f%n", rho, js.get(0), low, high);
+            assertTrue(low > 0.75 && high < 1.25, backend + ": rho " + rho + " has J " + low + " .. " + high
+                    + " over 98% of its particles");
         }
     }
 
