@@ -10,9 +10,13 @@ scale** (fluid in containers) and **world scale** (fluid that is the environment
 what they share. [docs/architecture.md](docs/architecture.md) is the reasoning; [docs/TODO.md](docs/TODO.md) is
 what is known and not done.
 
+![A dam break of water onto mercury, MLS-MPM, in the material view: water (blue) rides on mercury (red) 13.6 times as dense](docs/images/water-on-mercury.png)
+
+*Water on mercury (13.6 : 1) five seconds after a dam break, in the demo's material view, on the MLS-MPM particle step.*
+
 | Module | What it holds |
 | --- | --- |
-| `vexelray-sim-fluid-core` | The kernels, in SupirVast IR — today a first-order shallow-water step with an adaptive time step and a budgeted integer clock, FLIP's particle-to-grid scatter in f32 and in exact fixed point with their benchmarks, a counting sort by cell, and a weakly compressible MLS-MPM particle step — and the diagnostics that judge a state. No engine, no window. |
+| `vexelray-sim-fluid-core` | The kernels, in SupirVast IR — today a first-order shallow-water step with an adaptive time step and a budgeted integer clock, FLIP's particle-to-grid scatter in f32 and in exact fixed point with their benchmarks, a counting sort by cell, and a weakly compressible MLS-MPM particle step with two fluids of different density and surface tension — and the diagnostics that judge a state. No engine, no window. |
 | `vexelray-sim-fluid-gui` | The simulation on the stack: a runner that steps a patch on resident GPU buffers, and a debug view that colours what the state holds. |
 | `vexelray-sim-fluid-demo` | A framework application showing the experiments, with their readings. |
 
@@ -32,7 +36,9 @@ particle sweep, `FlipSweepTest`, is not an assertion and runs only with `-Dflip.
 mvn -pl vexelray-sim-fluid-demo exec:exec
 ```
 
-Opens the demo. Keys: **1–6** view (depth, speed, x/y momentum, Froude, Courant) · **N** next scenario ·
+Opens the demo. Scenarios run from shallow-water dam breaks to particle dam breaks of oil or mercury under
+water, Rayleigh–Taylor, and a surface-tension blob. Keys: **1–7** view (depth, speed, x/y momentum, Froude,
+Courant, material) · **N** next scenario ·
 **R** reset · **space** pause · **.** single step · **C** toggle a Courant number past the stable limit ·
 **= / −** simulation speed.
 
