@@ -30,6 +30,7 @@ import java.util.Map;
 public final class ParticleSimulation implements AutoCloseable {
 
     private final FlipStep step;
+    private final boolean tension;
     private final Accelerator accelerator = new Accelerator();
     private final Map<String, ResidentBuffer> buffers = new LinkedHashMap<>();
     private final List<KernelHandle> handles = new ArrayList<>();
@@ -37,9 +38,15 @@ public final class ParticleSimulation implements AutoCloseable {
     private final DispatchSequence sortSequence;
     private long steps;
 
-    /** A box of {@code nx × ny} nodes holding exactly {@code particles} particles. */
+    /** A box of {@code nx × ny} nodes holding exactly {@code particles} particles, without surface tension. */
     public ParticleSimulation(int nx, int ny, int particles) {
-        step = new FlipStep(nx, ny, particles);
+        this(nx, ny, particles, false);
+    }
+
+    /** As above, and with surface tension's passes if {@code tension}; its strength is a parameter. */
+    public ParticleSimulation(int nx, int ny, int particles, boolean tension) {
+        this.tension = tension;
+        step = new FlipStep(nx, ny, particles, tension);
         step.buffers().forEach((name, spec) -> {
             ResidentBuffer buffer = accelerator.allocate(spec.element(), spec.length());
             buffer.write(new int[spec.length()]);   // the sort's counts must start at zero, and it leaves them so
@@ -59,6 +66,11 @@ public final class ParticleSimulation implements AutoCloseable {
 
     public int particles() {
         return step.particles;
+    }
+
+    /** Whether this step has surface tension's passes, which its parameters then set the strength of. */
+    public boolean tension() {
+        return tension;
     }
 
     /** Whether a step is one GPU submission, as opposed to the CPU fallback. */

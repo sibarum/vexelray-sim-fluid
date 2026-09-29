@@ -42,8 +42,17 @@ public final class FlipStep {
     private final List<Pass> step;
     private final List<Pass> sort;
 
-    /** A step over an {@code nx × ny} grid of nodes and a fixed number of particles. */
+    /** A step over an {@code nx × ny} grid of nodes and a fixed number of particles, without surface tension. */
     public FlipStep(int nx, int ny, int particles) {
+        this(nx, ny, particles, false);
+    }
+
+    /**
+     * As above, and with {@code tension}, the passes of {@link Tension} between the scatter and the grid: the mass
+     * is blurred to a colour, its capillary stress taken, and the stress's force added to the grid's velocities. The
+     * force is {@code σ} of the parameters, and none if that is zero.
+     */
+    public FlipStep(int nx, int ny, int particles, boolean tension) {
         if (particles < 1) {
             throw new IllegalArgumentException("a step needs particles, got " + particles);
         }
@@ -67,19 +76,39 @@ public final class FlipStep {
             add(field, Body.F32, nodes);
         }
         add("params", Body.F32, Flip.PARAM_COUNT);
+        if (tension) {
+            for (String field : List.of("c0", "c1", "txx", "tyy", "txy")) {
+                add(field, Body.F32, nodes);
+            }
+        }
 
         List<String> grid = List.of("gm", "gmu", "gmv");
         List<String> affine = List.of("c00", "c01", "c10", "c11");
-        step = List.of(
-                new Pass("clear", Flip.clear(nx, ny), Flip.CLEAR_BUFFERS, grid, nodes),
-                new Pass("scatter", Flip.scatter(nx, ny), Flip.SCATTER_BUFFERS,
-                        concat(concat(grid, List.of("x", "y", "u", "v", "m", "j")), concat(affine, List.of("params"))),
-                        particles),
-                new Pass("grid", Flip.grid(nx, ny), Flip.GRID_BUFFERS, concat(grid, List.of("params", "gu", "gv")),
-                        nodes),
-                new Pass("advect", Flip.advect(nx, ny), Flip.ADVECT_BUFFERS,
-                        concat(concat(List.of("x", "y", "u", "v", "j"), affine), List.of("gu", "gv", "params")),
-                        particles));
+        List<Pass> passes = new ArrayList<>();
+        passes.add(new Pass("clear", Flip.clear(nx, ny), Flip.CLEAR_BUFFERS, grid, nodes));
+        passes.add(new Pass("scatter", Flip.scatter(nx, ny), Flip.SCATTER_BUFFERS,
+                concat(concat(grid, List.of("x", "y", "u", "v", "m", "j")), concat(affine, List.of("params"))),
+                particles));
+        if (tension) {
+            // The mass to a colour, then blurred; the two colour buffers take turns, and the last one written is read.
+            String from = "gm";
+            for (int k = 0; k < Flip.TENSION_BLURS; k++) {
+                String to = k % 2 == 0 ? "c0" : "c1";
+                passes.add(new Pass("blur" + k, Tension.blur(nx, ny, k == 0), Tension.BLUR_BUFFERS,
+                        List.of(from, to, "params"), nodes));
+                from = to;
+            }
+            passes.add(new Pass("stress", Tension.stress(nx, ny), Tension.STRESS_BUFFERS,
+                    List.of(from, "txx", "tyy", "txy"), nodes));
+            passes.add(new Pass("grid", Flip.gridWithTension(nx, ny), Flip.TENSION_GRID_BUFFERS,
+                    concat(grid, List.of("params", "gu", "gv", "txx", "tyy", "txy", from)), nodes));
+        } else {
+            passes.add(new Pass("grid", Flip.grid(nx, ny), Flip.GRID_BUFFERS,
+                    concat(grid, List.of("params", "gu", "gv")), nodes));
+        }
+        passes.add(new Pass("advect", Flip.advect(nx, ny), Flip.ADVECT_BUFFERS,
+                concat(concat(List.of("x", "y", "u", "v", "j"), affine), List.of("gu", "gv", "params")), particles));
+        step = List.copyOf(passes);
         sort = List.of(
                 new Pass("count", Sort.count(nx, ny), Sort.COUNT_BUFFERS,
                         List.of("x", "y", "counts", "keys", "ranks"), particles),

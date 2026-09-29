@@ -102,6 +102,33 @@ enum Scenario {
     },
 
     /**
+     * A rectangle of liquid floating free, no gravity, with surface tension: it pulls its corners in and swings between
+     * a long and a tall oval. The tension is weak on purpose: it holds together for ten seconds or so, where a strong
+     * one throws particles off the rim at once, and after that the drop drifts (see {@code docs/TODO.md}).
+     */
+    ROUNDING_BLOB("surface tension: a blob pulls itself round", 1.3, true) {
+        @Override
+        double depth(double x, double y) {
+            return 0;
+        }
+
+        @Override
+        double density(int col, int row) {
+            return col >= 30 && col < 90 && row >= 50 && row < 74 ? WATER : 0;
+        }
+
+        @Override
+        double sigma() {
+            return 8_000;
+        }
+
+        @Override
+        double gravity() {
+            return 0;
+        }
+    },
+
+    /**
      * A dam break as shallow water, seen from above: water held behind the middle line over dry ground, the wet/dry
      * front, the hardest case.
      */
@@ -188,6 +215,16 @@ enum Scenario {
      */
     double density(int col, int row) {
         return 0;
+    }
+
+    /** A particle scenario's surface tension, in rest density times node spacings cubed per second squared; none if 0. */
+    double sigma() {
+        return 0;
+    }
+
+    /** A particle scenario's gravity, as a multiple of the box's. */
+    double gravity() {
+        return 1;
     }
 
     String description() {

@@ -313,6 +313,10 @@ final class Session implements AutoCloseable {
             alarms.putIfAbsent("broken", String.format("t=%.3fs  %d broken nodes, %d broken particles", flipTime,
                     d.nonFinite(), p.nonFinite()));
         }
+        if (scenario.sigma() > 0 && capillaryStep(scenario.sigma()) < flipStep()) {
+            alarms.putIfAbsent("capillary", String.format("t=%.3fs  step %.3f ms past the capillary limit %.3f ms",
+                    flipTime, flipStep() * 1000, capillaryStep(scenario.sigma()) * 1000));
+        }
         if (p.courant() > Diagnostics.COURANT_LIMIT) {
             alarms.putIfAbsent("unstable", String.format("t=%.3fs  acoustic Courant %.2f past %.2f", flipTime,
                     p.courant(), Diagnostics.COURANT_LIMIT));
@@ -349,8 +353,17 @@ final class Session implements AutoCloseable {
         readout.set(Line.COURANT, String.format("Courant   acoustic %.2f of %.2f · target %.2f%s", p.courant(),
                 Diagnostics.COURANT_LIMIT, controls.courant(),
                 controls.courant() > Diagnostics.COURANT_LIMIT ? " UNSTABLE BY CHOICE" : ""));
-        readout.set(Line.BROKEN, String.format("broken    %d NaN/inf nodes", d.nonFinite()));
+        readout.set(Line.BROKEN, String.format("broken    %d NaN/inf nodes · node mass max %.2f", d.nonFinite(),
+                d.maxDepth()));
         alarmReading();
+    }
+
+    /**
+     * The longest step a capillary wave one node long can be taken with, {@code √(ρ₀·Δx³ / 2πσ)}: past it surface
+     * tension is unstable however small the sound speed makes the acoustic step.
+     */
+    private static double capillaryStep(double sigma) {
+        return Math.sqrt(RHO0 / (2 * Math.PI * sigma));
     }
 
     /** The step the sound speed allows at the Courant number the keys chose. */
@@ -359,7 +372,7 @@ final class Session implements AutoCloseable {
     }
 
     private int[] flipParams() {
-        return Flip.params(flipStep(), 0, -FLIP_G, BULK, RHO0);
+        return Flip.params(flipStep(), 0, -FLIP_G * scenario.gravity(), BULK, RHO0, scenario.sigma());
     }
 
     /**
@@ -402,11 +415,12 @@ final class Session implements AutoCloseable {
         if (next.particles()) {
             float[][] column = fill(next);
             int count = column[0].length;
-            if (particles == null || particles.particles() != count) {
+            boolean tension = next.sigma() > 0;
+            if (particles == null || particles.particles() != count || particles.tension() != tension) {
                 if (particles != null) {
                     particles.close();
                 }
-                particles = new ParticleSimulation(FLIP_N, FLIP_N, count);
+                particles = new ParticleSimulation(FLIP_N, FLIP_N, count, tension);
             }
             lightestMass = Double.POSITIVE_INFINITY;
             heaviestMass = 0;

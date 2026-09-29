@@ -92,14 +92,18 @@ import static dev.vexelray.sim.fluid.ir.Body.v;
  */
 public final class Flip {
 
-    /** {@code [dt, gx, gy, bulk, rho0]}, see {@link #params}. */
-    public static final int PARAM_COUNT = 5;
+    /** {@code [dt, gx, gy, bulk, rho0, sigma]}, see {@link #params}. */
+    public static final int PARAM_COUNT = 6;
+
+    /** How many times the colour is blurred before its gradient is taken; see {@link Tension}. */
+    public static final int TENSION_BLURS = 6;
 
     private static final int DT = 0;
     private static final int GX = 1;
     private static final int GY = 2;
     private static final int BULK = 3;
-    private static final int RHO0 = 4;
+    static final int RHO0 = 4;
+    private static final int SIGMA = 5;
 
     /**
      * Particles are kept this far inside the grid, so they deposit on nodes {@code 1 .. n−2} only. The wall is the
@@ -125,11 +129,19 @@ public final class Flip {
      * @param rho0 the rest density, in mass per node
      */
     public static int[] params(double dt, double gx, double gy, double bulk, double rho0) {
+        return params(dt, gx, gy, bulk, rho0, 0);
+    }
+
+    /**
+     * As above, with surface tension {@code sigma}: a force per length, in rest density times node spacings cubed per
+     * second squared, which a step built with tension turns into a force at the interface. Zero is none.
+     */
+    public static int[] params(double dt, double gx, double gy, double bulk, double rho0, double sigma) {
         if (!(dt > 0) || !(bulk >= 0) || !(rho0 > 0)) {
             throw new IllegalArgumentException("dt > 0, bulk >= 0 and rho0 > 0, got dt " + dt + ", bulk " + bulk
                     + ", rho0 " + rho0);
         }
-        return new int[] {bits(dt), bits(gx), bits(gy), bits(bulk), bits(rho0)};
+        return new int[] {bits(dt), bits(gx), bits(gy), bits(bulk), bits(rho0), bits(sigma)};
     }
 
     /** The largest stable step for sound speed {@code √(bulk/rho0)} and flow up to {@code speed}: {@code C·1/(c+|v|)}. */
@@ -228,6 +240,28 @@ public final class Flip {
      * it kept, so water can leave a wall as well as slide along it.
      */
     public static Function grid(int nx, int ny) {
+        return grid(nx, ny, false);
+    }
+
+    public static final Buffer GRID_TXX = new Buffer("txx", 6, F32);
+    public static final Buffer GRID_TYY = new Buffer("tyy", 7, F32);
+    public static final Buffer GRID_TXY = new Buffer("txy", 8, F32);
+    public static final Buffer GRID_COLOUR = new Buffer("colour", 9, F32);
+    /** {@link #GRID_BUFFERS}, then the capillary stress {@link Tension#stress} left, for {@link #gridWithTension}. */
+    public static final List<Buffer> TENSION_GRID_BUFFERS = List.of(GRID_M, GRID_MU, GRID_MV, GRID_PARAMS, GRID_U,
+            GRID_V, GRID_TXX, GRID_TYY, GRID_TXY, GRID_COLOUR);
+
+    /**
+     * {@link #grid}, with the surface tension's force added to each node's velocity: {@code dt·σ·F} over its mass, where
+     * {@code F} is {@link Tension#force}'s flux of the capillary stress across the node's faces, over at least
+     * {@link Tension#MASS_FLOOR} of a rest mass. The force sums to zero
+     * over the grid, so it adds no momentum to the fluid, and it is zero if {@code σ} is.
+     */
+    public static Function gridWithTension(int nx, int ny) {
+        return grid(nx, ny, true);
+    }
+
+    private static Function grid(int nx, int ny, boolean tension) {
         Body b = new Body();
         LocalVar node = b.let("node", new Expr.InvocationId());
         b.when(lt(v(node), i(nx * ny)), t -> {
@@ -240,6 +274,14 @@ public final class Flip {
                 LocalVar dt = wet.let("dt", load(GRID_PARAMS, i(DT)));
                 wet.set(u, add(div(load(GRID_MU, v(node)), v(m)), mul(v(dt), load(GRID_PARAMS, i(GX)))));
                 wet.set(w, add(div(load(GRID_MV, v(node)), v(m)), mul(v(dt), load(GRID_PARAMS, i(GY)))));
+                if (tension) {
+                    LocalVar[] force = Tension.force(wet, nx, ny, GRID_COLOUR, GRID_TXX, GRID_TYY, GRID_TXY, v(ni), v(nj));
+                    // dt · σ · F / max(m, floor · ρ₀)
+                    Expr push = div(mul(v(dt), load(GRID_PARAMS, i(SIGMA))),
+                            max(v(m), mul(f(Tension.MASS_FLOOR), load(GRID_PARAMS, i(RHO0)))));
+                    wet.set(u, add(v(u), mul(push, v(force[0]))));
+                    wet.set(w, add(v(w), mul(push, v(force[1]))));
+                }
             });
             t.when(not(gt(v(ni), i(WALL_NODE))), wall -> wall.set(u, max(v(u), f(0))));
             t.when(gt(v(ni), i(nx - 2 - WALL_NODE)), wall -> wall.set(u, min(v(u), f(0))));
@@ -248,7 +290,7 @@ public final class Flip {
             t.store(GRID_U, v(node), v(u));
             t.store(GRID_V, v(node), v(w));
         });
-        return function("flipGrid", b);
+        return function(tension ? "flipGridWithTension" : "flipGrid", b);
     }
 
     // --- advect --------------------------------------------------------------------------------------------

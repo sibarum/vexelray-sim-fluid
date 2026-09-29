@@ -50,6 +50,18 @@ cannot be fixed from here at all.
       more than the grid; more particles a cell would say how much is the grid. Not a bug in the step, which
       keeps a layered lake still and overturns heavy over light (`TwoFluidTest`).
 
+- [ ] **Surface tension holds a drop together for seconds, not minutes.** `Tension` (the capillary stress of a
+      blurred colour, as fluxes across faces so the total force is zero) reaches 0.57 of `σ/R` at radius 12 and 0.49
+      at 18, and scales with `σ` and with `1/R` (`TensionTest`). But in the demo's blob (`σ` = 8000) the rim sheds
+      a few particles within seconds and the drop begins to drift at ten, and at `σ` = 40000 or more it sprays at
+      once and dissolves. The likely cause is that pressure and tension reach the rim by different routes: pressure
+      through the particles' own weights, tension through a smooth colour on the nodes, so they cancel only
+      approximately and the residual, a fixed fraction of `σ/R`, throws surface particles outward. Node mass in the
+      core also creeps up to about twice rest while every `J` stays within 2%, the carried-not-measured `J` above
+      showing itself. Two things to try: put the tension in as a pressure on the surface particles, so the same
+      impulse carries both, and re-measure `J` from the density now and then. A beading puddle under gravity was
+      dropped: at `σ` = 8000 the capillary length is 2.5 nodes, too thin to resolve.
+
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
       keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key
       and half the next, interleaved, so the segmented scatter's runs are about half as long as they could be.
