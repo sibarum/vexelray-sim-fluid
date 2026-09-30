@@ -121,6 +121,16 @@ cannot be fixed from here at all.
       the truth as the old one was (5.5 rms against live). Two buffers mean the display runs on a prediction; true
       interpolation, between two finished keyframes, needs a third buffer and a display one keyframe behind.
 
+- [ ] **3D: the step exists and is fast; there is nothing to look at yet.** `Flip3`/`Flip3Step` are the 2D step with a
+      3×3×3 stencil, a 3×3 `C`, six walls, and a direct atomic scatter (108 adds a particle, no sort). `Flip3Test`: a lone
+      particle falls exactly, the scatter conserves mass and momentum, and a dam break in a full-depth slab stays in the
+      box, under Ritter's limit, with `J` within 0.94 .. 1.025 and motion along z at 1.3% of x (GPU only; the CPU would
+      take minutes). `Flip3BenchTest` (`-Dflip.sweep=true`): 32³ with 108k particles is 0.23 ms a step and 158% of real
+      time; 48³ with 389k is 0.83 ms and 36%; 64³ with 953k is 1.82 ms and 14%; the scatter is 93% of the step. Still to
+      do: a view (the depth-integrated density, and a slice), 3D scenarios, the budgeted mode and interpolation in
+      3D, the sort and a scatter that uses it, and the features of the 2D step that were built on it: tension, heat,
+      convection, foam, `J` relaxation, two fluids.
+
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
       keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key
       and half the next, interleaved, so the segmented scatter's runs are about half as long as they could be.

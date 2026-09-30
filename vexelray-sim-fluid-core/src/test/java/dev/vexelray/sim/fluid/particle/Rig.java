@@ -26,13 +26,13 @@ import static dev.vexelray.sim.fluid.particle.ScatterTest.columns;
  */
 abstract class Rig implements AutoCloseable {
 
-    final FlipStep step;
+    final Buffered step;
 
-    Rig(FlipStep step) {
+    Rig(Buffered step) {
         this.step = step;
     }
 
-    static Rig on(Backend backend, FlipStep step) {
+    static Rig on(Backend backend, Buffered step) {
         return backend == Backend.CPU ? new Cpu(step) : new Gpu(step);
     }
 
@@ -51,7 +51,7 @@ abstract class Rig implements AutoCloseable {
         private final Map<String, int[]> arrays = new LinkedHashMap<>();
         private final Map<Function, CpuKernel> lowered = new IdentityHashMap<>();
 
-        Cpu(FlipStep step) {
+        Cpu(Buffered step) {
             super(step);
             step.buffers().forEach((name, spec) -> arrays.put(name, new int[spec.length()]));
         }
@@ -82,7 +82,7 @@ abstract class Rig implements AutoCloseable {
         private final Map<Pass, KernelHandle> handles = new IdentityHashMap<>();
         private final Map<List<Pass>, DispatchSequence> sequences = new IdentityHashMap<>();
 
-        Gpu(FlipStep step) {
+        Gpu(Buffered step) {
             super(step);
             assumeGpu(accelerator);
             step.buffers().forEach((name, spec) -> {

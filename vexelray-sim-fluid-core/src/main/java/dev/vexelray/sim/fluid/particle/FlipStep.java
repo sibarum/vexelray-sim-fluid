@@ -19,7 +19,7 @@ import java.util.Map;
  * <p>Register every pass with a workgroup of {@link Scatter#WORKGROUP} and a subgroup of {@link
  * Scatter#SUBGROUP}: the scatter needs both, the sort's scans need the workgroup, and the rest do not mind.
  */
-public final class FlipStep {
+public final class FlipStep implements Buffered {
 
     /** One dispatch: a kernel, its bindings in order, the named buffers bound to them, and its invocations. */
     public record Pass(String name, Function kernel, List<Buffer> bindings, List<String> buffers, int invocations) {
@@ -190,7 +190,7 @@ public final class FlipStep {
                         particles));
     }
 
-    /** Every buffer the passes name, in a stable order. The counts must start at zero; the sort leaves them so. */
+    @Override
     public Map<String, BufferSpec> buffers() {
         return buffers;
     }
