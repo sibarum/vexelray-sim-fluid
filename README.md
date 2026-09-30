@@ -36,11 +36,27 @@ particle sweep, `FlipSweepTest`, is not an assertion and runs only with `-Dflip.
 mvn -pl vexelray-sim-fluid-demo exec:exec
 ```
 
-Opens the demo. Scenarios run from shallow-water dam breaks to particle dam breaks of oil or mercury under
-water, Rayleigh–Taylor, and a surface-tension blob. Keys: **1–7** view (depth, speed, x/y momentum, Froude,
-Courant, material) · **N** next scenario ·
-**R** reset · **space** pause · **.** single step · **C** toggle a Courant number past the stable limit ·
-**= / −** simulation speed.
+Opens the demo: a list of simulations on the left (the running one is filled), the picture in the middle, and on the
+right a transport (reset, pause, step) above three pages.
+
+| Page | What it holds |
+| --- | --- |
+| **Readings** | What is running and whether it is healthy: time, steps, mass drift, density, speed, Courant number, and the latched alarms. |
+| **Parameters** | The running scenario's own: how it is drawn (the view, and for 3D a slice through the middle), and each knob it has — gravity, the other fluid's density, the width of the column, heat conductivity and expansion, the boiling point, foam, nucleation sites. |
+| **Settings** | What belongs to no scenario: speed, a time step past the stable limit, and budgeted mode (work per tick, the controller, keyframes, what is drawn between them). **Restore defaults** puts every setting back, the scenarios' knobs and views with them. |
+
+The simulations: a water dam break, oil on water, water on mercury, Rayleigh-Taylor, convection, boiling (with
+no nucleation sites it bumps) and a 3D dam break. A knob that changes the state a scenario starts from restarts it
+once the slider has stopped moving; every other knob reaches the running simulation.
+
+Everything is remembered between runs in the framework's settings file, `$HOME/.vexelray-sim-fluid-demo/settings.properties`,
+beside the window's placement: the scenario, its view and knobs, speed and the budget. Only what has been
+changed is written. Each setting is also a flag, `--speed=4` or `--BOILING.stones=0`, which beats the file for that
+launch without being written to it.
+
+Keys still work: **1–8** view · **N** next scenario · **R** reset · **space** pause · **.** single step ·
+**C** toggle a Courant number past the stable limit · **= / −** speed · **V** a 3D slice, and **B A [ ] ; ' I Z X E**
+for budgeted mode.
 
 The debug view reserves two colours: **magenta** is a broken cell (NaN, infinity, negative depth), and
 **orange to red** is a cell outside the step size the scheme is guaranteed stable for. Alarms latch, with the

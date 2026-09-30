@@ -16,6 +16,8 @@ import dev.vexelray.sim.fluid.gui.DebugView;
 import dev.vexelray.sim.fluid.gui.View;
 import sibarum.tactroller.api.Key;
 
+import java.util.Set;
+
 /**
  * What the demo builds, and in which phase — the template's shape, one method per phase.
  *
@@ -26,15 +28,22 @@ import sibarum.tactroller.api.Key;
  */
 final class FluidDemoWiring extends Wiring {
 
-    private static final AppInfo INFO = new AppInfo(FluidDemo.APP, FluidDemo.TITLE, FluidDemo.W, FluidDemo.H);
+    /** Every setting is a key the framework accepts as {@code --key=value}, and reads from the settings file. */
+    private static final AppInfo INFO = new AppInfo(FluidDemo.APP, FluidDemo.TITLE, FluidDemo.W, FluidDemo.H,
+            Set.copyOf(Controls.keys()));
 
     /** The view's box and the target drawn into it: square, so a cell is square on screen. */
-    private static final Length VIEW_SIDE = Length.dp(720);
+    private static final Length VIEW_SIDE = Length.dp(620);
     private static final int VIEW_PIXELS = 1024;
+
+    /** What {@code Shell.setting} returns when no source has the key: nothing a setting could be. */
+    private static final String NONE = "\u0000none";
 
     private Controls controls;
     private Readout readout;
     private DebugView view;
+    private Sidebar sidebar;
+    private Dock dock;
 
     @Override
     public AppInfo info() {
@@ -48,7 +57,11 @@ final class FluidDemoWiring extends Wiring {
 
     @Override
     public void model(Shell shell) {
-        controls = new Controls();
+        // A flag, a property, the settings file, then the default: the framework's one precedence, read through it.
+        controls = new Controls(shell.settings(), key -> {
+            String value = shell.setting(key, NONE);
+            return NONE.equals(value) ? null : value;
+        });
     }
 
     @Override
@@ -62,12 +75,14 @@ final class FluidDemoWiring extends Wiring {
         gui.landmark("view", canvas);
         view = new DebugView(canvas, VIEW_PIXELS);
         readout = new Readout(gui);
+        sidebar = new Sidebar(gui, controls);
+        dock = new Dock(gui, controls, readout);
 
         Node body = gui.row()
                 .width(Length.FILL).height(Length.grow(1f))
                 .gap(Look.GAP).padding(Look.WIDE, Look.WIDE)
                 .alignItems(AlignItems.START)
-                .children(canvas, readout.node());
+                .children(sidebar.node(), canvas, dock.node());
         gui.root().direction(Direction.COLUMN)
                 .background(gui.theme().color(Role.PAGE))
                 .children(shell.titleBar().node(), body);
@@ -77,7 +92,15 @@ final class FluidDemoWiring extends Wiring {
     @Override
     public void attach(Shell shell) {
         Session session = shell.disposer().register(new Session(shell.app(), controls, view, readout));
+        // The pages are read back from the controls before the frame acts on them; the file is written last, at most twice a
+        // second, and once more as the window closes.
+        shell.hooks().add(FrameStage.APP, () -> {
+            sidebar.sync();
+            dock.sync();
+        });
         shell.hooks().add(FrameStage.APP, session::frame);
+        shell.hooks().add(FrameStage.APP, () -> controls.flush(false));
+        shell.disposer().register(() -> controls.flush(true));
         shell.deadline(session::nanosUntilNextFrame);
         // Off unless -Dautomation or --automation asks for it, and loopback-only when it is.
         shell.disposer().register(Driver.open(shell));

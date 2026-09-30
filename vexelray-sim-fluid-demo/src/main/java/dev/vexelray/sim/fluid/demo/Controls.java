@@ -1,18 +1,35 @@
 package dev.vexelray.sim.fluid.demo;
 
+import dev.vexelray.gui.core.app.Settings;
 import dev.vexelray.sim.fluid.gui.View;
 
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.UnaryOperator;
+
 /**
- * What the keys ask for, held until the next frame takes it.
+ * What the user has asked for, held until the next frame takes it, and remembered between runs.
  *
- * <p>Key handlers run on worker threads and the simulation lives on the main thread, so a handler only
- * records a request here and the frame acts on it: no handler touches the GPU, and no request is acted on
- * halfway through a frame. Requests that are events — reset, step — are flags the frame clears; settings — the
- * view, the speed — are values it reads.
+ * <p>Key and widget handlers run on worker threads and the simulation lives on the main thread, so a handler only
+ * records a request here and the frame acts on it: no handler touches the GPU, and no request is acted on halfway
+ * through a frame. Requests that are events — reset, step — are flags the frame clears; settings — the view, the
+ * speed, a knob — are values it reads.
  *
- * <p>Handlers run on a pool, so two presses in quick succession can run at once. Every read-modify-write —
- * advancing the scenario, a toggle, a speed change, taking a request — is therefore synchronized: volatile alone
- * lets both presses read the same value, and one of them is lost.
+ * <p>Handlers run on a pool, so two changes in quick succession can run at once. Every read-modify-write is
+ * therefore synchronized: volatile alone lets both read the same value, and one of them is lost.
+ *
+ * <h2>Remembering</h2>
+ *
+ * Every setting is written to the application's {@link Settings} as it changes, and read back at start through the
+ * framework's own precedence — a {@code --key=value} flag, a {@code -Dkey=value} property, the file, the default — which
+ * is what the {@code read} function given to the constructor is. Only what the user changed is written, so a setting
+ * they never touched follows the default when the default improves. The file is written by {@link #flush}, which the
+ * frame calls; {@link #restoreAll} removes every key this class owns and leaves the window's placement alone.
+ *
+ * <p>The keys are the names below: {@code scenario}, {@code speed}, {@code unstable}, the budgeted-mode settings, and per
+ * scenario {@code <scenario>.view} and {@code <scenario>.<knob>}.
  */
 final class Controls {
 
@@ -45,125 +62,331 @@ final class Controls {
     static final double STABLE_COURANT = 0.45;
     static final double UNSTABLE_COURANT = 0.9;
 
-    private volatile View view = View.DEPTH;
-    private volatile Scenario scenario = Scenario.DAM_BREAK_PARTICLES;
+    /** Speed is a power of two between these. */
+    static final double SLOWEST = 1.0 / 16;
+    static final double FASTEST = 16;
+    static final long LEAST_BUDGET = 2048;
+    static final long MOST_BUDGET = 64_000_000L;
+    static final double SHORTEST_TARGET = 2;
+    static final double LONGEST_TARGET = 250;
+    static final int SHORTEST_KEYFRAME = 25;
+    static final int LONGEST_KEYFRAME = 1600;
+
+    /** How long a change to something that restarts the scenario waits for the next one, so dragging a slider restarts it once. */
+    private static final long RESET_SETTLE_NANOS = 300_000_000L;
+    /** The file is written at most this often. */
+    private static final long SAVE_EVERY_NANOS = 500_000_000L;
+
+    // The defaults, in one place: a reset and a first run are the same thing.
+    private static final Scenario DEFAULT_SCENARIO = Scenario.DAM_BREAK;
+    private static final double DEFAULT_SPEED = 1;
+    private static final long DEFAULT_BUDGET = 400_000;
+    private static final int DEFAULT_KEYFRAME = 100;
+    private static final double DEFAULT_TARGET = 1000.0 / 60;
+
+    private final Settings settings;
+    private boolean dirty;
+    private long lastSave;
+
+    private volatile Scenario scenario;
+    private final Map<Scenario, View> views = new EnumMap<>(Scenario.class);
+    private final Map<Scenario, Scenario.Tuning> tunings = new EnumMap<>(Scenario.class);
     private volatile boolean paused;
     private volatile boolean unstable;
-    private volatile double timeScale = 1;
+    private volatile double timeScale;
     private volatile boolean resetRequested = true;
+    private volatile long resetNotBefore;
     private volatile boolean stepRequested;
     private volatile boolean budgeted;
-    private volatile long budget = 400_000;
-    private volatile boolean auto = true;
+    private volatile long budget;
+    private volatile boolean auto;
     private volatile boolean slice;
-    private volatile boolean ease = true;
-    private volatile int keyframeSteps = 100;
-    private volatile Display display = Display.HOLD;
-    private volatile double targetMillis = 1000.0 / 60;
+    private volatile boolean ease;
+    private volatile int keyframeSteps;
+    private volatile Display display;
+    private volatile double targetMillis;
+    private volatile long version;
 
-    // --- what the keys call ------------------------------------------------------------------------------
+    /**
+     * @param settings where changes are written
+     * @param read     a setting as the framework resolves it — flag, property, file — or null where there is none; the
+     *                 constructor falls back to the default for a missing or malformed one
+     */
+    Controls(Settings settings, UnaryOperator<String> read) {
+        this.settings = settings;
+        resetNotBefore = System.nanoTime();
+        load(read);
+    }
 
-    void show(View view) {
-        this.view = view;
+    /** Every setting, from where they are remembered; a missing or malformed one is its default. */
+    private void load(UnaryOperator<String> read) {
+        scenario = choose(Scenario.values(), read.apply("scenario"), DEFAULT_SCENARIO);
+        for (Scenario s : Scenario.values()) {
+            views.put(s, choose(View.values(), read.apply(s.name() + ".view"), s.view()));
+            Map<Knob, Double> values = new EnumMap<>(Knob.class);
+            for (Scenario.Param p : s.params()) {
+                values.put(p.knob(), p.clamp(number(read.apply(knobKey(s, p.knob())), p.def())));
+            }
+            tunings.put(s, new Scenario.Tuning(values));
+        }
+        timeScale = clamp(number(read.apply("speed"), DEFAULT_SPEED), SLOWEST, FASTEST);
+        unstable = bool(read.apply("unstable"), false);
+        budgeted = bool(read.apply("budgeted"), false);
+        auto = bool(read.apply("auto"), true);
+        budget = (long) clamp(number(read.apply("budget"), DEFAULT_BUDGET), LEAST_BUDGET, MOST_BUDGET);
+        targetMillis = clamp(number(read.apply("target"), DEFAULT_TARGET), SHORTEST_TARGET, LONGEST_TARGET);
+        keyframeSteps = (int) clamp(number(read.apply("keyframe"), DEFAULT_KEYFRAME), SHORTEST_KEYFRAME, LONGEST_KEYFRAME);
+        display = choose(Display.values(), read.apply("display"), Display.HOLD);
+        ease = bool(read.apply("ease"), true);
+        slice = bool(read.apply("slice"), false);
+    }
+
+    // --- the scenario -------------------------------------------------------------------------------------
+
+    synchronized void select(Scenario next) {
+        if (next == scenario) {
+            return;
+        }
+        scenario = next;
+        remember("scenario", next.name());
+        requestReset(false);
     }
 
     synchronized void nextScenario() {
-        scenario = scenario.next();
-        resetRequested = true;
+        Scenario[] all = Scenario.values();
+        select(all[(scenario.ordinal() + 1) % all.length]);
     }
 
     synchronized void reset() {
-        resetRequested = true;
+        requestReset(false);
+    }
+
+    /** One knob of the current scenario. A change to something the scenario starts as starts it again, once it has settled. */
+    synchronized void tune(Knob knob, double value) {
+        Scenario.Param param = scenario.param(knob);
+        if (param == null) {
+            return;
+        }
+        double chosen = param.clamp(value);
+        Scenario.Tuning before = tunings.get(scenario);
+        if (before.get(knob) == chosen) {
+            return;
+        }
+        Map<Knob, Double> values = new EnumMap<>(Knob.class);
+        for (Scenario.Param p : scenario.params()) {
+            values.put(p.knob(), p.knob() == knob ? chosen : before.get(p.knob()));
+        }
+        tunings.put(scenario, new Scenario.Tuning(values));
+        remember(knobKey(scenario, knob), Double.toString(chosen));
+        if (knob.resets()) {
+            requestReset(true);
+        }
+    }
+
+    /** The current scenario's knobs as they are. */
+    synchronized Scenario.Tuning tuning() {
+        return tunings.get(scenario);
+    }
+
+    /** Any scenario's knobs, for a panel that holds one page for each. */
+    synchronized Scenario.Tuning tuning(Scenario of) {
+        return tunings.get(of);
+    }
+
+    /** Any scenario's view. */
+    synchronized View view(Scenario of) {
+        return views.get(of);
+    }
+
+    /** The scenario's knobs and its view, as shipped. */
+    synchronized void restoreScenario() {
+        forget(scenario);
+        load(scenario);
+        requestReset(false);
+    }
+
+    /** Every setting as shipped, and the scenario started again. The window's placement is not a setting of this class. */
+    synchronized void restoreAll() {
+        for (String key : keys()) {
+            settings.remove(key);
+        }
+        dirty = true;
+        // Not through the framework's precedence: a flag given at launch does not survive being told to go back to defaults.
+        load(key -> null);
+        requestReset(false);
+    }
+
+    private void forget(Scenario s) {
+        settings.remove(s.name() + ".view");
+        for (Scenario.Param p : s.params()) {
+            settings.remove(knobKey(s, p.knob()));
+        }
+        dirty = true;
+    }
+
+    /** One scenario's view and knobs from their defaults, the rest untouched. */
+    private void load(Scenario s) {
+        views.put(s, s.view());
+        tunings.put(s, s.defaults());
+        version++;
+    }
+
+    // --- what the keys and widgets call -------------------------------------------------------------------
+
+    synchronized void show(View view) {
+        views.put(scenario, view);
+        remember(scenario.name() + ".view", view.name());
     }
 
     synchronized void togglePause() {
-        paused = !paused;
+        pause(!paused);
+    }
+
+    synchronized void pause(boolean value) {
+        paused = value;
+        version++;
     }
 
     /** One step, when paused; while running it would be lost among the others, so it pauses first. */
     synchronized void step() {
         paused = true;
         stepRequested = true;
+        version++;
     }
 
     synchronized void toggleStability() {
-        unstable = !unstable;
+        stable(unstable);
+    }
+
+    /** The stable Courant number, or the one past the limit that shows the scheme failing. */
+    synchronized void stable(boolean stable) {
+        unstable = !stable;
+        remember("unstable", Boolean.toString(unstable));
     }
 
     /** Work per tick, or the ordinary real-time stepping; a change of mode starts the scenario again. */
     synchronized void toggleBudget() {
-        budgeted = !budgeted;
-        resetRequested = true;
+        budgeted(!budgeted);
+    }
+
+    synchronized void budgeted(boolean value) {
+        budgeted = value;
+        remember("budgeted", Boolean.toString(value));
+        requestReset(false);
     }
 
     /** Sets the budget by hand, which turns the controller off; it starts from what the controller had. */
     synchronized void moreBudget() {
-        auto = false;
-        budget = Math.min(budget * 2, 64_000_000L);
+        budget(budget * 2);
     }
 
     synchronized void lessBudget() {
+        budget(budget / 2);
+    }
+
+    synchronized void budget(long value) {
         auto = false;
-        budget = Math.max(budget / 2, 2048);
+        remember("auto", "false");
+        budget = Math.min(Math.max(value, LEAST_BUDGET), MOST_BUDGET);
+        remember("budget", Long.toString(budget));
     }
 
     /** The controller on or off. */
     synchronized void toggleAuto() {
-        auto = !auto;
+        auto(!auto);
+    }
+
+    synchronized void auto(boolean value) {
+        auto = value;
+        remember("auto", Boolean.toString(value));
     }
 
     /** The tick time the controller aims for, halved or doubled, between 2 and 250 ms. */
     synchronized void shorterTarget() {
-        targetMillis = Math.max(targetMillis / 2, 2);
+        target(targetMillis / 2);
     }
 
     synchronized void longerTarget() {
-        targetMillis = Math.min(targetMillis * 2, 250);
+        target(targetMillis * 2);
+    }
+
+    synchronized void target(double millis) {
+        targetMillis = clamp(millis, SHORTEST_TARGET, LONGEST_TARGET);
+        remember("target", Double.toString(targetMillis));
     }
 
     /** What budgeted mode draws between keyframes; see {@link Display}. */
     synchronized void cycleDisplay() {
-        display = display.next();
+        display(display.next());
+    }
+
+    synchronized void display(Display value) {
+        display = value;
+        remember("display", value.name());
     }
 
     /** Steps in a keyframe, halved or doubled, between 25 and 1600: a longer one is more to draw between. */
     synchronized void longerKeyframe() {
-        keyframeSteps = Math.min(keyframeSteps * 2, 1600);
+        keyframe(keyframeSteps * 2);
     }
 
     synchronized void shorterKeyframe() {
-        keyframeSteps = Math.max(keyframeSteps / 2, 25);
+        keyframe(keyframeSteps / 2);
+    }
+
+    synchronized void keyframe(int steps) {
+        keyframeSteps = Math.min(Math.max(steps, SHORTEST_KEYFRAME), LONGEST_KEYFRAME);
+        remember("keyframe", Integer.toString(keyframeSteps));
     }
 
     /** Easing the jump when a keyframe lands, on or off. */
     synchronized void toggleEase() {
-        ease = !ease;
+        ease(!ease);
+    }
+
+    synchronized void ease(boolean value) {
+        ease = value;
+        remember("ease", Boolean.toString(value));
     }
 
     /** A three-dimensional scenario drawn as a slice through its middle, or integrated along the depth. */
     synchronized void toggleSlice() {
-        slice = !slice;
+        slice(!slice);
     }
 
-    /** While the controller runs, the manual budget follows what it chose, so turning it off starts from there. */
+    synchronized void slice(boolean value) {
+        slice = value;
+        remember("slice", Boolean.toString(value));
+    }
+
+    /**
+     * While the controller runs, the manual budget follows what it chose, so turning it off starts from there. Not
+     * remembered: it is the controller's, not the user's.
+     */
     synchronized void adopt(long chosen) {
-        if (auto) {
+        if (auto && chosen != budget) {
             budget = chosen;
+            version++;
         }
     }
 
     synchronized void faster() {
-        timeScale = Math.min(timeScale * 2, 16);
+        speed(timeScale * 2);
     }
 
     synchronized void slower() {
-        timeScale = Math.max(timeScale / 2, 1.0 / 16);
+        speed(timeScale / 2);
+    }
+
+    synchronized void speed(double value) {
+        timeScale = clamp(value, SLOWEST, FASTEST);
+        remember("speed", Double.toString(timeScale));
     }
 
     // --- what the frame reads ----------------------------------------------------------------------------
 
-    View view() {
-        return view;
+    synchronized View view() {
+        return views.get(scenario);
     }
 
     Scenario scenario() {
@@ -214,11 +437,23 @@ final class Controls {
         return targetMillis;
     }
 
-    /** Whether a reset was asked for since the last call — which clears it. */
+    /** Counts every change, so whoever shows the settings can tell when to read them again. */
+    long version() {
+        return version;
+    }
+
+    /** Whether a reset is due, which clears it: asked for, and not still being changed. */
     synchronized boolean takeReset() {
-        boolean asked = resetRequested;
-        resetRequested = false;
-        return asked;
+        boolean due = resetRequested && System.nanoTime() - resetNotBefore >= 0;
+        if (due) {
+            resetRequested = false;
+        }
+        return due;
+    }
+
+    /** How long until a reset that is waiting for its changes to settle is due; the longest time if none is. */
+    synchronized long nanosUntilReset() {
+        return resetRequested ? Math.max(0, resetNotBefore - System.nanoTime()) : Long.MAX_VALUE;
     }
 
     /** Whether a single step was asked for since the last call — which clears it. */
@@ -226,5 +461,86 @@ final class Controls {
         boolean asked = stepRequested;
         stepRequested = false;
         return asked;
+    }
+
+    // --- remembering --------------------------------------------------------------------------------------
+
+    /** Writes the settings file if anything changed, at most twice a second unless {@code force}d. */
+    synchronized void flush(boolean force) {
+        long now = System.nanoTime();
+        if (dirty && (force || now - lastSave >= SAVE_EVERY_NANOS)) {
+            settings.save();
+            dirty = false;
+            lastSave = now;
+        }
+    }
+
+    private void remember(String key, String value) {
+        settings.putString(key, value);
+        dirty = true;
+        version++;
+    }
+
+    private void requestReset(boolean settle) {
+        resetRequested = true;
+        resetNotBefore = System.nanoTime() + (settle ? RESET_SETTLE_NANOS : 0);
+        version++;
+    }
+
+    /** The key of a knob: {@code DAM_BREAK.gravity}. */
+    static String knobKey(Scenario scenario, Knob knob) {
+        return scenario.name() + "." + knob.key();
+    }
+
+    /** Every key this class writes, for the framework's list of the flags it accepts and for {@link #restoreAll}. */
+    static List<String> keys() {
+        List<String> keys = new ArrayList<>(List.of("scenario", "speed", "unstable", "budgeted", "auto", "budget", "target",
+                "keyframe", "display", "ease", "slice"));
+        for (Scenario s : Scenario.values()) {
+            keys.add(s.name() + ".view");
+            for (Scenario.Param p : s.params()) {
+                keys.add(knobKey(s, p.knob()));
+            }
+        }
+        return keys;
+    }
+
+    // --- reading ------------------------------------------------------------------------------------------
+
+    private static double number(String text, double def) {
+        if (text == null) {
+            return def;
+        }
+        try {
+            double value = Double.parseDouble(text.trim());
+            return Double.isNaN(value) || Double.isInfinite(value) ? def : value;
+        } catch (NumberFormatException malformed) {
+            return def;
+        }
+    }
+
+    private static boolean bool(String text, boolean def) {
+        if (text != null) {
+            String t = text.trim();
+            if (t.equalsIgnoreCase("true") || t.equalsIgnoreCase("false")) {
+                return Boolean.parseBoolean(t);
+            }
+        }
+        return def;
+    }
+
+    private static <E extends Enum<E>> E choose(E[] all, String name, E def) {
+        if (name != null) {
+            for (E e : all) {
+                if (e.name().equals(name.trim())) {
+                    return e;
+                }
+            }
+        }
+        return def;
+    }
+
+    private static double clamp(double value, double low, double high) {
+        return Math.min(high, Math.max(low, value));
     }
 }

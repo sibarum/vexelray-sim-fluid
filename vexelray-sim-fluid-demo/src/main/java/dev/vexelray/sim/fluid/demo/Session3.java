@@ -31,6 +31,7 @@ final class Session3 implements AutoCloseable {
 
     private static final int PPC = 8;
     private static final double RHO0 = 1;
+    /** Gravity in node spacings per second squared, at the box's own; the knob scales it. */
     private static final double G = 9.81 * (N - 1);
     private static final double DRY = 0.05;
     /** The longest a frame spends stepping, as the measured cost of a step sees it. */
@@ -48,6 +49,9 @@ final class Session3 implements AutoCloseable {
     private ParticleSimulation3 sim;
     private Scenario scenario;
     private double fall;
+    private double gravity = G;
+    private double reference = G;
+    private int height;
     private double sound;
     private double bulk;
     private double flipTime;
@@ -61,7 +65,7 @@ final class Session3 implements AutoCloseable {
     }
 
     /** Starts the scenario again: its particles, eight a cell, jittered, at rest. */
-    void load(Scenario next) {
+    void load(Scenario next, Scenario.Tuning tuning) {
         scenario = next;
         alarms.clear();
         int inside = N - 3;
@@ -70,7 +74,7 @@ final class Session3 implements AutoCloseable {
         for (int layer = 0; layer < inside; layer++) {
             for (int row = 0; row < inside; row++) {
                 for (int col = 0; col < inside; col++) {
-                    if (next.density3(col, row, layer) > 0) {
+                    if (next.density3(col, row, layer, tuning) > 0) {
                         count += PPC;
                         height = Math.max(height, row + 1);
                     }
@@ -85,7 +89,7 @@ final class Session3 implements AutoCloseable {
         for (int layer = 0; layer < inside; layer++) {
             for (int row = 0; row < inside; row++) {
                 for (int col = 0; col < inside; col++) {
-                    double rho = next.density3(col, row, layer);
+                    double rho = next.density3(col, row, layer, tuning);
                     for (int s = 0; rho > 0 && s < PPC; s++, k++) {
                         at[0][k] = Flip3.WALL + col + random.nextFloat() * 0.999f;
                         at[1][k] = Flip3.WALL + row + random.nextFloat() * 0.999f;
@@ -102,13 +106,25 @@ final class Session3 implements AutoCloseable {
             }
             sim = new ParticleSimulation3(N, N, N, count);
         }
-        fall = Math.sqrt(2 * G * Math.max(height, 1));
-        sound = 5 * fall;
-        bulk = sound * sound * RHO0;
+        this.height = height;
+        physics(tuning);
         sim.load(at, new float[3][count], mass, params());
         flipTime = 0;
         carry = 0;
         msPerStep = 1;
+    }
+
+    /**
+     * The gravity, and the sound speed that follows from it: five times the fastest the water can fall, which is sized from the
+     * gravity and the column but never below the box's own gravity, so a lighter one keeps the tested fluid.
+     */
+    private void physics(Scenario.Tuning tuning) {
+        double factor = tuning.get(Knob.GRAVITY);
+        gravity = G * factor;
+        reference = G * Math.max(1, factor);
+        fall = Math.sqrt(2 * reference * Math.max(height, 1));
+        sound = 5 * fall;
+        bulk = sound * sound * RHO0;
     }
 
     /** The step the sound speed allows, at the Courant number the keys chose, less what three dimensions take. */
@@ -117,11 +133,12 @@ final class Session3 implements AutoCloseable {
     }
 
     int[] params() {
-        return Flip3.params(stepSize(), 0, -G, 0, bulk, RHO0);
+        return Flip3.params(stepSize(), 0, -gravity, 0, bulk, RHO0);
     }
 
-    /** The parameters again, for a Courant number changed while running. */
-    void reparam() {
+    /** The knobs or the Courant number changed while running: the step's parameters again. */
+    void retune(Scenario.Tuning tuning) {
+        physics(tuning);
         sim.params(params());
     }
 
@@ -137,7 +154,7 @@ final class Session3 implements AutoCloseable {
     /** The scales for the picture as it is now: a slice's depth is a density, a projection's a thickness. */
     Scales scales() {
         boolean slice = controls.slice();
-        double front = 2 * Math.sqrt(G * Math.max(fall * fall / (2 * G), 1));
+        double front = 2 * Math.sqrt(reference * Math.max(fall * fall / (2 * reference), 1));
         double depth = slice ? 1.3 : N - 3;
         return new Scales((float) (bulk / RHO0), (float) DRY, 0, (float) depth, (float) front,
                 (float) (0.5 * front * depth), 0.5f);

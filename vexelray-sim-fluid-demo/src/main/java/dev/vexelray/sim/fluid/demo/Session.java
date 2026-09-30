@@ -4,7 +4,6 @@ import dev.vexelray.gui.core.app.GuiApp;
 import dev.vexelray.sim.fluid.gui.BudgetController;
 import dev.vexelray.sim.fluid.gui.DebugView;
 import dev.vexelray.sim.fluid.gui.ParticleSimulation;
-import dev.vexelray.sim.fluid.gui.PatchSimulation;
 import dev.vexelray.sim.fluid.gui.Scales;
 import dev.vexelray.sim.fluid.gui.SwapEase;
 import dev.vexelray.sim.fluid.gui.View;
@@ -12,11 +11,7 @@ import dev.vexelray.sim.fluid.particle.Flip;
 import dev.vexelray.sim.fluid.particle.MaterialField;
 import dev.vexelray.sim.fluid.particle.ParticleSplat;
 import dev.vexelray.sim.fluid.particle.ParticleDiagnostics;
-import dev.vexelray.sim.fluid.stencil.Clock;
 import dev.vexelray.sim.fluid.stencil.Diagnostics;
-import dev.vexelray.sim.fluid.stencil.Edge;
-import dev.vexelray.sim.fluid.stencil.Edges;
-import dev.vexelray.sim.fluid.stencil.ShallowWater;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -25,14 +20,14 @@ import java.util.Random;
 import static dev.vexelray.sim.fluid.demo.Readout.Line;
 
 /**
- * One frame's work, on the main thread: take what the keys asked for, advance the water by the time that passed,
+ * One frame's work, on the main thread: take what the user asked for, advance the water by the time that passed,
  * read it back, judge it, and draw it.
  *
  * <p>The simulation advances by wall-clock time scaled by the speed setting — so a second on screen is a second
  * of water, however many steps that takes, until it takes more than a frame can afford, at which point the
- * readout says the run is behind rather than silently slowing down. Shallow water spends that time through the
- * clock's budget, its steps sized by the kernel; the particles take fixed steps, their size set by the sound
- * speed chosen for them.
+ * readout says the run is behind rather than silently slowing down. The particles take fixed steps, their size set by the
+ * sound speed, which is chosen for the gravity. A knob that is not what the scenario starts as reaches the running one through
+ * {@code retune}; one that is starts the scenario again.
  *
  * <p><b>Nothing jumps.</b> A view change blends the two colourings over a few frames and a reset blends the old
  * state into the new one, so the only sudden change in the picture is one the water itself makes. The scales
@@ -41,9 +36,6 @@ import static dev.vexelray.sim.fluid.demo.Readout.Line;
 final class Session implements AutoCloseable {
 
     private static final double G = 9.81;
-    private static final double DRY = ShallowWater.DEFAULT_DRY;
-    private static final int N = Scenario.N;
-    private static final double DX = Scenario.DX;
 
     /** More steps than this in one frame and the run falls behind real time rather than stalling the window. */
     private static final int MAX_STEPS_PER_FRAME = 600;
@@ -65,12 +57,6 @@ final class Session implements AutoCloseable {
     /** Particles per cell; what fills them is the scenario's. */
     private static final int PPC = 4;
     private static final double RHO0 = 1;
-    /** The fastest the water can fall, and a sound speed five times that: density then varies by a few percent. */
-    private static final double FALL_SPEED = Math.sqrt(2 * FLIP_G * Scenario.COLUMN_HEIGHT);
-    private static final double SOUND = 5 * FALL_SPEED;
-    /** The step is sized for this speed: the splash up the far wall was measured at 2.3 times the fall speed. */
-    private static final double SPEED_BOUND = 2.5 * FALL_SPEED;
-    private static final double BULK = SOUND * SOUND * RHO0;
     private static final int SORT_EVERY = 10;
     /**
      * Compression past this, relative to rest, in 1% of the particles latches an alarm: weakly compressible has
@@ -84,7 +70,6 @@ final class Session implements AutoCloseable {
     private final Controls controls;
     private final DebugView view;
     private final Readout readout;
-    private final PatchSimulation sim;
     private ParticleSimulation particles;
     private final Session3 three;
 
@@ -93,7 +78,21 @@ final class Session implements AutoCloseable {
     private double initialVolume;
     private double lastStep;
     private double appliedCourant;
+    /** The knobs the running scenario has taken in, so a change is noticed once. */
+    private Scenario.Tuning applied;
     private long lastFrame;
+    /** The controls' version at the last frame, so a change made while the loop was parked brings a frame. */
+    private long seenVersion;
+
+    /**
+     * The sound speed, five times the fastest the water can fall, so density varies by a few percent; the bound the step is
+     * sized for, 2.5 times the fall speed, since the splash up the far wall was measured at 2.3 times; and the bulk modulus
+     * that sound speed makes. All from the gravity, but not below the box's own: a lighter gravity keeps the stiffer, tested
+     * fluid, and a heavier one stiffens it.
+     */
+    private double soundSpeed;
+    private double speedBound;
+    private double bulk;
 
     /** The lightest and heaviest particle masses of the scenario, which the material view spans. */
     private double lightestMass;
@@ -108,7 +107,8 @@ final class Session implements AutoCloseable {
     private double frameMillis;
     private BudgetController controller = new BudgetController(400_000, 4096, 6_000_000, 1.0 / 60);
     private double keyframeRate;
-    /** Which nodes have a nucleation site, 1 or 0; null outside a convection scenario. */
+    /** The fraction of nodes that have a nucleation site, and which ones, 1 or 0; null outside a convection scenario. */
+    private double sitesFraction;
     private float[] sites;
     /** The temperature on each node, scaled for the view; null when nothing has shown it. */
     private float[] temperatures;
@@ -135,7 +135,6 @@ final class Session implements AutoCloseable {
         this.controls = controls;
         this.view = view;
         this.readout = readout;
-        this.sim = new PatchSimulation(N, N, Edges.all(Edge.WALL));
         this.three = new Session3(controls, readout);
     }
 
@@ -148,18 +147,16 @@ final class Session implements AutoCloseable {
         double elapsed = lastFrame == 0 ? 0 : Math.min((now - lastFrame) / 1e9, LONGEST_FRAME);
         lastFrame = now;
 
+        seenVersion = controls.version();
         if (controls.takeReset()) {
             load(controls.scenario(), now);
         }
-        if (controls.courant() != appliedCourant) {
+        // What the running scenario takes without starting again: the Courant number, and the knobs that are not what it starts as.
+        Scenario.Tuning tuning = controls.tuning();
+        if (controls.courant() != appliedCourant || !tuning.equals(applied)) {
             appliedCourant = controls.courant();
-            if (scenario.dimensions() == 3) {
-                three.reparam();
-            } else if (scenario.particles()) {
-                particles.params(flipParams());
-            } else {
-                sim.params(params());
-            }
+            applied = tuning;
+            retune();
         }
         View wanted = controls.view();
         if (wanted != shown) {
@@ -169,8 +166,7 @@ final class Session implements AutoCloseable {
             viewFadeStart = now;
         }
 
-        Picture picture = scenario.dimensions() == 3 ? threeFrame(elapsed)
-                : scenario.particles() ? particleFrame(elapsed) : waterFrame(elapsed);
+        Picture picture = scenario.dimensions() == 3 ? threeFrame(elapsed) : particleFrame(elapsed);
 
         float[][] display = picture.state();
         double resetT = progress(now, resetFadeStart, RESET_FADE_NANOS);
@@ -189,13 +185,16 @@ final class Session implements AutoCloseable {
         long now = System.nanoTime();
         boolean fading = progress(now, viewFadeStart, VIEW_FADE_NANOS) < 1
                 || (resetFrom != null && progress(now, resetFadeStart, RESET_FADE_NANOS) < 1);
-        return !controls.paused() || fading ? 0L : Long.MAX_VALUE;
+        if (!controls.paused() || fading || controls.version() != seenVersion) {
+            return 0L;
+        }
+        // Parked, but for a restart that is waiting for a slider to stop moving.
+        return controls.nanosUntilReset();
     }
 
     @Override
     public void close() {
         view.close();
-        sim.close();
         three.close();
         if (particles != null) {
             particles.close();
@@ -212,71 +211,6 @@ final class Session implements AutoCloseable {
         commonReadings();
         readout.set(Line.SCALE, "scale     " + shown.legend(scales) + " · " + three.modeLabel());
         return new Picture(state, three.n(), three.n());
-    }
-
-    // --- shallow water -------------------------------------------------------------------------------------
-
-    private Picture waterFrame(double elapsed) {
-        PatchSimulation.Advance advance = null;
-        if (controls.takeStep()) {
-            advance = sim.advance(Clock.MAX_BUDGET, 1);
-        } else if (!controls.paused()) {
-            advance = sim.advance(ShallowWater.ticks(elapsed * controls.timeScale()), MAX_STEPS_PER_FRAME);
-        }
-        // The step the scheme is allowed, from the speed the kernel measured -- not a frame's mean step, which
-        // shrinks whenever the budget caps one, and says nothing about stability when it does.
-        double allowed = sim.allowedStep(controls.courant(), DX, DX);
-        // The view's Courant scale is dt over the cell size; the particles' cell size is 1, so fold DX in here.
-        lastStep = allowed / DX;
-
-        float[][] read = sim.read();
-        float[][] state = {read[0], read[1], read[2], noFluid(read[0].length), noFluid(read[0].length)};
-        Diagnostics d = Diagnostics.of(state[0], state[1], state[2], G, DRY, allowed, DX, DX);
-        int clamps = sim.clamped();
-        latchWater(d, clamps, allowed);
-        waterReadings(d, clamps, advance, allowed);
-        return new Picture(state, N, N);
-    }
-
-    private void latchWater(Diagnostics d, int clamps, double allowed) {
-        double t = ShallowWater.seconds(sim.now());
-        if (d.broken()) {
-            alarms.putIfAbsent("broken", String.format("t=%.2fs  %d broken cells", t, d.nonFinite() + d.negative()));
-        }
-        if (allowed > 0 && !d.stable()) {
-            alarms.putIfAbsent("unstable", String.format("t=%.2fs  Courant %.2f past %.2f", t, d.maxCourant(),
-                    Diagnostics.COURANT_LIMIT));
-        }
-        if (clamps > 0) {
-            // The state cannot show these: the clamp has already lifted the depth to zero, and made water.
-            alarms.putIfAbsent("clamped", String.format("t=%.2fs  depths clamped: water created", t));
-        }
-        latchDrift(d, t);
-    }
-
-    private void waterReadings(Diagnostics d, int clamps, PatchSimulation.Advance advance, double allowed) {
-        readout.heading("shallow water · first-order HLL");
-        commonReadings();
-        readout.set(Line.SCALE, "scale     " + shown.legend(scales) + " · magenta broken");
-        readout.set(Line.BACKEND, String.format("backend   %s · %d x %d cells of %.2f m",
-                sim.onGpu() ? "GPU" : "CPU fallback", N, N, DX));
-        readout.set(Line.TIME, String.format("time      %8.3f s  x%-6s %s", ShallowWater.seconds(sim.now()),
-                trim(controls.timeScale()), controls.paused() ? "paused" : "running"));
-        int steps = advance == null ? 0 : advance.steps();
-        boolean behind = advance != null && advance.behindTicks() > 0 && !controls.paused();
-        readout.set(Line.STEPS, String.format("steps     %3d/frame · allowed dt %.2f ms · %d total%s", steps,
-                allowed * 1000, sim.steps(), behind ? " · BEHIND" : ""));
-        double drift = initialVolume == 0 ? 0 : (d.volume() - initialVolume) / initialVolume;
-        readout.set(Line.VOLUME, String.format("volume    %10.2f m3 · drift %+.1e", d.volume(), drift));
-        readout.set(Line.DEPTH, String.format("depth     %.3f .. %.3f m · %d wet", d.minDepth(), d.maxDepth(), d.wet()));
-        readout.set(Line.FROUDE, String.format("Froude    max %.2f", d.maxFroude()));
-        readout.set(Line.COURANT, String.format("Courant   max %.2f of %.2f · target %.2f%s", d.maxCourant(),
-                Diagnostics.COURANT_LIMIT, controls.courant(),
-                controls.courant() > Diagnostics.COURANT_LIMIT ? " UNSTABLE BY CHOICE" : ""));
-        readout.set(Line.BROKEN, String.format("broken    %d NaN/inf · %d negative · %d clamped", d.nonFinite(),
-                d.negative(), clamps));
-        heatReading();
-        alarmReading();
     }
 
     // --- particles -----------------------------------------------------------------------------------------
@@ -332,8 +266,8 @@ final class Session implements AutoCloseable {
         // The grid gives the picture, and the mass, the speed and the broken nodes. The density and the acoustic
         // Courant number are not the grid's: node mass is speckled by where the particles fell, and a sound speed
         // rebuilt from it is too. They come from the particles' J and from the sound speed the step was sized by.
-        Diagnostics d = Diagnostics.of(state[0], state[1], state[2], BULK / RHO0, FLIP_DRY, dt, 1, 1);
-        ParticleDiagnostics p = ParticleDiagnostics.of(particles.compression(), d.maxSpeed(), SOUND, dt);
+        Diagnostics d = Diagnostics.of(state[0], state[1], state[2], bulk / RHO0, FLIP_DRY, dt, 1, 1);
+        ParticleDiagnostics p = ParticleDiagnostics.of(particles.compression(), d.maxSpeed(), soundSpeed, dt);
         latchParticles(d, p);
         particleReadings(d, p, steps, behind, dt);
         return new Picture(state, FLIP_N, FLIP_N);
@@ -344,7 +278,7 @@ final class Session implements AutoCloseable {
      * view that shows it is on screen or fading; otherwise the last plane stands, unseen.
      */
     private float[] materialPlane(int cells) {
-        if (scenario.foamDrop() > 0 && particles.convection()) {
+        if (scenario.foam() && particles.convection()) {
             return foamPlane(cells);
         }
         if (shown == View.MATERIAL || fadingFrom == View.MATERIAL || materials == null) {
@@ -385,7 +319,7 @@ final class Session implements AutoCloseable {
                     FLIP_N);
             materials = new float[average.length];
             for (int k = 0; k < average.length; k++) {
-                double threshold = scenario.foamBoil() + scenario.superheat() * (1 - (sites == null ? 0 : sites[k]));
+                double threshold = applied.get(Knob.BOIL_POINT) + applied.get(Knob.SUPERHEAT) * (1 - (sites == null ? 0 : sites[k]));
                 double into = Math.min(1, Math.max(0, (average[k] - threshold) / Math.max(scenario.foamWidth(), 1e-6)));
                 materials[k] = (float) (1 - into * into * (3 - 2 * into));
             }
@@ -620,10 +554,6 @@ final class Session implements AutoCloseable {
             alarms.putIfAbsent("broken", String.format("t=%.3fs  %d broken nodes, %d broken particles", flipTime,
                     d.nonFinite(), p.nonFinite()));
         }
-        if (scenario.sigma() > 0 && capillaryStep(scenario.sigma()) < flipStep()) {
-            alarms.putIfAbsent("capillary", String.format("t=%.3fs  step %.3f ms past the capillary limit %.3f ms",
-                    flipTime, flipStep() * 1000, capillaryStep(scenario.sigma()) * 1000));
-        }
         if (p.courant() > Diagnostics.COURANT_LIMIT) {
             alarms.putIfAbsent("unstable", String.format("t=%.3fs  acoustic Courant %.2f past %.2f", flipTime,
                     p.courant(), Diagnostics.COURANT_LIMIT));
@@ -666,35 +596,29 @@ final class Session implements AutoCloseable {
         alarmReading();
     }
 
-    /**
-     * The longest step a capillary wave one node long can be taken with, {@code √(ρ₀·Δx³ / 2πσ)}: past it surface
-     * tension is unstable however small the sound speed makes the acoustic step.
-     */
-    private static double capillaryStep(double sigma) {
-        return Math.sqrt(RHO0 / (2 * Math.PI * sigma));
-    }
-
     /** The step the sound speed allows at the Courant number the keys chose. */
     private double flipStep() {
-        return Flip.stableStep(BULK, RHO0, SPEED_BOUND, controls.courant());
+        return Flip.stableStep(bulk, RHO0, speedBound, controls.courant());
     }
 
     private int[] flipParams() {
-        return Flip.params(flipStep(), 0, -FLIP_G * scenario.gravity(), BULK, RHO0, scenario.sigma(),
-                scenario.kappa(), scenario.beta(), 0.5, scenario.hot(), scenario.cold(), scenario.relaxation(), scenario.foamBoil(),
-                scenario.foamWidth(), scenario.foamDrop(), scenario.superheat());
+        Scenario.Tuning t = applied;
+        return Flip.params(flipStep(), 0, -FLIP_G * t.get(Knob.GRAVITY), bulk, RHO0, 0,
+                t.get(Knob.CONDUCTIVITY), t.get(Knob.EXPANSION), 0.5, scenario.hot(), scenario.cold(), scenario.relaxation(),
+                t.has(Knob.BOIL_POINT) ? t.get(Knob.BOIL_POINT) : 0.5, scenario.foamWidth(), t.get(Knob.FOAM_DROP),
+                t.get(Knob.SUPERHEAT));
     }
 
     /**
      * {@code PPC} particles jittered in each cell the scenario fills, at rest, each with the mass that makes its
      * fluid's rest density: x, y, m. Cells run over the box's inside, from its bottom-left corner.
      */
-    private static float[][] fill(Scenario scenario) {
+    private static float[][] fill(Scenario scenario, Scenario.Tuning tuning) {
         int cells = FLIP_N - 3;
         int count = 0;
         for (int row = 0; row < cells; row++) {
             for (int col = 0; col < cells; col++) {
-                count += scenario.density(col, row) > 0 ? PPC : 0;
+                count += scenario.density(col, row, tuning) > 0 ? PPC : 0;
             }
         }
         float[] x = new float[count];
@@ -704,7 +628,7 @@ final class Session implements AutoCloseable {
         int k = 0;
         for (int row = 0; row < cells; row++) {
             for (int col = 0; col < cells; col++) {
-                double rho = scenario.density(col, row);
+                double rho = scenario.density(col, row, tuning);
                 for (int s = 0; rho > 0 && s < PPC; s++, k++) {
                     x[k] = Flip.WALL + col + random.nextFloat() * 0.999f;
                     y[k] = Flip.WALL + row + random.nextFloat() * 0.999f;
@@ -720,26 +644,26 @@ final class Session implements AutoCloseable {
     private void load(Scenario next, long now) {
         scenario = next;
         appliedCourant = controls.courant();
+        applied = controls.tuning();
         lastStep = 0;
         alarms.clear();
+        physics(applied);
         if (next.dimensions() == 3) {
-            three.load(next);
+            three.load(next, applied);
             scales = three.scales();
             initialVolume = 0;
-        } else if (next.particles()) {
-            float[][] column = fill(next);
+        } else {
+            float[][] column = fill(next, applied);
             int count = column[0].length;
-            boolean tension = next.sigma() > 0;
-            boolean heat = next.kappa() > 0;
-            boolean convection = next.beta() > 0;
+            boolean heat = next.heat();
+            boolean convection = next.convection();
             boolean relax = next.relaxation() > 0;
-            if (particles == null || particles.particles() != count || particles.tension() != tension
-                    || particles.heat() != heat || particles.convection() != convection
-                    || particles.relax() != relax) {
+            if (particles == null || particles.particles() != count || particles.heat() != heat
+                    || particles.convection() != convection || particles.relax() != relax) {
                 if (particles != null) {
                     particles.close();
                 }
-                particles = new ParticleSimulation(FLIP_N, FLIP_N, count, tension, heat, convection, relax);
+                particles = new ParticleSimulation(FLIP_N, FLIP_N, count, false, heat, convection, relax);
             }
             lightestMass = Double.POSITIVE_INFINITY;
             heaviestMass = 0;
@@ -759,36 +683,22 @@ final class Session implements AutoCloseable {
                 particles.temperatures(temperature);
             }
             if (convection) {
-                // Boiling stones: a fixed random set of nodes, a fraction of them the scenario's; the same set each reset.
-                sites = new float[FLIP_N * FLIP_N];
-                Random stones = new Random(7);
-                for (int k = 0; k < sites.length; k++) {
-                    sites[k] = stones.nextDouble() < next.stones() ? 1f : 0f;
-                }
-                particles.sites(sites);
+                nucleate();
             }
             if (next.compression() != 1) {
                 float[] compressed = new float[count];
                 java.util.Arrays.fill(compressed, (float) next.compression());
                 particles.compression(compressed);
             }
-            temperatures = null;            flipTime = 0;
+            temperatures = null;
+            flipTime = 0;
             flipCarry = 0;
-            double front = 2 * Math.sqrt(FLIP_G * Scenario.COLUMN_HEIGHT);
-            // g = c² makes the shader's √(gh) the sound speed, so its Froude and Courant views are Mach and acoustic.
-            scales = new Scales((float) (BULK / RHO0), (float) FLIP_DRY, 0, (float) next.deepest(), (float) front,
-                    (float) (0.5 * front * Math.max(1, heaviestMass * PPC)), (float) Diagnostics.COURANT_LIMIT);
+            scales = flipScales();
             double mass = 0;
             for (float m : column[2]) {
                 mass += m;
             }
             initialVolume = mass / RHO0;
-        } else {
-            float[] h = next.depths();
-            float[] zero = new float[h.length];
-            sim.load(h, zero, zero.clone(), params());
-            scales = Scales.forDepth(G, DRY, next.deepest());
-            initialVolume = Diagnostics.of(h, zero, zero, G, DRY, 0, DX, DX).volume();
         }
         if (onScreen != null) {
             resetFrom = onScreen;
@@ -796,8 +706,61 @@ final class Session implements AutoCloseable {
         }
     }
 
-    private int[] params() {
-        return ShallowWater.paramsAllowingInstability(G, controls.courant(), DX, DX, DRY);
+    /**
+     * What a change to a knob that is not what the scenario starts as does to the running one: the step's parameters, the
+     * scales drawn against, and in a boiling scenario which nodes have a nucleation site.
+     */
+    private void retune() {
+        physics(applied);
+        if (scenario.dimensions() == 3) {
+            three.retune(applied);
+            return;
+        }
+        if (particles == null) {
+            return;
+        }
+        particles.params(flipParams());
+        if (applied.has(Knob.STONES) && applied.get(Knob.STONES) != sitesFraction) {
+            nucleate();
+            materials = null;
+        }
+        scales = flipScales();
+    }
+
+    /**
+     * Boiling stones: a fixed random set of nodes, a fraction of them the knob's; the same set each time, and a larger
+     * fraction contains a smaller, so the slider adds stones rather than shuffling them.
+     */
+    private void nucleate() {
+        sitesFraction = applied.has(Knob.STONES) ? applied.get(Knob.STONES) : 1;
+        sites = new float[FLIP_N * FLIP_N];
+        Random stones = new Random(7);
+        for (int k = 0; k < sites.length; k++) {
+            sites[k] = stones.nextDouble() < sitesFraction ? 1f : 0f;
+        }
+        particles.sites(sites);
+    }
+
+    /**
+     * The sound speed and what follows from it, for the gravity chosen: five times the fastest the water can fall, and the step
+     * sized for two and a half times, from the gravity and the box, never below the box's own.
+     */
+    private void physics(Scenario.Tuning tuning) {
+        double fall = Math.sqrt(2 * FLIP_G * Math.max(1, tuning.get(Knob.GRAVITY)) * Scenario.COLUMN_HEIGHT);
+        soundSpeed = 5 * fall;
+        speedBound = 2.5 * fall;
+        bulk = soundSpeed * soundSpeed * RHO0;
+    }
+
+    /**
+     * The view's scales. {@code g = c²} makes the shader's {@code √(gh)} the sound speed, so its Froude and Courant views are
+     * Mach and acoustic; the deepest is 1.3 of the heaviest fluid's rest density, which the colour scale spans.
+     */
+    private Scales flipScales() {
+        double front = 2 * Math.sqrt(FLIP_G * Scenario.COLUMN_HEIGHT);
+        double deepest = 1.3 * Math.max(1, heaviestMass * PPC);
+        return new Scales((float) (bulk / RHO0), (float) FLIP_DRY, 0, (float) deepest, (float) front,
+                (float) (0.5 * front * Math.max(1, heaviestMass * PPC)), (float) Diagnostics.COURANT_LIMIT);
     }
 
     private void latchDrift(Diagnostics d, double t) {
@@ -808,7 +771,7 @@ final class Session implements AutoCloseable {
     }
 
     private void commonReadings() {
-        readout.set(Line.SCENARIO, "scenario  " + scenario.description());
+        readout.set(Line.SCENARIO, "scenario  " + scenario.title());
         // The formula appears only once the fade has finished, so a script can wait for a view to be on screen
         // rather than photograph the first frame of a fade.
         boolean fading = progress(System.nanoTime(), viewFadeStart, VIEW_FADE_NANOS) < 1;
@@ -822,7 +785,7 @@ final class Session implements AutoCloseable {
      * which conduction must keep; drift is a bug, as it is for mass. Blank for a scene without heat.
      */
     private void heatReading() {
-        if (particles == null || !scenario.particles() || !particles.heat()) {
+        if (particles == null || scenario.dimensions() == 3 || !particles.heat()) {
             readout.set(Line.HEAT, "");
             return;
         }
@@ -836,7 +799,7 @@ final class Session implements AutoCloseable {
             high = Math.max(high, t[p]);
             total += m[p] * t[p];
         }
-        if (scenario.beta() > 0) {
+        if (scenario.convection()) {
             // The floor and the lid add and take away heat, so there is no total to keep; the mean is what shows the balance.
             readout.set(Line.HEAT, String.format("heat      T %.3f .. %.3f · mean %.3f · floor %.2f, lid %.2f", low, high,
                     total / totalMass(m), scenario.hot(), scenario.cold()));

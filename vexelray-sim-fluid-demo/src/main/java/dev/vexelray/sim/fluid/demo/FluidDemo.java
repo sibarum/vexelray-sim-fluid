@@ -3,8 +3,8 @@ package dev.vexelray.sim.fluid.demo;
 import dev.vexelray.framework.shell.VexelApplication;
 
 /**
- * The experiments, on screen: a patch of water, what it holds made visible, and the readings that say whether
- * it is healthy.
+ * The experiments, on screen: a list of simulations, the picture of the one running, its readings, and the parameters
+ * and settings that drive it, remembered between runs.
  *
  * <p>The entry point and its constants, and nothing else, as the project builder's template has it: what the
  * application builds is in {@link FluidDemoWiring}, one method per phase.

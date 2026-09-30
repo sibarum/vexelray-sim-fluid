@@ -38,7 +38,7 @@ final class Readout {
         heading = gui.text(" ")
                 .font(Look.UI).textSize(Look.HEADING).textColor(gui.theme().color(Role.INK));
         panel = gui.column()
-                .width(Length.em(30)).height(Length.FILL)
+                .width(Length.FILL).height(Length.FILL)
                 .gap(Look.TIGHT)
                 .padding(Look.WIDE, Look.WIDE)
                 .background(gui.theme().color(Role.PANEL))
