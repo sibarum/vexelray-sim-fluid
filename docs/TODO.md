@@ -90,11 +90,18 @@ cannot be fixed from here at all.
       `Flip.advectSliced` take a slice from two parameters), and the picture is the last keyframe that finished.
       The sliced step matches the whole one to 7e-6 cells (`SlicedStepTest`). Still to do: (1) nothing sets the
       budget from frame time, so the `[` `]` keys are the controller; (2) the clear, the grid pass and the sort are
-      not counted in the work, and the sort runs whole; (3) it is for the plain step only, since tension, heat,
+      not counted in the work, and the sort runs whole (the controller below is done: `BudgetController`, key `A`,
+      `;` and `'` for the target); (3) it is for the plain step only, since tension, heat,
       convection and relaxation are not sliced; (4) each slice is a submission and a parameter write, which cost
       about 35 times a whole step when every step had to be sliced, so a whole step now runs as the recorded one
       whenever the budget covers it, and a step too big for it pays the price; (5) it does the same work as the
       ordinary path, so it saves nothing at this size, and shows its worth only where a step is slower than a frame.
+      The controller aims a tick at 0.8 of a target time from the throughput measured across finished keyframes;
+      at 16.7 ms it climbs to its ceiling in about 40 keyframes (a whole keyframe takes about 7 ms here), at 8.3 ms
+      it settles at 147k a tick with 5.9 ms frames, and under about 8 ms it cannot, since a frame costs about 6 ms
+      in drawing and readbacks whatever the budget, so it falls to its floor and the readout says OVER. It
+      estimates throughput with that fixed cost folded in, which is what puts the fixed point at
+      `r0 · (0.8 · target − overhead)`; measuring the overhead apart would let it say how far over it is.
 
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
       keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key

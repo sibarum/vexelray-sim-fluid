@@ -29,6 +29,8 @@ final class Controls {
     private volatile boolean stepRequested;
     private volatile boolean budgeted;
     private volatile long budget = 400_000;
+    private volatile boolean auto = true;
+    private volatile double targetMillis = 1000.0 / 60;
 
     // --- what the keys call ------------------------------------------------------------------------------
 
@@ -65,12 +67,36 @@ final class Controls {
         resetRequested = true;
     }
 
+    /** Sets the budget by hand, which turns the controller off; it starts from what the controller had. */
     synchronized void moreBudget() {
+        auto = false;
         budget = Math.min(budget * 2, 64_000_000L);
     }
 
     synchronized void lessBudget() {
+        auto = false;
         budget = Math.max(budget / 2, 2048);
+    }
+
+    /** The controller on or off. */
+    synchronized void toggleAuto() {
+        auto = !auto;
+    }
+
+    /** The tick time the controller aims for, halved or doubled, between 2 and 250 ms. */
+    synchronized void shorterTarget() {
+        targetMillis = Math.max(targetMillis / 2, 2);
+    }
+
+    synchronized void longerTarget() {
+        targetMillis = Math.min(targetMillis * 2, 250);
+    }
+
+    /** While the controller runs, the manual budget follows what it chose, so turning it off starts from there. */
+    synchronized void adopt(long chosen) {
+        if (auto) {
+            budget = chosen;
+        }
     }
 
     synchronized void faster() {
@@ -109,6 +135,14 @@ final class Controls {
 
     long budget() {
         return budget;
+    }
+
+    boolean auto() {
+        return auto;
+    }
+
+    double targetMillis() {
+        return targetMillis;
     }
 
     /** Whether a reset was asked for since the last call — which clears it. */

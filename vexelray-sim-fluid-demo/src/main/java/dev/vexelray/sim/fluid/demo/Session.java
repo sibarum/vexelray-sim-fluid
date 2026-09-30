@@ -1,6 +1,7 @@
 package dev.vexelray.sim.fluid.demo;
 
 import dev.vexelray.gui.core.app.GuiApp;
+import dev.vexelray.sim.fluid.gui.BudgetController;
 import dev.vexelray.sim.fluid.gui.DebugView;
 import dev.vexelray.sim.fluid.gui.ParticleSimulation;
 import dev.vexelray.sim.fluid.gui.PatchSimulation;
@@ -100,6 +101,9 @@ final class Session implements AutoCloseable {
     private Picture keyPicture;
     private long keyframes;
     private long lastKeyframe;
+    private long workSinceKeyframe;
+    private double frameMillis;
+    private BudgetController controller = new BudgetController(400_000, 4096, 6_000_000, 1.0 / 60);
     private double keyframeRate;
     /** Which nodes have a nucleation site, 1 or 0; null outside a convection scenario. */
     private float[] sites;
@@ -264,7 +268,7 @@ final class Session implements AutoCloseable {
      */
     private Picture particleFrame(double elapsed) {
         if (controls.budgeted() && particles.sliceable()) {
-            return budgetedFrame();
+            return budgetedFrame(elapsed);
         }
         keyPicture = null;
         double dt = flipStep();
@@ -377,19 +381,30 @@ final class Session implements AutoCloseable {
     private static final int KEYFRAME_STEPS = 100;
 
     /**
-     * Budgeted mode: each tick spends at most the controls\x27 budget of particle work on the step, and the picture is the
-     * last keyframe that finished, held until the next does. The clock, the readings and the picture all advance
-     * together, when a keyframe completes, and not before; the step itself is the ordinary one, only spread over ticks,
-     * so a small budget makes the simulation slow and the picture stale, never wrong. Nothing is interpolated.
+     * Budgeted mode: each tick spends at most a budget of particle work on the step, and the picture is the last keyframe
+     * that finished, held until the next does. The clock, the readings and the picture all advance together, when a
+     * keyframe completes, and not before; the step itself is the ordinary one, only spread over ticks, so a small budget
+     * makes the simulation slow and the picture stale, never wrong. Nothing is interpolated.
+     *
+     * <p>The budget is the controller's, which aims for a tick of the time the controls say, from the throughput it
+     * measures across each finished keyframe; or the controls' own, once they have taken it over by hand.
      */
-    private Picture budgetedFrame() {
+    private Picture budgetedFrame(double elapsed) {
         double dt = flipStep();
         lastStep = dt;
         if (keyPicture == null) {
             // Nothing has completed yet: the grid is empty, and so is the picture.
             keyPicture = observe(dt, 0, false);
         }
+        if (Math.abs(controller.target() * 1000 - controls.targetMillis()) > 1e-9) {
+            controller.target(controls.targetMillis() / 1000);
+        }
+        long budget = controls.auto() ? controller.budget() : controls.budget();
+        controls.adopt(budget);
+        frameMillis = frameMillis == 0 ? elapsed * 1000 : 0.9 * frameMillis + 0.1 * elapsed * 1000;
+
         boolean fresh = false;
+        boolean measured = false;
         if (controls.takeStep()) {
             ParticleSimulation.Budgeted result;
             do {
@@ -397,31 +412,45 @@ final class Session implements AutoCloseable {
             } while (!result.completed());
             fresh = true;
         } else if (!controls.paused()) {
-            long left = controls.budget();
+            long left = budget;
             while (left > 0) {
                 ParticleSimulation.Budgeted result = particles.advanceBudgeted(left, KEYFRAME_STEPS, SORT_EVERY);
+                workSinceKeyframe += left - result.leftover();
                 left = result.leftover();
                 if (result.completed()) {
                     fresh = true;
+                    measured = true;
                     break;
                 }
             }
+        } else {
+            lastKeyframe = 0;   // the time spent paused is not the time the work took
         }
         if (fresh) {
             long now = System.nanoTime();
             if (lastKeyframe != 0) {
-                double rate = 1e9 / (now - lastKeyframe);
+                double seconds = (now - lastKeyframe) / 1e9;
+                double rate = 1 / seconds;
                 keyframeRate = keyframeRate == 0 ? rate : 0.8 * keyframeRate + 0.2 * rate;
+                if (measured) {
+                    controller.completed(workSinceKeyframe, seconds);
+                }
             }
-            lastKeyframe = now;
+            lastKeyframe = measured ? now : 0;
+            workSinceKeyframe = 0;
             flipTime += KEYFRAME_STEPS * dt;
             keyframes++;
             keyPicture = observe(dt, KEYFRAME_STEPS, false);
         }
-        readout.set(Line.TIME, String.format("time      %8.3f s  keyframes %d %s", flipTime, keyframes,
-                controls.paused() ? "paused" : "running"));
-        readout.set(Line.STEPS, String.format("keyframe  %d steps · budget %s/tick · %.1f/s · next %2.0f%%",
-                KEYFRAME_STEPS, compact(controls.budget()), keyframeRate, 100 * particles.keyframeProgress()));
+        // A frame has a fixed cost, drawing and readbacks, that no budget reduces: a target under it cannot be met, and
+        // the controller, which aims a little under the target, goes to its floor. Say so, since it looks like a crawl.
+        boolean over = controls.auto() && frameMillis > 1.05 * controls.targetMillis();
+        readout.set(Line.TIME, String.format("time      %8.3f s  keyframes %d %s · frame %.1f ms%s", flipTime, keyframes,
+                controls.paused() ? "paused" : "running", frameMillis, over ? " OVER" : ""));
+        readout.set(Line.STEPS, String.format("keyframe  %d steps · budget %s/tick %s · %.1f/s · next %2.0f%%",
+                KEYFRAME_STEPS, compact(budget),
+                controls.auto() ? String.format("auto %.1f ms", controls.targetMillis()) : "manual", keyframeRate,
+                100 * particles.keyframeProgress()));
         return keyPicture;
     }
 
