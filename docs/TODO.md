@@ -103,6 +103,21 @@ cannot be fixed from here at all.
       estimates throughput with that fixed cost folded in, which is what puts the fixed point at
       `r0 · (0.8 · target − overhead)`; measuring the overhead apart would let it say how far over it is.
 
+- [ ] **Interpolation between keyframes works, and stops at collisions.** `I` in budgeted mode cycles hold,
+      interpolate and live; `Z` and `X` size the keyframe. Interpolate moves each particle of the last finished keyframe
+      along its own velocity toward a predicted next state by the share of the next keyframe's work that is done (the
+      sort is off while it does, so particle k stays particle k), and splats the result on the host
+      (`ParticleSplat`). Live is the working state, which is the truth it estimates, so the readout gives the error
+      against it. `InterpolationErrorSweepTest` (`-Dflip.sweep=true`) puts numbers on it, in nodes, at the end of a
+      keyframe: 13 ms: rms 0.17 against 2.41 for holding the picture; 27 ms: 0.60 against 4.76; 54 ms: 2.06 against
+      9.57; and the worst single particle is 9, 16 and 40. The error grows about with the square of the keyframe. Adding
+      an acceleration from the previous keyframe does nothing (0.15, 0.58, 2.25: no better, and worse at 54 ms), so it
+      is not smooth acceleration that is missed but collisions and fragments. Visible artifacts: a particle carried into
+      a wall by its velocity is clamped there and piles up into a bright blob, and a splash along the ceiling is not
+      there until the keyframe lands. The jump at the swap is the prediction error plus the share of the keyframe the
+      display had not reached; nothing smooths it yet. Two buffers mean the display runs on a prediction; true
+      interpolation, between two finished keyframes, needs a third buffer and a display one keyframe behind.
+
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
       keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key
       and half the next, interleaved, so the segmented scatter's runs are about half as long as they could be.

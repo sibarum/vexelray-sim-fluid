@@ -9,6 +9,7 @@ import dev.vexelray.sim.fluid.gui.Scales;
 import dev.vexelray.sim.fluid.gui.View;
 import dev.vexelray.sim.fluid.particle.Flip;
 import dev.vexelray.sim.fluid.particle.MaterialField;
+import dev.vexelray.sim.fluid.particle.ParticleSplat;
 import dev.vexelray.sim.fluid.particle.ParticleDiagnostics;
 import dev.vexelray.sim.fluid.stencil.Clock;
 import dev.vexelray.sim.fluid.stencil.Diagnostics;
@@ -392,6 +393,7 @@ final class Session implements AutoCloseable {
     private Picture budgetedFrame(double elapsed) {
         double dt = flipStep();
         lastStep = dt;
+        int keyframeSteps = controls.keyframeSteps();
         if (keyPicture == null) {
             // Nothing has completed yet: the grid is empty, and so is the picture.
             keyPicture = observe(dt, 0, false);
@@ -400,6 +402,10 @@ final class Session implements AutoCloseable {
             controller.target(controls.targetMillis() / 1000);
         }
         long budget = controls.auto() ? controller.budget() : controls.budget();
+        Controls.Display mode = controls.display();
+        // The sort only makes the scatter cheaper, and any order is correct; but it permutes the particles, and a particle
+        // has to be the same one from one keyframe to the next to be moved between them. So it is off while drawing them.
+        int sortEvery = mode == Controls.Display.HOLD ? SORT_EVERY : Integer.MAX_VALUE;
         controls.adopt(budget);
         frameMillis = frameMillis == 0 ? elapsed * 1000 : 0.9 * frameMillis + 0.1 * elapsed * 1000;
 
@@ -408,13 +414,13 @@ final class Session implements AutoCloseable {
         if (controls.takeStep()) {
             ParticleSimulation.Budgeted result;
             do {
-                result = particles.advanceBudgeted(Long.MAX_VALUE / 4, KEYFRAME_STEPS, SORT_EVERY);
+                result = particles.advanceBudgeted(Long.MAX_VALUE / 4, keyframeSteps, sortEvery);
             } while (!result.completed());
             fresh = true;
         } else if (!controls.paused()) {
             long left = budget;
             while (left > 0) {
-                ParticleSimulation.Budgeted result = particles.advanceBudgeted(left, KEYFRAME_STEPS, SORT_EVERY);
+                ParticleSimulation.Budgeted result = particles.advanceBudgeted(left, keyframeSteps, sortEvery);
                 workSinceKeyframe += left - result.leftover();
                 left = result.leftover();
                 if (result.completed()) {
@@ -438,20 +444,127 @@ final class Session implements AutoCloseable {
             }
             lastKeyframe = measured ? now : 0;
             workSinceKeyframe = 0;
-            flipTime += KEYFRAME_STEPS * dt;
+            flipTime += keyframeSteps * dt;
             keyframes++;
-            keyPicture = observe(dt, KEYFRAME_STEPS, false);
+            keyPicture = observe(dt, keyframeSteps, false);
+            if (mode != Controls.Display.HOLD) {
+                snapshot(dt, keyframeSteps);
+            }
         }
         // A frame has a fixed cost, drawing and readbacks, that no budget reduces: a target under it cannot be met, and
         // the controller, which aims a little under the target, goes to its floor. Say so, since it looks like a crawl.
         boolean over = controls.auto() && frameMillis > 1.05 * controls.targetMillis();
+        if (mode == Controls.Display.HOLD) {
+            curX = null;
+        }
+        Picture shown = keyPicture;
+        double progress = particles.keyframeProgress();
+        if (mode == Controls.Display.LIVE) {
+            shown = livePicture();
+        } else if (mode == Controls.Display.INTERPOLATE && curX != null) {
+            shown = interpolatedPicture(progress);
+        }
+        if (mode != Controls.Display.INTERPOLATE) {
+            readout.set(Line.HEAT, "");
+        }
         readout.set(Line.TIME, String.format("time      %8.3f s  keyframes %d %s · frame %.1f ms%s", flipTime, keyframes,
                 controls.paused() ? "paused" : "running", frameMillis, over ? " OVER" : ""));
-        readout.set(Line.STEPS, String.format("keyframe  %d steps · budget %s/tick %s · %.1f/s · next %2.0f%%",
-                KEYFRAME_STEPS, compact(budget),
+        if (mode != Controls.Display.HOLD) {
+            readout.set(Line.TIME, String.format("time      %8.3f s  shown · keyframes %d · frame %.1f ms%s",
+                    flipTime + progress * keyframeSteps * dt, keyframes, frameMillis, over ? " OVER" : ""));
+        }
+        readout.set(Line.STEPS, String.format("keyframe  %d steps · budget %s/tick %s · %.1f/s · next %2.0f%% · %s",
+                keyframeSteps, compact(budget),
                 controls.auto() ? String.format("auto %.1f ms", controls.targetMillis()) : "manual", keyframeRate,
-                100 * particles.keyframeProgress()));
-        return keyPicture;
+                100 * progress, mode.label()));
+        return shown;
+    }
+
+    // --- drawing between keyframes -------------------------------------------------------------------------
+
+    /** The particles at the last keyframe that finished, and where they are predicted to be at the next. */
+    private float[] curX;
+    private float[] curY;
+    private float[] curU;
+    private float[] curV;
+    private float[] nextX;
+    private float[] nextY;
+    private float[] particleMass;
+
+    /**
+     * Takes the keyframe that just finished as the current state and predicts the next from it: each particle carried by
+     * its own velocity for the length of a keyframe, and kept inside the walls. The true next state replaces the
+     * prediction when it finishes. The particles are in the same order every time, since the sort is off.
+     */
+    private void snapshot(double dt, int keyframeSteps) {
+        float[][] at = particles.positions();
+        float[][] by = particles.velocities();
+        curX = at[0];
+        curY = at[1];
+        curU = by[0];
+        curV = by[1];
+        if (particleMass == null) {
+            particleMass = particles.masses();
+        }
+        double span = keyframeSteps * dt;
+        nextX = new float[curX.length];
+        nextY = new float[curX.length];
+        float low = Flip.WALL;
+        float high = FLIP_N - 1 - Flip.WALL;
+        for (int k = 0; k < curX.length; k++) {
+            nextX[k] = (float) Math.min(Math.max(curX[k] + curU[k] * span, low), high);
+            nextY[k] = (float) Math.min(Math.max(curY[k] + curV[k] * span, low), high);
+        }
+    }
+
+    /**
+     * The current keyframe moved toward the predicted next by {@code progress}, the share of the next keyframe's work that is
+     * done, and drawn. And how far that is from where the work has actually got the particles, which is the truth it
+     * estimates: read back and compared here, so the readout says how good the estimate is.
+     */
+    private Picture interpolatedPicture(double progress) {
+        int n = curX.length;
+        float[] x = new float[n];
+        float[] y = new float[n];
+        for (int k = 0; k < n; k++) {
+            x[k] = (float) (curX[k] + progress * (nextX[k] - curX[k]));
+            y[k] = (float) (curY[k] + progress * (nextY[k] - curY[k]));
+        }
+        float[][] truth = particles.positions();
+        double sum = 0;
+        double worst = 0;
+        for (int k = 0; k < n; k++) {
+            double off = Math.hypot(x[k] - truth[0][k], y[k] - truth[1][k]);
+            sum += off * off;
+            worst = Math.max(worst, off);
+        }
+        readout.set(Line.HEAT, String.format("interp    vs live: rms %.2f · max %.1f nodes · %2.0f%% through", Math.sqrt(sum / n),
+                worst, 100 * progress));
+        return splatPicture(x, y, curU, curV);
+    }
+
+    /** The particles where the work has got them now, drawn: no keyframe and no estimate. */
+    private Picture livePicture() {
+        float[][] at = particles.positions();
+        float[][] by = particles.velocities();
+        if (particleMass == null) {
+            particleMass = particles.masses();
+        }
+        return splatPicture(at[0], at[1], by[0], by[1]);
+    }
+
+    private Picture splatPicture(float[] x, float[] y, float[] u, float[] v) {
+        float[][] grid = ParticleSplat.grid(x, y, u, v, particleMass, FLIP_N, FLIP_N);
+        float[][] state = new float[5][];
+        for (int f = 0; f < 3; f++) {
+            state[f] = new float[grid[f].length];
+            for (int k = 0; k < grid[f].length; k++) {
+                state[f][k] = (float) (grid[f][k] / RHO0);
+            }
+        }
+        state[3] = noFluid(grid[0].length);
+        state[4] = noFluid(grid[0].length);
+        return new Picture(state, FLIP_N, FLIP_N);
     }
 
     private static String compact(long value) {

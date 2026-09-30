@@ -16,6 +16,31 @@ import dev.vexelray.sim.fluid.gui.View;
  */
 final class Controls {
 
+    /**
+     * What budgeted mode draws. {@code HOLD}: the last keyframe that finished, until the next does. {@code INTERPOLATE}: the
+     * particles of that keyframe moved along toward where they are predicted to be at the next, by the share of its work
+     * that is done. {@code LIVE}: the particles where the work has got them, which is the truth that {@code INTERPOLATE}
+     * is an estimate of, and needs no keyframe at all.
+     */
+    enum Display {
+        HOLD("hold"), INTERPOLATE("interpolate"), LIVE("live");
+
+        private final String label;
+
+        Display(String label) {
+            this.label = label;
+        }
+
+        String label() {
+            return label;
+        }
+
+        Display next() {
+            Display[] all = values();
+            return all[(ordinal() + 1) % all.length];
+        }
+    }
+
     /** The stable Courant number, and the one past the limit that shows the scheme failing. */
     static final double STABLE_COURANT = 0.45;
     static final double UNSTABLE_COURANT = 0.9;
@@ -30,6 +55,8 @@ final class Controls {
     private volatile boolean budgeted;
     private volatile long budget = 400_000;
     private volatile boolean auto = true;
+    private volatile int keyframeSteps = 100;
+    private volatile Display display = Display.HOLD;
     private volatile double targetMillis = 1000.0 / 60;
 
     // --- what the keys call ------------------------------------------------------------------------------
@@ -92,6 +119,20 @@ final class Controls {
         targetMillis = Math.min(targetMillis * 2, 250);
     }
 
+    /** What budgeted mode draws between keyframes; see {@link Display}. */
+    synchronized void cycleDisplay() {
+        display = display.next();
+    }
+
+    /** Steps in a keyframe, halved or doubled, between 25 and 1600: a longer one is more to draw between. */
+    synchronized void longerKeyframe() {
+        keyframeSteps = Math.min(keyframeSteps * 2, 1600);
+    }
+
+    synchronized void shorterKeyframe() {
+        keyframeSteps = Math.max(keyframeSteps / 2, 25);
+    }
+
     /** While the controller runs, the manual budget follows what it chose, so turning it off starts from there. */
     synchronized void adopt(long chosen) {
         if (auto) {
@@ -139,6 +180,14 @@ final class Controls {
 
     boolean auto() {
         return auto;
+    }
+
+    int keyframeSteps() {
+        return keyframeSteps;
+    }
+
+    Display display() {
+        return display;
     }
 
     double targetMillis() {

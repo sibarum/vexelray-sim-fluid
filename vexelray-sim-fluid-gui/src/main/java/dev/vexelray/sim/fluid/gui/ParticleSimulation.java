@@ -198,6 +198,11 @@ public final class ParticleSimulation implements AutoCloseable {
         return read("m");
     }
 
+    /** {@code {u, v}} of every particle, in node spacings per second. A readback, like {@link #grid}. */
+    public float[][] velocities() {
+        return new float[][] {read("u"), read("v")};
+    }
+
     /** {@code {x, y}} of every particle. A readback, like {@link #grid}. */
     public float[][] positions() {
         return new float[][] {read("x"), read("y")};
