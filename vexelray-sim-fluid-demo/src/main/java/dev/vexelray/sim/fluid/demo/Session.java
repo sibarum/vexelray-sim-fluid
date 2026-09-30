@@ -6,6 +6,7 @@ import dev.vexelray.sim.fluid.gui.DebugView;
 import dev.vexelray.sim.fluid.gui.ParticleSimulation;
 import dev.vexelray.sim.fluid.gui.PatchSimulation;
 import dev.vexelray.sim.fluid.gui.Scales;
+import dev.vexelray.sim.fluid.gui.SwapEase;
 import dev.vexelray.sim.fluid.gui.View;
 import dev.vexelray.sim.fluid.particle.Flip;
 import dev.vexelray.sim.fluid.particle.MaterialField;
@@ -456,6 +457,7 @@ final class Session implements AutoCloseable {
         boolean over = controls.auto() && frameMillis > 1.05 * controls.targetMillis();
         if (mode == Controls.Display.HOLD) {
             curX = null;
+            shownX = null;
         }
         Picture shown = keyPicture;
         double progress = particles.keyframeProgress();
@@ -490,6 +492,12 @@ final class Session implements AutoCloseable {
     private float[] nextX;
     private float[] nextY;
     private float[] particleMass;
+    private float[] shownX;
+    private float[] shownY;
+    private final SwapEase ease = new SwapEase(0.15);
+    /** How far the drawn particles moved since the last frame, rms in nodes, and the recent peak of that. */
+    private double stepRms;
+    private double stepPeak;
 
     /**
      * Takes the keyframe that just finished as the current state and predicts the next from it: each particle carried by
@@ -503,6 +511,8 @@ final class Session implements AutoCloseable {
         curY = at[1];
         curU = by[0];
         curV = by[1];
+        // What was on screen a moment ago, against where the picture begins now: the jump, and what eases it out.
+        ease.swap(shownX, shownY, curX, curY, System.nanoTime());
         if (particleMass == null) {
             particleMass = particles.masses();
         }
@@ -530,6 +540,19 @@ final class Session implements AutoCloseable {
             x[k] = (float) (curX[k] + progress * (nextX[k] - curX[k]));
             y[k] = (float) (curY[k] + progress * (nextY[k] - curY[k]));
         }
+        if (controls.ease()) {
+            ease.apply(x, y, System.nanoTime(), Flip.WALL, FLIP_N - 1 - Flip.WALL);
+        }
+        if (shownX != null && shownX.length == n) {
+            double moved = 0;
+            for (int k = 0; k < n; k++) {
+                moved += Math.pow(x[k] - shownX[k], 2) + Math.pow(y[k] - shownY[k], 2);
+            }
+            stepRms = Math.sqrt(moved / n);
+            stepPeak = Math.max(stepPeak * 0.995, stepRms);
+        }
+        shownX = x;
+        shownY = y;
         float[][] truth = particles.positions();
         double sum = 0;
         double worst = 0;
@@ -538,8 +561,8 @@ final class Session implements AutoCloseable {
             sum += off * off;
             worst = Math.max(worst, off);
         }
-        readout.set(Line.HEAT, String.format("interp    vs live: rms %.2f · max %.1f nodes · %2.0f%% through", Math.sqrt(sum / n),
-                worst, 100 * progress));
+        readout.set(Line.HEAT, String.format("interp    err %.2f/%.1f · jump %.2f %s · moves %.2f peak %.2f", Math.sqrt(sum / n),
+                worst, ease.jump(), controls.ease() ? "eased" : "raw", stepRms, stepPeak));
         return splatPicture(x, y, curU, curV);
     }
 

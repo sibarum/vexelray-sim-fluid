@@ -55,6 +55,7 @@ final class Controls {
     private volatile boolean budgeted;
     private volatile long budget = 400_000;
     private volatile boolean auto = true;
+    private volatile boolean ease = true;
     private volatile int keyframeSteps = 100;
     private volatile Display display = Display.HOLD;
     private volatile double targetMillis = 1000.0 / 60;
@@ -133,6 +134,11 @@ final class Controls {
         keyframeSteps = Math.max(keyframeSteps / 2, 25);
     }
 
+    /** Easing the jump when a keyframe lands, on or off. */
+    synchronized void toggleEase() {
+        ease = !ease;
+    }
+
     /** While the controller runs, the manual budget follows what it chose, so turning it off starts from there. */
     synchronized void adopt(long chosen) {
         if (auto) {
@@ -180,6 +186,10 @@ final class Controls {
 
     boolean auto() {
         return auto;
+    }
+
+    boolean ease() {
+        return ease;
     }
 
     int keyframeSteps() {

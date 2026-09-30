@@ -56,7 +56,7 @@ final class Readout {
         }
         panel.children(children);
         set(Line.KEYS, "1-8 view · N scenario · R reset\nspace pause · . step · C stability · = - speed\n"
-                + "B budget mode · A auto · [ ] budget · ; ' frame time\nI display: hold, interpolate, live · Z X keyframe size");
+                + "B budget mode · A auto · [ ] budget · ; ' frame time\nI display: hold, interpolate, live · Z X keyframe size · E ease swap");
     }
 
     Node node() {

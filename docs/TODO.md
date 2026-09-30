@@ -115,7 +115,10 @@ cannot be fixed from here at all.
       is not smooth acceleration that is missed but collisions and fragments. Visible artifacts: a particle carried into
       a wall by its velocity is clamped there and piles up into a bright blob, and a splash along the ceiling is not
       there until the keyframe lands. The jump at the swap is the prediction error plus the share of the keyframe the
-      display had not reached; nothing smooths it yet. Two buffers mean the display runs on a prediction; true
+      display had not reached: 5.6 to 5.9 nodes rms at 800 steps. `SwapEase` (key `E` turns it off) keeps each
+      particle's offset at the swap and eases it out over 150 ms, which takes the largest frame-to-frame motion in the
+      second after a swap from 5.86 nodes to 0.36; the price is that the picture is, for that 150 ms, as far from
+      the truth as the old one was (5.5 rms against live). Two buffers mean the display runs on a prediction; true
       interpolation, between two finished keyframes, needs a third buffer and a display one keyframe behind.
 
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
