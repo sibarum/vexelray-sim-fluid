@@ -86,6 +86,7 @@ final class Session implements AutoCloseable {
     private final Readout readout;
     private final PatchSimulation sim;
     private ParticleSimulation particles;
+    private final Session3 three;
 
     private Scenario scenario;
     private Scales scales;
@@ -135,6 +136,7 @@ final class Session implements AutoCloseable {
         this.view = view;
         this.readout = readout;
         this.sim = new PatchSimulation(N, N, Edges.all(Edge.WALL));
+        this.three = new Session3(controls, readout);
     }
 
     /** What a frame draws: a grid of {@code h, hu, hv} and which fluid, and its size. */
@@ -151,7 +153,9 @@ final class Session implements AutoCloseable {
         }
         if (controls.courant() != appliedCourant) {
             appliedCourant = controls.courant();
-            if (scenario.particles()) {
+            if (scenario.dimensions() == 3) {
+                three.reparam();
+            } else if (scenario.particles()) {
                 particles.params(flipParams());
             } else {
                 sim.params(params());
@@ -165,7 +169,8 @@ final class Session implements AutoCloseable {
             viewFadeStart = now;
         }
 
-        Picture picture = scenario.particles() ? particleFrame(elapsed) : waterFrame(elapsed);
+        Picture picture = scenario.dimensions() == 3 ? threeFrame(elapsed)
+                : scenario.particles() ? particleFrame(elapsed) : waterFrame(elapsed);
 
         float[][] display = picture.state();
         double resetT = progress(now, resetFadeStart, RESET_FADE_NANOS);
@@ -191,9 +196,22 @@ final class Session implements AutoCloseable {
     public void close() {
         view.close();
         sim.close();
+        three.close();
         if (particles != null) {
             particles.close();
         }
+    }
+
+    // --- three dimensions ---------------------------------------------------------------------------------
+
+    /** The box in three dimensions, seen from the front; {@link Session3} does the work and the readings. */
+    private Picture threeFrame(double elapsed) {
+        float[][] state = three.frame(elapsed);
+        scales = three.scales();
+        lastStep = three.stepSize();
+        commonReadings();
+        readout.set(Line.SCALE, "scale     " + shown.legend(scales) + " · " + three.modeLabel());
+        return new Picture(state, three.n(), three.n());
     }
 
     // --- shallow water -------------------------------------------------------------------------------------
@@ -704,7 +722,11 @@ final class Session implements AutoCloseable {
         appliedCourant = controls.courant();
         lastStep = 0;
         alarms.clear();
-        if (next.particles()) {
+        if (next.dimensions() == 3) {
+            three.load(next);
+            scales = three.scales();
+            initialVolume = 0;
+        } else if (next.particles()) {
             float[][] column = fill(next);
             int count = column[0].length;
             boolean tension = next.sigma() > 0;

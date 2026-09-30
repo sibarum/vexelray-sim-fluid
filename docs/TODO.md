@@ -121,7 +121,12 @@ cannot be fixed from here at all.
       the truth as the old one was (5.5 rms against live). Two buffers mean the display runs on a prediction; true
       interpolation, between two finished keyframes, needs a third buffer and a display one keyframe behind.
 
-- [ ] **3D: the step exists and is fast; there is nothing to look at yet.** `Flip3`/`Flip3Step` are the 2D step with a
+- [ ] **3D: the step and a first view exist (the last scenario, `N` to reach it, `V` toggles slice).** `Session3` runs a
+      48³ box with 76,800 particles at about real time (0.2 ms a step) and draws it through the 2D view as the depth
+      integrated along z, or the middle slice; only the depth and speed views mean anything, since Froude and Courant
+      rebuild a wave speed from `h`, which is a thickness here; and the depth legend says metres for what is a
+      thickness in cells. There is no budgeted mode or interpolation in 3D, no quick way to look from another side, and
+      the picture is 48 blocks across. What follows was written before the view. `Flip3`/`Flip3Step` are the 2D step with a
       3×3×3 stencil, a 3×3 `C`, six walls, and a direct atomic scatter (108 adds a particle, no sort). `Flip3Test`: a lone
       particle falls exactly, the scatter conserves mass and momentum, and a dam break in a full-depth slab stays in the
       box, under Ritter's limit, with `J` within 0.94 .. 1.025 and motion along z at 1.3% of x (GPU only; the CPU would

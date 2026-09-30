@@ -400,6 +400,28 @@ enum Scenario {
         double depth(double x, double y) {
             return 1.0;
         }
+    },
+
+    /**
+     * A column of water in a box, in three dimensions, released against one wall: it falls, spreads across the floor
+     * and climbs the far walls, now in x and in z. The picture is the water's depth seen through the box, or with V
+     * a slice through its middle.
+     */
+    DAM_BREAK_3D("3D dam break: a column of water in a box", 1.3, true) {
+        @Override
+        double depth(double x, double y) {
+            return 0;
+        }
+
+        @Override
+        int dimensions() {
+            return 3;
+        }
+
+        @Override
+        double density3(int col, int row, int layer) {
+            return col < 16 && row < 30 && layer >= 12 && layer < 32 ? WATER : 0;
+        }
     };
 
     /** Rest densities of the two fluids, and the cell counts the particle scenarios fill. */
@@ -449,6 +471,19 @@ enum Scenario {
      * corner, or {@code 0} where there is no fluid.
      */
     double density(int col, int row) {
+        return 0;
+    }
+
+    /** Whether the scenario is two-dimensional, as nearly all are, or three. */
+    int dimensions() {
+        return 2;
+    }
+
+    /**
+     * A three-dimensional scenario's rest density in the cell {@code col} across, {@code row} up and {@code layer} deep
+     * from the box's inside corner, or {@code 0} where there is no fluid.
+     */
+    double density3(int col, int row, int layer) {
         return 0;
     }
 

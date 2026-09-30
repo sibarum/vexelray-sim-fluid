@@ -55,6 +55,7 @@ final class Controls {
     private volatile boolean budgeted;
     private volatile long budget = 400_000;
     private volatile boolean auto = true;
+    private volatile boolean slice;
     private volatile boolean ease = true;
     private volatile int keyframeSteps = 100;
     private volatile Display display = Display.HOLD;
@@ -139,6 +140,11 @@ final class Controls {
         ease = !ease;
     }
 
+    /** A three-dimensional scenario drawn as a slice through its middle, or integrated along the depth. */
+    synchronized void toggleSlice() {
+        slice = !slice;
+    }
+
     /** While the controller runs, the manual budget follows what it chose, so turning it off starts from there. */
     synchronized void adopt(long chosen) {
         if (auto) {
@@ -186,6 +192,10 @@ final class Controls {
 
     boolean auto() {
         return auto;
+    }
+
+    boolean slice() {
+        return slice;
     }
 
     boolean ease() {
