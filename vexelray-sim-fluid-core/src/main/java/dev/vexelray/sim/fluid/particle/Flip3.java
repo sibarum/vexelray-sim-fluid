@@ -12,9 +12,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static dev.vexelray.sim.fluid.ir.Body.F32;
+import static dev.vexelray.sim.fluid.ir.Body.abs;
 import static dev.vexelray.sim.fluid.ir.Body.add;
 import static dev.vexelray.sim.fluid.ir.Body.clamp;
 import static dev.vexelray.sim.fluid.ir.Body.div;
+import static dev.vexelray.sim.fluid.ir.Body.eq;
 import static dev.vexelray.sim.fluid.ir.Body.f;
 import static dev.vexelray.sim.fluid.ir.Body.gt;
 import static dev.vexelray.sim.fluid.ir.Body.i;
@@ -168,7 +170,7 @@ public final class Flip3 {
         Buffer params = bs.get(21);
 
         LocalVar p = b.let("p", new Expr.InvocationId());
-        b.when(lt(v(p), new Expr.InvocationCount()), t -> {
+        b.when(lt(v(p), new Expr.InvocationCount()), live -> live.when(gt(load(mass, v(p)), f(0)), t -> {
             Stencil3 stencil = Stencil3.of(t, v(p), nx, ny, nz, at[0], at[1], at[2]);
             LocalVar m = t.let("m", load(mass, v(p)));
             LocalVar[] vel = new LocalVar[3];
@@ -196,7 +198,7 @@ public final class Flip3 {
                     t.atomic(AtomicOp.ADD, grid[1 + a], v(node), momentum);
                 }
             }
-        });
+        }));
         return function("flip3Scatter", b);
     }
 
@@ -254,6 +256,7 @@ public final class Flip3 {
         List<Buffer> bs = ADVECT_BUFFERS;
         Buffer[] at = {bs.get(0), bs.get(1), bs.get(2)};
         Buffer[] velocity = {bs.get(3), bs.get(4), bs.get(5)};
+        Buffer mass = bs.get(6);
         Buffer volume = bs.get(7);
         List<Buffer> affine = bs.subList(8, 17);
         Buffer[] grid = {bs.get(17), bs.get(18), bs.get(19)};
@@ -261,7 +264,7 @@ public final class Flip3 {
         int[] size = {nx, ny, nz};
 
         LocalVar p = b.let("p", new Expr.InvocationId());
-        b.when(lt(v(p), new Expr.InvocationCount()), t -> {
+        b.when(lt(v(p), new Expr.InvocationCount()), live -> live.when(gt(load(mass, v(p)), f(0)), t -> {
             Stencil3 stencil = Stencil3.of(t, v(p), nx, ny, nz, at[0], at[1], at[2]);
             LocalVar[] vel = {t.let("uu", f(0)), t.let("vv", f(0)), t.let("ww", f(0))};
             LocalVar[] sum = new LocalVar[9];
@@ -297,8 +300,266 @@ public final class Flip3 {
             }
             LocalVar j = t.let("j", mul(load(volume, v(p)), add(f(1), mul(v(dt), add(v(c[0]), add(v(c[4]), v(c[8])))))));
             t.store(volume, v(p), clamp(v(j), f(1 / J_BOUND), f(J_BOUND)));
-        });
+        }));
         return function("flip3Advect", b);
+    }
+
+    // --- level of detail -----------------------------------------------------------------------------------
+
+    /** Slots in a group: the particles one cell was seeded with, which travel together. */
+    public static final int GROUP = 8;
+
+    /** The share of what still has to move that moves in one call: a group closes on its target by this much a frame. */
+    static final float BLEND = 0.15f;
+
+    /** Once what still has to move is this share of the group's mass, the rest moves at once: the blend is a fade, not a tail. */
+    static final float SNAP = 0.002f;
+
+    /** A group whose masses are within this share of the group's mass of the equal shares is done. */
+    static final float SETTLED = 1e-6f;
+
+    /** How far from the group's centre a slot that joins is put, along each axis, either way. */
+    static final float JOIN_OFFSET = 0.25f;
+
+    static final String[] LOD_NAMES = names(PARTICLE, "level", "target", "stay");
+    public static final List<Buffer> LOD_BUFFERS = bind(LOD_NAMES);
+
+    /**
+     * One invocation per group of {@link #GROUP} slots: it moves the group toward {@code target} active slots, a little each
+     * call. A slot is active while it has mass, and {@code stay} says which are meant to be: the group's mass is to be shared
+     * equally among those, and this moves it there.
+     *
+     * <p><b>Leaving.</b> When the group has more slots meant to stay than it was asked for, the ones nearest the group's
+     * mean position stop staying, so the rest stay spread out. They keep their place and their state and lose mass, a share
+     * of what they have each call, and the stayers gain it in equal parts.
+     *
+     * <p><b>Joining.</b> When it has fewer, slots that are not staying stay again. A slot that is empty is first put at the
+     * group's mean position, {@link #JOIN_OFFSET} off along each axis according to its place in the group, with the mean velocity
+     * as it is there (the mean velocity plus the mean {@code C} times the offset), the mean {@code C} and the mean {@code J},
+     * and then gains mass as a stayer does.
+     *
+     * <p><b>The sums.</b> What a stayer gains arrives as a mass-weighted average: its velocity, {@code C} and {@code J}
+     * become the average of what it had and the mean of the givers', weighted by mass. So the group's mass, momentum and
+     * {@code Σ m·J} are the same after every call as before it. Positions are left where they are, so the group's centre
+     * of mass moves a little, by the offset of a slot that joins or the distance a leaver was from the mean.
+     */
+    public static Function lod(int nx, int ny, int nz, int groups) {
+        Body b = new Body();
+        List<Buffer> bs = LOD_BUFFERS;
+        List<Buffer> fields = bs.subList(0, PARTICLE.length);
+        Buffer level = bs.get(PARTICLE.length);
+        Buffer target = bs.get(PARTICLE.length + 1);
+        Buffer stay = bs.get(PARTICLE.length + 2);
+        int[] size = {nx, ny, nz};
+        int mass = List.of(PARTICLE).indexOf("m");
+        int volume = List.of(PARTICLE).indexOf("j");
+
+        LocalVar g = b.let("g", new Expr.InvocationId());
+        b.when(lt(v(g), i(groups)), t -> {
+            LocalVar base = t.let("base", mul(v(g), i(GROUP)));
+            LocalVar[] m = new LocalVar[GROUP];
+            LocalVar[] keep = new LocalVar[GROUP];
+            LocalVar total = t.let("total", f(0));
+            LocalVar count = t.let("count", f(0));
+            for (int s = 0; s < GROUP; s++) {
+                m[s] = t.let("m", load(fields.get(mass), add(v(base), i(s))));
+                keep[s] = t.let("keep", load(stay, add(v(base), i(s))));
+                t.set(total, add(v(total), v(m[s])));
+                t.set(count, add(v(count), v(keep[s])));
+            }
+            LocalVar want = t.let("want", clamp(load(target, v(g)), f(1), f(GROUP)));
+            // How far the masses are from the equal shares of the slots meant to stay: nothing, when the group is done.
+            LocalVar share = t.let("share", div(v(total), max(v(count), f(1))));
+            LocalVar spare = t.let("spare", f(0));
+            for (int s = 0; s < GROUP; s++) {
+                t.set(spare, add(v(spare), max(sub(v(m[s]), mul(v(keep[s]), v(share))), f(0))));
+            }
+            LocalVar work = t.let("work", f(0));
+            t.when(gt(v(spare), mul(v(total), f(SETTLED))), w -> w.set(work, f(1)));
+            t.when(gt(abs(sub(v(count), v(want))), f(0.5)), w -> w.set(work, f(1)));
+            t.when(gt(v(total), f(0)), live -> live.when(gt(v(work), f(0.5)), a -> {
+                LocalVar inv = a.let("inv", div(f(1), v(total)));
+                // The mass-weighted mean of every field but the mass: where the group is, how it moves, what it is.
+                LocalVar[] mean = new LocalVar[PARTICLE.length];
+                for (int fld = 0; fld < PARTICLE.length; fld++) {
+                    if (fld == mass) {
+                        continue;
+                    }
+                    mean[fld] = a.let("mean", f(0));
+                    for (int s = 0; s < GROUP; s++) {
+                        a.set(mean[fld], add(v(mean[fld]), mul(v(m[s]), load(fields.get(fld), add(v(base), i(s))))));
+                    }
+                    a.set(mean[fld], mul(v(mean[fld]), v(inv)));
+                }
+
+                // Too many meant to stay: the ones nearest the mean position stop, one at a time.
+                LocalVar remove = a.let("remove", max(sub(v(count), v(want)), f(0)));
+                LocalVar[] near = new LocalVar[GROUP];
+                for (int s = 0; s < GROUP; s++) {
+                    near[s] = a.let("near", f(0));
+                    for (int axis = 0; axis < 3; axis++) {
+                        LocalVar d = a.let("d", sub(load(fields.get(axis), add(v(base), i(s))), v(mean[axis])));
+                        a.set(near[s], add(v(near[s]), mul(v(d), v(d))));
+                    }
+                }
+                for (int round = 0; round < GROUP - 1; round++) {
+                    a.when(gt(v(remove), f(0.5)), r -> {
+                        LocalVar best = r.let("best", f(-1));
+                        LocalVar bestAt = r.let("bestAt", f(Float.MAX_VALUE));
+                        for (int s = 0; s < GROUP; s++) {
+                            int slot = s;
+                            r.when(gt(v(keep[slot]), f(0.5)), k -> k.when(lt(v(near[slot]), v(bestAt)), c -> {
+                                c.set(bestAt, v(near[slot]));
+                                c.set(best, f(slot));
+                            }));
+                        }
+                        for (int s = 0; s < GROUP; s++) {
+                            int slot = s;
+                            r.when(eq(v(best), f(slot)), c -> c.set(keep[slot], f(0)));
+                        }
+                        r.set(remove, sub(v(remove), f(1)));
+                    });
+                }
+
+                // Too few: slots that are not staying stay again, and an empty one is set down at the group's mean first.
+                LocalVar join = a.let("join", max(sub(v(want), v(count)), f(0)));
+                for (int s = 0; s < GROUP; s++) {
+                    int slot = s;
+                    a.when(lt(v(keep[slot]), f(0.5)), k -> k.when(gt(v(join), f(0.5)), c -> {
+                        c.set(keep[slot], f(1));
+                        c.set(join, sub(v(join), f(1)));
+                        c.when(not(gt(v(m[slot]), f(0))), fresh -> {
+                            float[] offset = new float[3];
+                            for (int axis = 0; axis < 3; axis++) {
+                                offset[axis] = (((slot >> axis) & 1) - 0.5f) * 2 * JOIN_OFFSET;
+                            }
+                            Expr at = add(v(base), i(slot));
+                            for (int axis = 0; axis < 3; axis++) {
+                                fresh.store(fields.get(axis), at, clamp(add(v(mean[axis]), f(offset[axis])), f(WALL),
+                                        f(size[axis] - 1 - WALL)));
+                                // The velocity there: the mean, and the mean C times the offset.
+                                Expr velocity = v(mean[3 + axis]);
+                                for (int e = 0; e < 3; e++) {
+                                    velocity = add(velocity, mul(v(mean[8 + 3 * axis + e]), f(offset[e])));
+                                }
+                                fresh.store(fields.get(3 + axis), at, velocity);
+                            }
+                            fresh.store(fields.get(volume), at, v(mean[volume]));
+                            for (int e = 0; e < 9; e++) {
+                                fresh.store(fields.get(8 + e), at, v(mean[8 + e]));
+                            }
+                        });
+                    }));
+                }
+
+                // The shares those meant to stay now have, and who has too much and who too little.
+                LocalVar stayers = a.let("stayers", f(0));
+                for (int s = 0; s < GROUP; s++) {
+                    a.set(stayers, add(v(stayers), v(keep[s])));
+                }
+                LocalVar equal = a.let("equal", div(v(total), max(v(stayers), f(1))));
+                LocalVar[] extra = new LocalVar[GROUP];
+                LocalVar[] lack = new LocalVar[GROUP];
+                LocalVar movable = a.let("movable", f(0));
+                for (int s = 0; s < GROUP; s++) {
+                    extra[s] = a.let("extra", max(sub(v(m[s]), mul(v(keep[s]), v(equal))), f(0)));
+                    lack[s] = a.let("lack", max(sub(mul(v(keep[s]), v(equal)), v(m[s])), f(0)));
+                    a.set(movable, add(v(movable), v(extra[s])));
+                }
+                LocalVar rate = a.let("rate", f(BLEND));
+                a.when(lt(v(movable), mul(v(total), f(SNAP))), q -> q.set(rate, f(1)));
+                a.when(gt(v(movable), f(0)), x -> {
+                    LocalVar[] gain = new LocalVar[GROUP];
+                    for (int s = 0; s < GROUP; s++) {
+                        gain[s] = x.let("gain", mul(v(rate), v(lack[s])));
+                    }
+                    LocalVar inverse = x.let("inverse", div(f(1), v(movable)));
+                    // What the givers have, averaged by how much each gives; the stayers move toward it by what they gain.
+                    for (int fld = 3; fld < PARTICLE.length; fld++) {
+                        if (fld == mass) {
+                            continue;
+                        }
+                        Buffer buffer = fields.get(fld);
+                        LocalVar given = x.let("given", f(0));
+                        for (int s = 0; s < GROUP; s++) {
+                            x.set(given, add(v(given), mul(v(extra[s]), load(buffer, add(v(base), i(s))))));
+                        }
+                        x.set(given, mul(v(given), v(inverse)));
+                        for (int s = 0; s < GROUP; s++) {
+                            int slot = s;
+                            x.when(gt(v(gain[slot]), f(0)), rcv -> rcv.store(buffer, add(v(base), i(slot)),
+                                    div(add(mul(v(m[slot]), load(buffer, add(v(base), i(slot)))),
+                                            mul(v(gain[slot]), v(given))), add(v(m[slot]), v(gain[slot])))));
+                        }
+                    }
+                    for (int s = 0; s < GROUP; s++) {
+                        x.store(fields.get(mass), add(v(base), i(s)),
+                                sub(add(v(m[s]), v(gain[s])), mul(v(rate), v(extra[s]))));
+                    }
+                });
+                for (int s = 0; s < GROUP; s++) {
+                    a.store(stay, add(v(base), i(s)), v(keep[s]));
+                }
+                a.store(level, v(g), v(stayers));
+            }));
+        });
+        return function("flip3Lod", b);
+    }
+
+    /** Eye position in nodes (3), the distance inside which every slot is active, and the fewest slots a group may merge to. */
+    public static final int VIEW_COUNT = 5;
+
+    /** How far past a level's range the camera has to go before the level changes, so a group on a boundary does not flicker. */
+    static final float HYSTERESIS = 1.25f;
+
+    static final String[] TARGET_NAMES = {"x", "y", "z", "level", "target", "view"};
+    public static final List<Buffer> TARGET_BUFFERS = bind(TARGET_NAMES);
+
+    /**
+     * One invocation per group: the {@code target} its distance from the eye asks for. Within {@code near} of the eye every slot
+     * is active; each doubling of the distance halves them, down to {@code floor}. A group keeps the level it has while its
+     * distance is within {@link #HYSTERESIS} of that level's range, and slot 0 stands for the group's place, since it is the one
+     * that is always active.
+     */
+    public static Function lodTarget(int groups) {
+        Body b = new Body();
+        List<Buffer> bs = TARGET_BUFFERS;
+        Buffer level = bs.get(3);
+        Buffer target = bs.get(4);
+        Buffer view = bs.get(5);
+
+        LocalVar g = b.let("g", new Expr.InvocationId());
+        b.when(lt(v(g), i(groups)), t -> {
+            LocalVar slot = t.let("slot", mul(v(g), i(GROUP)));
+            LocalVar d2 = t.let("d2", f(0));
+            for (int a = 0; a < 3; a++) {
+                LocalVar d = t.let("d", sub(load(bs.get(a), v(slot)), load(view, i(a))));
+                t.set(d2, add(v(d2), mul(v(d), v(d))));
+            }
+            LocalVar near = t.let("near", load(view, i(3)));
+            LocalVar n2 = t.let("n2", mul(v(near), v(near)));
+            LocalVar floor = t.let("floor", load(view, i(4)));
+            LocalVar n = t.let("n", load(level, v(g)));
+            LocalVar want = t.let("want", f(GROUP));
+            for (int k = 0; k < 3; k++) {
+                float ratio = (float) Math.pow(4, k);           // the squared distance at which the level halves
+                int k2 = k;
+                t.when(not(lt(v(d2), mul(v(n2), f(ratio)))), far -> far.set(want, f(GROUP >> (k2 + 1))));
+            }
+            t.set(want, max(v(want), v(floor)));
+            // The range of the level it has, widened: [lo, hi) in squared distances, in units of near².
+            LocalVar keep = t.let("keep", f(0));
+            for (int level2 = GROUP, k = 0; level2 >= 1; level2 /= 2, k++) {
+                float lo = k == 0 ? -1 : (float) Math.pow(4, k - 1) / (HYSTERESIS * HYSTERESIS);
+                float hi = level2 == 1 ? Float.MAX_VALUE : (float) Math.pow(4, k) * HYSTERESIS * HYSTERESIS;
+                int own = level2;
+                t.when(eq(v(n), f(own)), a -> a.when(not(lt(v(d2), mul(v(n2), f(lo)))), c -> c.when(
+                        lt(v(d2), mul(v(n2), f(hi))), keepIt -> keepIt.set(keep, f(1)))));
+            }
+            t.when(gt(v(keep), f(0.5)), stay -> stay.when(not(lt(v(n), v(floor))), s -> s.set(want, v(n))));
+            t.store(target, v(g), v(want));
+        });
+        return function("flip3LodTarget", b);
     }
 
     /** A coordinate past a wall back to the wall's inside, and the velocity into that wall dropped. */

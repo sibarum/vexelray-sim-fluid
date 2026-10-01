@@ -65,6 +65,15 @@ final class Controls {
     /** Speed is a power of two between these. */
     static final double SLOWEST = 1.0 / 16;
     static final double FASTEST = 16;
+    /** The 3D step is scaled between these, in octaves; one is the step the Courant number chose. */
+    static final double SMALLEST_STEP = 0.25;
+    static final double LARGEST_STEP = 2;
+    /** The longest a 3D frame may spend stepping, in ms, in octaves down from the most. */
+    static final double LEAST_POWER = 50.0 / 32;
+    static final double MOST_POWER = 50;
+    /** The particles a cell of 3D water can be held to: eight, four, two or one. */
+    static final double FEWEST_PARTICLES = 1;
+    static final double MOST_PARTICLES = 8;
     static final long LEAST_BUDGET = 2048;
     static final long MOST_BUDGET = 64_000_000L;
     static final double SHORTEST_TARGET = 2;
@@ -80,6 +89,9 @@ final class Controls {
     // The defaults, in one place: a reset and a first run are the same thing.
     private static final Scenario DEFAULT_SCENARIO = Scenario.DAM_BREAK;
     private static final double DEFAULT_SPEED = 1;
+    private static final double DEFAULT_STEP = 1;
+    private static final double DEFAULT_POWER = 25;
+    private static final double DEFAULT_PARTICLES = 8;
     private static final long DEFAULT_BUDGET = 400_000;
     private static final int DEFAULT_KEYFRAME = 100;
     private static final double DEFAULT_TARGET = 1000.0 / 60;
@@ -94,6 +106,9 @@ final class Controls {
     private volatile boolean paused;
     private volatile boolean unstable;
     private volatile double timeScale;
+    private volatile double stepScale;
+    private volatile double power;
+    private volatile double particles;
     private volatile boolean resetRequested = true;
     private volatile long resetNotBefore;
     private volatile boolean stepRequested;
@@ -101,6 +116,7 @@ final class Controls {
     private volatile long budget;
     private volatile boolean auto;
     private volatile boolean slice;
+    private volatile boolean volume;
     private volatile boolean ease;
     private volatile int keyframeSteps;
     private volatile Display display;
@@ -130,6 +146,10 @@ final class Controls {
             tunings.put(s, new Scenario.Tuning(values));
         }
         timeScale = clamp(number(read.apply("speed"), DEFAULT_SPEED), SLOWEST, FASTEST);
+        stepScale = clamp(number(read.apply("stepsize"), DEFAULT_STEP), SMALLEST_STEP, LARGEST_STEP);
+        power = clamp(number(read.apply("power"), DEFAULT_POWER), LEAST_POWER, MOST_POWER);
+        particles = Math.pow(2, Math.round(Math.log(clamp(number(read.apply("particles"), DEFAULT_PARTICLES), FEWEST_PARTICLES,
+                MOST_PARTICLES)) / Math.log(2)));
         unstable = bool(read.apply("unstable"), false);
         budgeted = bool(read.apply("budgeted"), false);
         auto = bool(read.apply("auto"), true);
@@ -139,6 +159,9 @@ final class Controls {
         display = choose(Display.values(), read.apply("display"), Display.HOLD);
         ease = bool(read.apply("ease"), true);
         slice = bool(read.apply("slice"), false);
+        // On: the water as a surface is the picture of a 3D scenario, and the flat view of its state is the
+        // alternative. It was off while it was new; a setting a user has already made is still read as theirs.
+        volume = bool(read.apply("volume"), true);
     }
 
     // --- the scenario -------------------------------------------------------------------------------------
@@ -359,6 +382,16 @@ final class Controls {
         remember("slice", Boolean.toString(value));
     }
 
+    /** A three-dimensional scenario drawn as a lit surface you can orbit, or as the flat picture of its state. */
+    synchronized void toggleVolume() {
+        volume(!volume);
+    }
+
+    synchronized void volume(boolean value) {
+        volume = value;
+        remember("volume", Boolean.toString(value));
+    }
+
     /**
      * While the controller runs, the manual budget follows what it chose, so turning it off starts from there. Not
      * remembered: it is the controller's, not the user's.
@@ -376,6 +409,22 @@ final class Controls {
 
     synchronized void slower() {
         speed(timeScale / 2);
+    }
+
+    synchronized void stepScale(double value) {
+        stepScale = clamp(value, SMALLEST_STEP, LARGEST_STEP);
+        remember("stepsize", Double.toString(stepScale));
+    }
+
+    /** Holds 3D water to this many particles a cell, rounded to a power of two: the level the slots merge or split to. */
+    synchronized void particles(double value) {
+        particles = Math.pow(2, Math.round(Math.log(clamp(value, FEWEST_PARTICLES, MOST_PARTICLES)) / Math.log(2)));
+        remember("particles", Double.toString(particles));
+    }
+
+    synchronized void power(double value) {
+        power = clamp(value, LEAST_POWER, MOST_POWER);
+        remember("power", Double.toString(power));
     }
 
     synchronized void speed(double value) {
@@ -401,6 +450,21 @@ final class Controls {
         return unstable ? UNSTABLE_COURANT : STABLE_COURANT;
     }
 
+    /** How much of the step the Courant number chose the 3D simulation takes: larger is faster and less stable. */
+    double stepScale() {
+        return stepScale;
+    }
+
+    /** Particles a cell of 3D water is held to: eight, four, two or one. */
+    double particles() {
+        return particles;
+    }
+
+    /** The most milliseconds a 3D frame spends stepping. */
+    double power() {
+        return power;
+    }
+
     double timeScale() {
         return timeScale;
     }
@@ -419,6 +483,10 @@ final class Controls {
 
     boolean slice() {
         return slice;
+    }
+
+    boolean volume() {
+        return volume;
     }
 
     boolean ease() {
@@ -494,8 +562,8 @@ final class Controls {
 
     /** Every key this class writes, for the framework's list of the flags it accepts and for {@link #restoreAll}. */
     static List<String> keys() {
-        List<String> keys = new ArrayList<>(List.of("scenario", "speed", "unstable", "budgeted", "auto", "budget", "target",
-                "keyframe", "display", "ease", "slice"));
+        List<String> keys = new ArrayList<>(List.of("scenario", "speed", "stepsize", "power", "particles", "unstable", "budgeted", "auto", "budget", "target",
+                "keyframe", "display", "ease", "slice", "volume"));
         for (Scenario s : Scenario.values()) {
             keys.add(s.name() + ".view");
             for (Scenario.Param p : s.params()) {

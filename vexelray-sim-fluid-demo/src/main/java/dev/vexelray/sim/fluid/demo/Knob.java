@@ -18,7 +18,8 @@ enum Knob {
     BOIL_POINT("boil", "Boiling point", 0.01, false),
     FOAM_DROP("foam", "Foam weight loss", 0.01, false),
     SUPERHEAT("superheat", "Superheat, no stone", 0.01, false),
-    STONES("stones", "Nucleation sites", 0.01, false);
+    STONES("stones", "Nucleation sites", 0.01, false),
+    RESOLUTION("resolution", "Grid (nodes a side)", 8, true);
 
     private final String key;
     private final String label;

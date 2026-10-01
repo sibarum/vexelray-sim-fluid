@@ -13,6 +13,7 @@ import dev.vexelray.gui.core.layout.LayoutEnums.Direction;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.style.Role;
 import dev.vexelray.sim.fluid.gui.DebugView;
+import dev.vexelray.sim.fluid.gui.FluidView3;
 import dev.vexelray.sim.fluid.gui.View;
 import sibarum.tactroller.api.Key;
 
@@ -35,6 +36,8 @@ final class FluidDemoWiring extends Wiring {
     /** The view's box and the target drawn into it: square, so a cell is square on screen. */
     private static final Length VIEW_SIDE = Length.dp(620);
     private static final int VIEW_PIXELS = 1024;
+    /** The surface is marched, not coloured per cell, so its target is smaller than the flat view's. */
+    private static final int SURFACE_PIXELS = 768;
 
     /** What {@code Shell.setting} returns when no source has the key: nothing a setting could be. */
     private static final String NONE = "\u0000none";
@@ -42,6 +45,7 @@ final class FluidDemoWiring extends Wiring {
     private Controls controls;
     private Readout readout;
     private DebugView view;
+    private FluidView3 surface;
     private Sidebar sidebar;
     private Dock dock;
 
@@ -74,6 +78,10 @@ final class FluidDemoWiring extends Wiring {
                 .background(gui.theme().color(Role.WELL));
         gui.landmark("view", canvas);
         view = new DebugView(canvas, VIEW_PIXELS);
+        // Shares the node: whichever is wanted points it at its own picture. Dragging in the node turns the
+        // camera, which does nothing while the flat view is what is shown.
+        surface = new FluidView3(canvas, SURFACE_PIXELS);
+        surface.attach(gui);
         readout = new Readout(gui);
         sidebar = new Sidebar(gui, controls);
         dock = new Dock(gui, controls, readout);
@@ -91,7 +99,7 @@ final class FluidDemoWiring extends Wiring {
 
     @Override
     public void attach(Shell shell) {
-        Session session = shell.disposer().register(new Session(shell.app(), controls, view, readout));
+        Session session = shell.disposer().register(new Session(shell.app(), controls, view, surface, readout));
         // The pages are read back from the controls before the frame acts on them; the file is written last, at most twice a
         // second, and once more as the window closes.
         shell.hooks().add(FrameStage.APP, () -> {
@@ -126,6 +134,7 @@ final class FluidDemoWiring extends Wiring {
         gui.shortcut(Key.I, controls::cycleDisplay);
         gui.shortcut(Key.E, controls::toggleEase);
         gui.shortcut(Key.V, controls::toggleSlice);
+        gui.shortcut(Key.D, controls::toggleVolume);
         gui.shortcut(Key.Z, controls::shorterKeyframe);
         gui.shortcut(Key.X, controls::longerKeyframe);
         gui.shortcut(Key.SEMICOLON, controls::shorterTarget);

@@ -23,12 +23,17 @@
             <groupId>dev.vexelray.sim</groupId>
             <artifactId>vexelray-sim-fluid-core</artifactId>
         </dependency>
-        <!-- The simulation's device: Accelerator, resident buffers, and the fullscreen vertex stage the view
-             draws with. It is a device of its own, separate from the GUI's, until the engine can run compute
-             inside a frame. -->
+        <!-- Accelerator, resident buffers, and the fullscreen vertex stage the view draws with. The simulation
+             computes on the device the application draws on (GuiApp.gpu()), so a picture of its state reads the
+             buffers the kernels wrote rather than a copy; without a window it opens a device of its own. -->
         <dependency>
             <groupId>dev.supirvast</groupId>
             <artifactId>vastir-tools</artifactId>
+        </dependency>
+        <!-- The march the 3D view is built on, over a distance field that reads the simulation's grid. -->
+        <dependency>
+            <groupId>dev.vexelray</groupId>
+            <artifactId>vexelray-technique-sdf</artifactId>
         </dependency>
         <!-- The window's side: the node the view is shown in, and GuiApp, which mints its target and buffer. -->
         <dependency>

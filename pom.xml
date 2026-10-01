@@ -80,6 +80,13 @@
                 <artifactId>vexelray-vulkan</artifactId>
                 <version>${vexelray.version}</version>
             </dependency>
+            <!-- The march the 3D view is built on: its composer takes a distance field the application supplies,
+                 which here reads the simulation's own grid. The application brings the technique. -->
+            <dependency>
+                <groupId>dev.vexelray</groupId>
+                <artifactId>vexelray-technique-sdf</artifactId>
+                <version>${vexelray.version}</version>
+            </dependency>
             <dependency>
                 <groupId>dev.vexelray.gui</groupId>
                 <artifactId>vexelray-gui-core</artifactId>

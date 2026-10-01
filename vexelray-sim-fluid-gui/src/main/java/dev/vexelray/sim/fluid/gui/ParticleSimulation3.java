@@ -1,11 +1,13 @@
 package dev.vexelray.sim.fluid.gui;
 
 import dev.supirvast.vastir.tools.Accelerator;
+import dev.supirvast.vastir.tools.GpuContext;
 import dev.supirvast.vastir.tools.DispatchSequence;
 import dev.supirvast.vastir.tools.KernelColumn;
 import dev.supirvast.vastir.tools.KernelHandle;
 import dev.supirvast.vastir.tools.KernelSpec;
 import dev.supirvast.vastir.tools.ResidentBuffer;
+import dev.vexelray.sim.fluid.particle.Flip3;
 import dev.vexelray.sim.fluid.particle.Flip3Step;
 import dev.vexelray.sim.fluid.particle.FlipStep.Pass;
 import dev.vexelray.sim.fluid.particle.Scatter;
@@ -27,22 +29,53 @@ import java.util.Map;
 public final class ParticleSimulation3 implements AutoCloseable {
 
     private final Flip3Step step;
-    private final Accelerator accelerator = new Accelerator();
+    private final Accelerator accelerator;
     private final Map<String, ResidentBuffer> buffers = new LinkedHashMap<>();
     private final List<KernelHandle> handles = new ArrayList<>();
     private final DispatchSequence stepSequence;
+    private final DispatchSequence lodSequence;
     private long steps;
+    /** The smallest mass a particle was loaded with: what a particle that is not being thinned out holds at least. */
+    private float nominalMass;
 
-    /** A box of {@code nx × ny × nz} nodes holding exactly {@code particles} particles. */
+    /**
+     * A box of {@code nx × ny × nz} nodes holding exactly {@code particles} particles, on a device of its own —
+     * for a run with no window, such as a test or a benchmark.
+     */
     public ParticleSimulation3(int nx, int ny, int nz, int particles) {
+        this(new Accelerator(), nx, ny, nz, particles);
+    }
+
+    /**
+     * The same, on a context somebody else made — an application's own device, so that a picture of the state
+     * reads {@link #vkBuffer the buffers the kernels wrote} where they are, with no copy. The context is left
+     * open by {@link #close()}, which frees only what this made; close this first, then the context.
+     *
+     * <p>Every call on this class is then on the context's thread, which for an application is the main one:
+     * the device's queue is shared with whatever draws.
+     */
+    public ParticleSimulation3(GpuContext context, int nx, int ny, int nz, int particles) {
+        this(Accelerator.on(context), nx, ny, nz, particles);
+    }
+
+    private ParticleSimulation3(Accelerator accelerator, int nx, int ny, int nz, int particles) {
+        this.accelerator = accelerator;
         step = new Flip3Step(nx, ny, nz, particles);
         step.buffers().forEach((name, spec) -> {
             ResidentBuffer buffer = accelerator.allocate(spec.element(), spec.length());
             buffer.write(new int[spec.length()]);
             buffers.put(name, buffer);
         });
+        stepSequence = sequence(step.step());
+        List<Pass> lod = new ArrayList<>(step.lodTarget());
+        lod.addAll(step.lod());
+        lodSequence = sequence(lod);
+    }
+
+    /** The passes as one recorded submission. */
+    private DispatchSequence sequence(List<Pass> passes) {
         DispatchSequence.Builder builder = accelerator.sequence();
-        for (Pass pass : step.step()) {
+        for (Pass pass : passes) {
             List<ResidentBuffer> bound = pass.buffers().stream().map(buffers::get).toList();
             List<KernelColumn> columns = new ArrayList<>();
             for (int k = 0; k < pass.bindings().size(); k++) {
@@ -55,7 +88,7 @@ public final class ParticleSimulation3 implements AutoCloseable {
             handles.add(handle);
             builder.dispatch(handle, bound, pass.invocations());
         }
-        stepSequence = builder.build();
+        return builder.build();
     }
 
     public int nx() {
@@ -91,6 +124,12 @@ public final class ParticleSimulation3 implements AutoCloseable {
         write("v", velocity[1]);
         write("w", velocity[2]);
         write("m", mass);
+        nominalMass = Float.MAX_VALUE;
+        for (float m : mass) {
+            if (m > 0) {
+                nominalMass = Math.min(nominalMass, m);
+            }
+        }
         float[] rest = new float[mass.length];
         java.util.Arrays.fill(rest, 1f);
         write("j", rest);
@@ -98,6 +137,14 @@ public final class ParticleSimulation3 implements AutoCloseable {
             write(affine, new float[mass.length]);
         }
         buffers.get("params").write(params);
+        float[] full = new float[buffers.get("level").elements()];
+        java.util.Arrays.fill(full, Flip3.GROUP);
+        write("level", full);
+        float[] ones = new float[mass.length];
+        java.util.Arrays.fill(ones, 1f);
+        write("stay", ones);
+        write("target", full);
+        write("view", new float[] {0, 0, 0, 1e9f, 1});
         steps = 0;
     }
 
@@ -122,9 +169,33 @@ public final class ParticleSimulation3 implements AutoCloseable {
         return new float[][] {read("gm"), read("gmu"), read("gmv"), read("gmw")};
     }
 
-    /** Every particle's {@code J}. A readback, like {@link #grid}. */
+    /**
+     * The {@code J} of the particles that hold a real share of the water, which is every particle until some are thinned out.
+     * A slot that is fading out has little mass and is carried along as a tracer, so its {@code J} can wander to anything without
+     * the water being any more compressed; those are left out, at under half the mass a particle was loaded with. A readback,
+     * like {@link #grid}.
+     */
     public float[] compression() {
-        return read("j");
+        float[] volume = read("j");
+        float[] mass = read("m");
+        float floor = 0.5f * nominalMass;
+        int kept = 0;
+        for (float m : mass) {
+            if (m >= floor) {
+                kept++;
+            }
+        }
+        if (kept == mass.length) {
+            return volume;
+        }
+        float[] out = new float[kept];
+        int k = 0;
+        for (int p = 0; p < mass.length; p++) {
+            if (mass[p] >= floor) {
+                out[k++] = volume[p];
+            }
+        }
+        return out;
     }
 
     /** {@code {u, v, w}} of every particle. A readback, like {@link #grid}. */
@@ -132,14 +203,60 @@ public final class ParticleSimulation3 implements AutoCloseable {
         return new float[][] {read("u"), read("v"), read("w")};
     }
 
+    /**
+     * Moves every group of slots one factor of two toward the level its distance from the eye asks for: all of them within
+     * {@code near} node spacings of {@code eye} (in nodes), half as many at each doubling of the distance, and never fewer
+
+     * the whole way from eight slots to one. A {@code near} of 1e9 asks for all of them.
+     */
+    public void refine(float[] eye, float near, int floor) {
+        write("view", new float[] {eye[0], eye[1], eye[2], near, floor});
+        lodSequence.run();
+    }
+
+    /** How many slots are active: those with mass, which includes any still giving theirs away. A readback. */
+    public int active() {
+        int active = 0;
+        for (float mass : read("m")) {
+            if (mass > 0) {
+                active++;
+            }
+        }
+        return active;
+    }
+
     /** Steps taken since the last {@link #load}. */
     public long steps() {
         return steps;
     }
 
+    /**
+     * The {@code VkBuffer} behind one of the step's buffers ({@code gm}, {@code gmu}, {@code gmv}, {@code gmw}
+     * for the grid; {@code x}, {@code y}, {@code z} for the particles), so a picture on the same device can read
+     * it without a copy. It holds 32-bit floats, and the grid's index is {@code (k·ny + j)·nx + i}.
+     *
+     * <p>Valid until {@link #close()}. Call {@link #finish()} before a draw reads it.
+     *
+     * @throws IllegalArgumentException if there is no such buffer
+     * @throws IllegalStateException    if the simulation is on the CPU, where there is no {@code VkBuffer}
+     */
+    public long vkBuffer(String name) {
+        ResidentBuffer buffer = buffers.get(name);
+        if (buffer == null) {
+            throw new IllegalArgumentException("no buffer named '" + name + "'; it has " + buffers.keySet());
+        }
+        return buffer.vkBuffer();
+    }
+
+    /** Blocks until every step taken so far has finished: the dependency between the kernels and a draw. */
+    public void finish() {
+        accelerator.finish();
+    }
+
     @Override
     public void close() {
         stepSequence.close();
+        lodSequence.close();
         accelerator.close();
     }
 

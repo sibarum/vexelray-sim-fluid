@@ -21,6 +21,7 @@ final class SettingsPanel {
 
     private static final String PLAYBACK = "Playback";
     private static final String BUDGET = "Budgeted mode";
+    private static final String THREE = "3D simulation";
 
     private final Inspector inspector;
     private final Node panel;
@@ -31,6 +32,12 @@ final class SettingsPanel {
         inspector.add(
                 Dial.logarithmic(PLAYBACK, "Speed", Controls.SLOWEST, Controls.FASTEST, 1, controls::timeScale, controls::speed,
                         SettingsPanel::speed),
+                Dial.logarithmic(THREE, "Simulation speed", Controls.SMALLEST_STEP, Controls.LARGEST_STEP, 1,
+                        controls::stepScale, controls::stepScale, v -> "x" + String.format("%.2f", v)),
+                Dial.logarithmic(THREE, "Particles per cell", Controls.FEWEST_PARTICLES, Controls.MOST_PARTICLES, 1,
+                        controls::particles, controls::particles, v -> String.format("%.0f", v)),
+                Dial.logarithmic(THREE, "Processing power", Controls.LEAST_POWER, Controls.MOST_POWER, 1,
+                        controls::power, controls::power, SettingsPanel::millis),
                 Property.choice(PLAYBACK, "Time step",
                         List.of(new Option<>("Stable", true), new Option<>("Past the limit", false)),
                         () -> controls.courant() <= Controls.STABLE_COURANT, controls::stable),
@@ -66,6 +73,11 @@ final class SettingsPanel {
 
     void sync() {
         inspector.refresh();
+    }
+
+    /** A time in milliseconds, in the value column's few characters: {@code 25 ms}, {@code 1.6 ms}. */
+    static String millis(double v) {
+        return v >= 10 ? String.format("%.0f ms", v) : String.format("%.1f ms", v);
     }
 
     /** A speed as a multiple of real time: {@code x4}, {@code 1/8}. */

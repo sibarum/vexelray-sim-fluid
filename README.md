@@ -42,7 +42,7 @@ right a transport (reset, pause, step) above three pages.
 | Page | What it holds |
 | --- | --- |
 | **Readings** | What is running and whether it is healthy: time, steps, mass drift, density, speed, Courant number, and the latched alarms. |
-| **Parameters** | The running scenario's own: how it is drawn (the view, and for 3D a slice through the middle), and each knob it has — gravity, the other fluid's density, the width of the column, heat conductivity and expansion, the boiling point, foam, nucleation sites. |
+| **Parameters** | The running scenario's own: how it is drawn (the view, and for 3D whether the water is a surface you drag to turn or the flat picture of its state, and a slice through the middle of that), and each knob it has — gravity, the other fluid's density, the width of the column, heat conductivity and expansion, the boiling point, foam, nucleation sites. |
 | **Settings** | What belongs to no scenario: speed, a time step past the stable limit, and budgeted mode (work per tick, the controller, keyframes, what is drawn between them). **Restore defaults** puts every setting back, the scenarios' knobs and views with them. |
 
 The simulations: a water dam break, oil on water, water on mercury, Rayleigh-Taylor, convection, boiling (with
@@ -55,7 +55,7 @@ changed is written. Each setting is also a flag, `--speed=4` or `--BOILING.stone
 launch without being written to it.
 
 Keys still work: **1–8** view · **N** next scenario · **R** reset · **space** pause · **.** single step ·
-**C** toggle a Courant number past the stable limit · **= / −** speed · **V** a 3D slice, and **B A [ ] ; ' I Z X E**
+**C** toggle a Courant number past the stable limit · **= / −** speed · **D** the 3D water as a surface you drag to turn, **V** a flat 3D slice, and **B A [ ] ; ' I Z X E**
 for budgeted mode.
 
 The debug view reserves two colours: **magenta** is a broken cell (NaN, infinity, negative depth), and

@@ -3,6 +3,7 @@ package dev.vexelray.sim.fluid.demo;
 import dev.vexelray.gui.core.app.GuiApp;
 import dev.vexelray.sim.fluid.gui.BudgetController;
 import dev.vexelray.sim.fluid.gui.DebugView;
+import dev.vexelray.sim.fluid.gui.FluidView3;
 import dev.vexelray.sim.fluid.gui.ParticleSimulation;
 import dev.vexelray.sim.fluid.gui.Scales;
 import dev.vexelray.sim.fluid.gui.SwapEase;
@@ -69,6 +70,9 @@ final class Session implements AutoCloseable {
     private final GuiApp app;
     private final Controls controls;
     private final DebugView view;
+    /** The 3D scenario's water as a surface, read from the simulation's own buffer; shares the view's node. */
+    private final FluidView3 surface;
+    private boolean showingSurface;
     private final Readout readout;
     private ParticleSimulation particles;
     private final Session3 three;
@@ -130,12 +134,13 @@ final class Session implements AutoCloseable {
     /** Each kind of trouble, the first time it was seen since the last reset. */
     private final Map<String, String> alarms = new LinkedHashMap<>();
 
-    Session(GuiApp app, Controls controls, DebugView view, Readout readout) {
+    Session(GuiApp app, Controls controls, DebugView view, FluidView3 surface, Readout readout) {
         this.app = app;
         this.controls = controls;
         this.view = view;
+        this.surface = surface;
         this.readout = readout;
-        this.three = new Session3(controls, readout);
+        this.three = new Session3(app, controls, readout);
     }
 
     /** What a frame draws: a grid of {@code h, hu, hv} and which fluid, and its size. */
@@ -175,6 +180,21 @@ final class Session implements AutoCloseable {
         }
         onScreen = display;
         float blend = (float) smooth(progress(now, viewFadeStart, VIEW_FADE_NANOS));
+        // The water as a surface needs the simulation on this device, to read its buffer where it is; where it
+        // could not be put there, the flat picture is all there is.
+        if (scenario.dimensions() == 3 && controls.volume() && three.shared() && three.simulation() != null) {
+            if (!showingSurface) {
+                surface.present();
+                showingSurface = true;
+            }
+            surface.show(app, three.simulation(), three.restMass());
+            return;
+        }
+        if (showingSurface) {
+            surface.withdraw();                       // the wheel over the node is not the surface's any more
+            view.present();                           // the node was showing the surface; give it its picture back
+            showingSurface = false;
+        }
         view.show(app, display[0], display[1], display[2], display[3], display[4], picture.nx(), picture.ny(), fadingFrom, shown,
                 blend,
                 scales.stepped(lastStep, 1, 1));
@@ -195,6 +215,7 @@ final class Session implements AutoCloseable {
     @Override
     public void close() {
         view.close();
+        surface.close();
         three.close();
         if (particles != null) {
             particles.close();

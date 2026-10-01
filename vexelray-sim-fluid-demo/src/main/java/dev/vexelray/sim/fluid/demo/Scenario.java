@@ -157,13 +157,14 @@ enum Scenario {
 
     /**
      * A column of water in a box, in three dimensions, released against one wall: it falls, spreads across the floor and
-     * climbs the far walls, now in x and in z. The picture is the water's depth seen through the box, or a slice through its
-     * middle.
+     * climbs the far walls, now in x and in z. The picture is the water as a lit surface you turn by dragging, or, with the
+     * surface off, the flat picture of its state: its depth seen through the box, or a slice through its middle.
      */
     DAM_BREAK_3D("3D dam break", Group.THREE_DIMENSIONS, View.DEPTH,
-            "The dam break in a box of\nits own, seen from the front:\nthe water's depth integrated\nalong z, or a slice.",
+            "The dam break in a box of\nits own: the water as a surface\nyou turn by dragging. D shows\nits state flat, V a slice.",
             param(Knob.GRAVITY, 0.05, 2, 1),
-            param(Knob.COLUMN_WIDTH, 6, 28, 16)) {
+            param(Knob.COLUMN_WIDTH, 6, 28, 16),
+            param(Knob.RESOLUTION, 32, 96, 48)) {
         @Override
         int dimensions() {
             return 3;

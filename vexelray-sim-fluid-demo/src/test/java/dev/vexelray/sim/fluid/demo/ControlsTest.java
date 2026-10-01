@@ -46,6 +46,21 @@ class ControlsTest {
     }
 
     @Test
+    void theWaterOfA3dScenarioIsASurfaceUnlessSomeoneHasTurnedItOff() {
+        assertTrue(start().volume(), "with nothing remembered the surface is the picture, and the flat state its alternative");
+    }
+
+    @Test
+    void aSurfaceTurnedOffStaysOffAfterARestart() {
+        Controls first = start();
+        first.toggleVolume();
+        assertFalse(first.volume());
+        first.flush(true);
+
+        assertFalse(start().volume(), "a choice made is the user's, and a new default does not overrule it");
+    }
+
+    @Test
     void whatWasChangedComesBackAfterARestart() {
         Controls first = start();
         first.select(Scenario.BOILING);

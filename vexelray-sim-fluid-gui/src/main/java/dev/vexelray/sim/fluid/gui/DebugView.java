@@ -46,6 +46,16 @@ public final class DebugView implements AutoCloseable {
     }
 
     /**
+     * Point the node at this view's picture again — after another view has been shown in it. A no-op before the
+     * first {@link #show}, which makes the picture and points the node at it itself.
+     */
+    public void present() {
+        if (target != null) {
+            node.image(target);
+        }
+    }
+
+    /**
      * Draws the field — {@code h}, {@code hu}, {@code hv}, which fluid ({@code tag}) and how hot ({@code temperature},
      * scaled to -1 .. 1), each {@code null} for none, over an {@code nx × ny} grid — blending from view
      * {@code from} to view {@code to} by {@code blend}. Main thread only.

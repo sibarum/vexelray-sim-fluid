@@ -121,20 +121,33 @@ cannot be fixed from here at all.
       the truth as the old one was (5.5 rms against live). Two buffers mean the display runs on a prediction; true
       interpolation, between two finished keyframes, needs a third buffer and a display one keyframe behind.
 
-- [ ] **3D: the step and a first view exist (the last scenario; its slice is a switch on the Parameters page, or `V`).** `Session3` runs a
-      48³ box with 76,800 particles at about real time (0.2 ms a step) and draws it through the 2D view as the depth
-      integrated along z, or the middle slice; only the depth and speed views mean anything, since Froude and Courant
-      rebuild a wave speed from `h`, which is a thickness here; and the depth legend says metres for what is a
-      thickness in cells. There is no budgeted mode or interpolation in 3D, no quick way to look from another side, and
-      the picture is 48 blocks across. What follows was written before the view. `Flip3`/`Flip3Step` are the 2D step with a
-      3×3×3 stencil, a 3×3 `C`, six walls, and a direct atomic scatter (108 adds a particle, no sort). `Flip3Test`: a lone
-      particle falls exactly, the scatter conserves mass and momentum, and a dam break in a full-depth slab stays in the
-      box, under Ritter's limit, with `J` within 0.94 .. 1.025 and motion along z at 1.3% of x (GPU only; the CPU would
-      take minutes). `Flip3BenchTest` (`-Dflip.sweep=true`): 32³ with 108k particles is 0.23 ms a step and 158% of real
-      time; 48³ with 389k is 0.83 ms and 36%; 64³ with 953k is 1.82 ms and 14%; the scatter is 93% of the step. Still to
-      do: a view (the depth-integrated density, and a slice), 3D scenarios, the budgeted mode and interpolation in
-      3D, the sort and a scatter that uses it, and the features of the 2D step that were built on it: tension, heat,
-      convection, foam, `J` relaxation, two fluids.
+- [ ] **3D: the step, a lit surface you turn by dragging, a grid size and a level of detail exist; the budgeted mode, interpolation and the 2D step's features do not.**
+      `Flip3`/`Flip3Step` are the 2D step with a 3×3×3 stencil, a 3×3 `C`, six walls, and a direct atomic scatter (108 adds a
+      particle, no sort). `Session3` runs the 3D dam break in a box of 32 to 96 nodes a side (the Grid knob; it restarts the scenario, and
+      the scenario's cells are looked up from the 48-node layout it is written for), as a surface marched from the grid
+      (`FluidView3`, `D`; drag to turn, wheel to zoom) or as the flat depth-integrated picture or slice (`V`). The march
+      needs `1.1 · 2√3 / (0.6 · 0.5 · node)` steps to cross the box's empty part along its diagonal (`FluidView3.stepsFor`):
+      256 is a little short even at 48³, and at 88³ it lost 6% of the water, which a hit threshold that grew with distance
+      had been hiding as false hits. Settings, under "3D simulation": the step size (×0.25 to ×2 of what the Courant number
+      allows; larger is faster and less stable), the processing power (the longest a frame spends stepping, 1.6 to 50 ms; there is
+      no budgeted mode, a frame takes as many steps as fit), and the particles a cell (8, 4, 2, 1).
+      `Flip3Test`: a lone particle falls exactly, the scatter conserves mass and momentum, and a dam break in a full-depth
+      slab stays in the box, under Ritter's limit (GPU only). `Flip3BenchTest` (`-Dflip.sweep=true`): 32³ with 108k particles
+      is 0.23 ms a step and 158% of real time; 48³ with 389k is 0.83 ms and 36%; 64³ with 953k is 1.82 ms and 14%; the scatter is 93% of the step.
+      **The level of detail** (`Flip3.lod`) works on groups of eight slots, the particles one cell was seeded with, which
+      travel together and sit in octant order. A slot is active while it has mass, and the step skips the others. To thin a
+      group, the slot nearest its mean position stops staying, and its mass moves to the stayers in equal shares, 15% of
+      what is left each call, with a last full transfer when 0.2% is left; they take its velocity, `C` and `J` as a mass-weighted
+      average, so mass, momentum and `Σ m·J` hold on every call (`Flip3LodTest`), and a slot that joins starts at the group's mean with
+      the mean velocity there. No search and no distance check: the group is the neighbourhood. It takes about 40 calls (a
+      second at 144 Hz) and works while the water moves. 64³, 195k particles, ms a step: 0.78 at 8 a cell, 0.42 at 4, 0.24 at
+      2, 0.14 at 1 (about half the ideal, since an inactive slot still gets a thread that exits at once). A dam break at 4, 2
+      and 1 a cell against 8: the water's centre within 0.3 node, kinetic energy 1%, 2% and 6% lower, `J` in band; at 1 a
+      cell the water is calmer and settles sooner. Positions stay put, so a group's centre of mass moves a little (up to
+      0.4 node). The readout's `J` leaves out slots under half a particle's mass, which are carried along as tracers and wander. Still
+      to do: the budgeted mode and interpolation in 3D; an indirect dispatch over the active slots; the camera-distance
+      target (`Flip3.lodTarget` is written and tested; the demo drives the same passes by hand); the sort and a scatter that
+      uses it; and the features of the 2D step built on it: tension, heat, convection, foam, `J` relaxation, two fluids.
 
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
       keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key

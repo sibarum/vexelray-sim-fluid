@@ -62,6 +62,8 @@ final class ScenarioPanel {
         page.add(new Pick<>(DISPLAY, "View", views, ScenarioPanel::name, () -> controls.view(s), controls::show));
         if (s.dimensions() == 3) {
             page.add(Property.flag(DISPLAY, "Slice through the middle", controls::slice, controls::slice));
+            page.add(Property.flag(DISPLAY, "Water as a surface (drag to turn)", controls::volume,
+                    controls::volume));
         }
         for (Scenario.Param p : s.params()) {
             Knob k = p.knob();
