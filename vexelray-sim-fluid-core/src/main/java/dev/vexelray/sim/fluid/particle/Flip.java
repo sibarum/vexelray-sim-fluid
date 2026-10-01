@@ -93,8 +93,8 @@ import static dev.vexelray.sim.fluid.ir.Body.v;
 public final class Flip {
 
     /** {@code [dt, gx, gy, bulk, rho0, sigma, kappa, beta, reference, hot, cold, relax, boil, width, drop, superheat, sliceBase,
-     * sliceEnd]}, see {@link #params}. */
-    public static final int PARAM_COUNT = 18;
+     * sliceEnd]}, then {@link Pump}'s ten; see {@link #params}. */
+    public static final int PARAM_COUNT = Pump.END;
 
     /** How many times the colour is blurred before its gradient is taken; see {@link Tension}. */
     public static final int TENSION_BLURS = 6;
@@ -206,7 +206,8 @@ public final class Flip {
                     + ", rho0 " + rho0);
         }
         return new int[] {bits(dt), bits(gx), bits(gy), bits(bulk), bits(rho0), bits(sigma), bits(kappa), bits(beta), bits(reference),
-                bits(hot), bits(cold), bits(relax), bits(boil), bits(width), bits(drop), bits(superheat), 0, 0};
+                bits(hot), bits(cold), bits(relax), bits(boil), bits(width), bits(drop), bits(superheat), 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0};   // the slice's bounds, then the pump's ten: off
     }
 
     /** The largest stable step for sound speed {@code √(bulk/rho0)} and flow up to {@code speed}: {@code C·1/(c+|v|)}. */

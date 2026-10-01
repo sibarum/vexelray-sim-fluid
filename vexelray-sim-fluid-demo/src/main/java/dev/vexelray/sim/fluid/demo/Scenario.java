@@ -156,6 +156,27 @@ enum Scenario {
     },
 
     /**
+     * A pool with a drain on the left and a spout on the right, both under the surface: whatever reaches the drain is put back
+     * at the spout, moving along its direction at the pump's speed. The same particles go round, so the pool neither fills
+     * nor empties; at the force turned up the spout throws a jet out of the water, and at 0 the pump is off.
+     */
+    PUMP("Drain and spout", Group.PUMPS, View.DEPTH,
+            "A drain and a spout, a pump\nbetween them: what the drain\ntakes the spout throws back,\nthe same water, round and round.",
+            param(Knob.GRAVITY, 0.05, 2, 1),
+            param(Knob.PUMP, 0, 6, 3),
+            param(Knob.ANGLE, 0, 180, 90)) {
+        @Override
+        double density(int col, int row, Tuning t) {
+            return col < BOX_WIDTH && row < POOL_ROWS ? WATER : 0;
+        }
+
+        @Override
+        boolean pump() {
+            return true;
+        }
+    },
+
+    /**
      * A column of water in a box, in three dimensions, released against one wall: it falls, spreads across the floor and
      * climbs the far walls, now in x and in z. The picture is the water as a lit surface you turn by dragging, or, with the
      * surface off, the flat picture of its state: its depth seen through the box, or a slice through its middle.
@@ -178,7 +199,7 @@ enum Scenario {
 
     /** How the scenarios are grouped in the list. */
     enum Group {
-        DAM_BREAKS("Dam breaks"), MIXING("Mixing"), HEAT("Heat"), THREE_DIMENSIONS("Three dimensions");
+        DAM_BREAKS("Dam breaks"), MIXING("Mixing"), HEAT("Heat"), PUMPS("Pumps"), THREE_DIMENSIONS("Three dimensions");
 
         private final String title;
 
@@ -248,6 +269,15 @@ enum Scenario {
     static final int WATER_ROWS = 50;
     static final int BOX_WIDTH = 125;
     static final int LAYER_ROWS = 30;
+    /** The depth of the pump scenario's pool, in cells. */
+    static final int POOL_ROWS = 20;
+    /** The pump scenario's drain and spout, in node units from the box's corner: where, and how wide. */
+    static final double DRAIN_X = 25;
+    static final double DRAIN_Y = 12;
+    static final double DRAIN_RADIUS = 5;
+    static final double SPOUT_X = 100;
+    static final double SPOUT_Y = 12;
+    static final double SPOUT_RADIUS = 3;
 
     private final String title;
     private final Group group;
@@ -322,6 +352,11 @@ enum Scenario {
     /** A three-dimensional scenario's rest density in a cell of the box, or 0. */
     double density3(int col, int row, int layer, Tuning tuning) {
         return 0;
+    }
+
+    /** Whether the scenario has a drain and a spout, which its {@link Knob#PUMP} and {@link Knob#ANGLE} then steer. */
+    boolean pump() {
+        return false;
     }
 
     /** Whether heat conducts through the fluid; the knobs say how well. */

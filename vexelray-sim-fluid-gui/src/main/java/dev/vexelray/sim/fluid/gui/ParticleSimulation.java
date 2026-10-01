@@ -35,6 +35,7 @@ public final class ParticleSimulation implements AutoCloseable {
     private final boolean heat;
     private final boolean convection;
     private final boolean relax;
+    private final boolean pump;
     private final Accelerator accelerator = new Accelerator();
     private final Map<String, ResidentBuffer> buffers = new LinkedHashMap<>();
     private final List<KernelHandle> handles = new ArrayList<>();
@@ -68,11 +69,18 @@ public final class ParticleSimulation implements AutoCloseable {
     /** As above, and with {@code relax}: {@code J} is drawn toward the volume the mass gives, at a rate that is a parameter. */
     public ParticleSimulation(int nx, int ny, int particles, boolean tension, boolean heat, boolean convection,
             boolean relax) {
+        this(nx, ny, particles, tension, heat, convection, relax, false);
+    }
+
+    /** As above, and with {@code pump}: a drain and a spout, set and changed through the parameters ({@code Pump.withPump}). */
+    public ParticleSimulation(int nx, int ny, int particles, boolean tension, boolean heat, boolean convection,
+            boolean relax, boolean pump) {
+        this.pump = pump;
         this.relax = relax;
         this.tension = tension;
         this.heat = heat;
         this.convection = convection;
-        step = new FlipStep(nx, ny, particles, tension, heat, convection, relax);
+        step = new FlipStep(nx, ny, particles, tension, heat, convection, relax, pump);
         step.buffers().forEach((name, spec) -> {
             ResidentBuffer buffer = accelerator.allocate(spec.element(), spec.length());
             buffer.write(new int[spec.length()]);   // the sort's counts must start at zero, and it leaves them so
@@ -102,6 +110,11 @@ public final class ParticleSimulation implements AutoCloseable {
     /** Whether {@code J} is drawn toward the volume the mass gives. */
     public boolean relax() {
         return relax;
+    }
+
+    /** Whether the step has a drain and a spout. */
+    public boolean pump() {
+        return pump;
     }
 
     /** Whether temperature moves the fluid, and the floor and top are held at temperatures. */
@@ -238,7 +251,7 @@ public final class ParticleSimulation implements AutoCloseable {
     private int stepInKeyframe;
     private int keyframeSteps = 1;
 
-    /** Whether the step can be spread over ticks: it has none of tension, heat, convection or relaxation. */
+    /** Whether the step can be spread over ticks: it has none of tension, heat, convection, relaxation or a pump. */
     public boolean sliceable() {
         return step.sliced() != null;
     }

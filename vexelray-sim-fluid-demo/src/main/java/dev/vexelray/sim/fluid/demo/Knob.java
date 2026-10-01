@@ -19,7 +19,9 @@ enum Knob {
     FOAM_DROP("foam", "Foam weight loss", 0.01, false),
     SUPERHEAT("superheat", "Superheat, no stone", 0.01, false),
     STONES("stones", "Nucleation sites", 0.01, false),
-    RESOLUTION("resolution", "Grid (nodes a side)", 8, true);
+    RESOLUTION("resolution", "Grid (nodes a side)", 8, true),
+    PUMP("pump", "Pump force (m/s)", 0.05, false),
+    ANGLE("angle", "Spout angle (deg)", 1, false);
 
     private final String key;
     private final String label;

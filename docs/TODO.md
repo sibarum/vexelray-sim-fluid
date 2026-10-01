@@ -149,6 +149,15 @@ cannot be fixed from here at all.
       target (`Flip3.lodTarget` is written and tested; the demo drives the same passes by hand); the sort and a scatter that
       uses it; and the features of the 2D step built on it: tension, heat, convection, foam, `J` relaxation, two fluids.
 
+- [ ] **The pump (drain and spout) is 2D, unmarked, and not sliced.** `Pump` is one pass after the advect: a particle inside
+      the drain's radius is put at the spout's mouth with velocity `force · direction` (`J` to 1, `C` to 0, mass and
+      temperature kept), and those within four radii are pulled toward it. Count and mass never change (`PumpTest`).
+      Not done: 3D (`Flip3Step`, and the LOD's inactive slots would need skipping); a mark on the picture where the drain
+      and spout are, since the debug view draws only the field; the budgeted mode, which a pumped step falls back
+      out of like tension and heat; momentum is not conserved across the pair, by design. The demo's "Drain and spout"
+      scenario has fixed positions (`Scenario.DRAIN_X` and the rest) and live force and angle knobs. Not yet seen
+      running in the window, only tested headless.
+
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
       keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key
       and half the next, interleaved, so the segmented scatter's runs are about half as long as they could be.

@@ -80,6 +80,15 @@ public final class FlipStep implements Buffered {
      */
     public FlipStep(int nx, int ny, int particles, boolean tension, boolean heat, boolean convection,
             boolean relax) {
+        this(nx, ny, particles, tension, heat, convection, relax, false);
+    }
+
+    /**
+     * As above, and with {@code pump}: {@link Pump}'s pass after the advect, which takes the particles that reach the drain
+     * and puts them back at the spout, by the parameters' drain, spout and force. A step with a pump is not sliced.
+     */
+    public FlipStep(int nx, int ny, int particles, boolean tension, boolean heat, boolean convection,
+            boolean relax, boolean pump) {
         if (convection && (!heat || tension)) {
             throw new IllegalArgumentException("convection needs heat and does not run with tension");
         }
@@ -167,12 +176,16 @@ public final class FlipStep implements Buffered {
                 : new Pass("advect", Flip.advect(nx, ny), Flip.ADVECT_BUFFERS,
                         concat(concat(List.of("x", "y", "u", "v", "j"), affine), List.of("gu", "gv", "params")),
                         particles));
+        if (pump) {
+            passes.add(new Pass("pump", Pump.pump(nx, ny), Pump.BUFFERS,
+                    concat(concat(List.of("x", "y", "u", "v", "j"), affine), List.of("params")), particles));
+        }
         if (convection) {
             passes.add(new Pass("heatPin", Heat.pin(nx, ny), Heat.PIN_BUFFERS, List.of("y", "t", "params"), particles));
         }
         step = List.copyOf(passes);
         // The plain step, for spreading across ticks: its two particle passes take a slice, the others are as they are.
-        sliced = tension || heat || convection || relax ? null : List.of(passes.get(0),
+        sliced = tension || heat || convection || relax || pump ? null : List.of(passes.get(0),
                 new Pass("scatter", Flip.scatterSliced(nx, ny), Flip.SCATTER_BUFFERS, passes.get(1).buffers(), SLICE),
                 passes.get(2),
                 new Pass("advect", Flip.advectSliced(nx, ny), Flip.ADVECT_BUFFERS, passes.get(3).buffers(), SLICE));
@@ -211,7 +224,7 @@ public final class FlipStep implements Buffered {
      * slice. Run the clear, then the scatter once for each slice of {@link #SLICE} particles, writing the parameters'
      * {@link Flip#SLICE_BASE} and {@link Flip#SLICE_END} before each, then the grid, then the advect the same way. That is the
      * step, however the slices are spread in time, as long as the sort is not run between the first scatter and the
-     * last advect. Null for a step with tension, heat, convection or relaxation.
+     * last advect. Null for a step with tension, heat, convection, relaxation or a pump.
      */
     public List<Pass> sliced() {
         return sliced;

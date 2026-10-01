@@ -11,6 +11,7 @@ import dev.vexelray.sim.fluid.gui.View;
 import dev.vexelray.sim.fluid.particle.Flip;
 import dev.vexelray.sim.fluid.particle.MaterialField;
 import dev.vexelray.sim.fluid.particle.ParticleSplat;
+import dev.vexelray.sim.fluid.particle.Pump;
 import dev.vexelray.sim.fluid.particle.ParticleDiagnostics;
 import dev.vexelray.sim.fluid.stencil.Diagnostics;
 
@@ -624,10 +625,17 @@ final class Session implements AutoCloseable {
 
     private int[] flipParams() {
         Scenario.Tuning t = applied;
-        return Flip.params(flipStep(), 0, -FLIP_G * t.get(Knob.GRAVITY), bulk, RHO0, 0,
+        int[] params = Flip.params(flipStep(), 0, -FLIP_G * t.get(Knob.GRAVITY), bulk, RHO0, 0,
                 t.get(Knob.CONDUCTIVITY), t.get(Knob.EXPANSION), 0.5, scenario.hot(), scenario.cold(), scenario.relaxation(),
                 t.has(Knob.BOIL_POINT) ? t.get(Knob.BOIL_POINT) : 0.5, scenario.foamWidth(), t.get(Knob.FOAM_DROP),
                 t.get(Knob.SUPERHEAT));
+        if (scenario.pump()) {
+            // The knob is in metres a second, the pump in node spacings; the suction takes a quarter of a second to match the jet.
+            double force = t.get(Knob.PUMP) * (FLIP_N - 1);
+            params = Pump.withPump(params, Scenario.DRAIN_X, Scenario.DRAIN_Y, Scenario.DRAIN_RADIUS, Scenario.SPOUT_X,
+                    Scenario.SPOUT_Y, Scenario.SPOUT_RADIUS, Math.toRadians(t.get(Knob.ANGLE)), force, 4 * force);
+        }
+        return params;
     }
 
     /**
@@ -679,12 +687,13 @@ final class Session implements AutoCloseable {
             boolean heat = next.heat();
             boolean convection = next.convection();
             boolean relax = next.relaxation() > 0;
+            boolean pump = next.pump();
             if (particles == null || particles.particles() != count || particles.heat() != heat
-                    || particles.convection() != convection || particles.relax() != relax) {
+                    || particles.convection() != convection || particles.relax() != relax || particles.pump() != pump) {
                 if (particles != null) {
                     particles.close();
                 }
-                particles = new ParticleSimulation(FLIP_N, FLIP_N, count, false, heat, convection, relax);
+                particles = new ParticleSimulation(FLIP_N, FLIP_N, count, false, heat, convection, relax, pump);
             }
             lightestMass = Double.POSITIVE_INFINITY;
             heaviestMass = 0;

@@ -17,7 +17,7 @@ class ScenarioTest {
     @Test
     void theDemoKeepsTheScenariosItPromises() {
         assertEquals(List.of("Water", "Oil on water", "Water on mercury", "Rayleigh-Taylor", "Convection", "Boiling",
-                "3D dam break"), Arrays.stream(Scenario.values()).map(Scenario::title).toList());
+                "Drain and spout", "3D dam break"), Arrays.stream(Scenario.values()).map(Scenario::title).toList());
     }
 
     @Test
