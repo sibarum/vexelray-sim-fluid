@@ -52,8 +52,8 @@ import static dev.vexelray.sim.fluid.ir.Body.v;
  */
 public final class Flip3 {
 
-    /** {@code [dt, gx, gy, gz, bulk, rho0]}, see {@link #params}. */
-    public static final int PARAM_COUNT = 6;
+    /** {@code [dt, gx, gy, gz, bulk, rho0, sigma]}, see {@link #params}. */
+    public static final int PARAM_COUNT = 7;
 
     static final int DT = 0;
     static final int GX = 1;
@@ -61,6 +61,7 @@ public final class Flip3 {
     static final int GZ = 3;
     static final int BULK = 4;
     static final int RHO0 = 5;
+    static final int SIGMA = 6;
 
     /** Particles are kept this far inside the box, as in {@link Flip#WALL}. */
     public static final float WALL = Flip.WALL;
@@ -86,11 +87,19 @@ public final class Flip3 {
      * @param rho0 the rest density, in mass per node
      */
     public static int[] params(double dt, double gx, double gy, double gz, double bulk, double rho0) {
+        return params(dt, gx, gy, gz, bulk, rho0, 0);
+    }
+
+    /**
+     * As above, with surface tension {@code sigma}: a force per length, in rest density times node spacings cubed per
+     * second squared, which a step built with tension turns into a force at the interface. Zero is none.
+     */
+    public static int[] params(double dt, double gx, double gy, double gz, double bulk, double rho0, double sigma) {
         if (!(dt > 0) || !(bulk >= 0) || !(rho0 > 0)) {
             throw new IllegalArgumentException("dt > 0, bulk >= 0 and rho0 > 0, got dt " + dt + ", bulk " + bulk
                     + ", rho0 " + rho0);
         }
-        return new int[] {bits(dt), bits(gx), bits(gy), bits(gz), bits(bulk), bits(rho0)};
+        return new int[] {bits(dt), bits(gx), bits(gy), bits(gz), bits(bulk), bits(rho0), bits(sigma)};
     }
 
     /** The largest stable step for sound speed {@code √(bulk/rho0)} and flow up to {@code speed}, as {@link Flip#stableStep}. */
@@ -131,11 +140,14 @@ public final class Flip3 {
     static final String[] SCATTER_NAMES = names("gm", "gmu", "gmv", "gmw", PARTICLE, "params");
     static final String[] GRID_NAMES = {"gm", "gmu", "gmv", "gmw", "params", "gu", "gv", "gw"};
     static final String[] ADVECT_NAMES = names(PARTICLE, "gu", "gv", "gw", "params");
+    /** {@link #GRID_NAMES}, then the capillary stress {@link Tension3#stress} left and the colour it was taken from. */
+    static final String[] TENSION_GRID_NAMES = names(GRID_NAMES, Tension3.STRESS_NAMES, "colour");
 
     public static final List<Buffer> CLEAR_BUFFERS = bind(CLEAR_NAMES);
     public static final List<Buffer> SCATTER_BUFFERS = bind(SCATTER_NAMES);
     public static final List<Buffer> GRID_BUFFERS = bind(GRID_NAMES);
     public static final List<Buffer> ADVECT_BUFFERS = bind(ADVECT_NAMES);
+    public static final List<Buffer> TENSION_GRID_BUFFERS = bind(TENSION_GRID_NAMES);
 
     // --- clear ---------------------------------------------------------------------------------------------
 
@@ -209,8 +221,21 @@ public final class Flip3 {
      * of gravity. An empty node has none. On the wall ring of each face the velocity into the wall is dropped.
      */
     public static Function grid(int nx, int ny, int nz) {
+        return grid(nx, ny, nz, false);
+    }
+
+    /**
+     * {@link #grid}, with the surface tension's force added to each node's velocity: {@code dt·σ·F} over its mass, where
+     * {@code F} is {@link Tension3#force}'s flux of the capillary stress across the node's faces, over at least
+     * {@link Tension#MASS_FLOOR} of a rest mass. The force sums to zero over the grid, and it is zero if {@code σ} is.
+     */
+    public static Function gridWithTension(int nx, int ny, int nz) {
+        return grid(nx, ny, nz, true);
+    }
+
+    private static Function grid(int nx, int ny, int nz, boolean tension) {
         Body b = new Body();
-        List<Buffer> bs = GRID_BUFFERS;
+        List<Buffer> bs = tension ? TENSION_GRID_BUFFERS : GRID_BUFFERS;
         Buffer m = bs.get(0);
         Buffer[] momentum = {bs.get(1), bs.get(2), bs.get(3)};
         Buffer params = bs.get(4);
@@ -232,6 +257,16 @@ public final class Flip3 {
                     wet.set(vel[a], add(div(load(momentum[a], v(node)), v(mass)),
                             mul(v(dt), load(params, i(gravity[a])))));
                 }
+                if (tension) {
+                    Buffer[] stress = bs.subList(8, 14).toArray(new Buffer[0]);
+                    LocalVar[] force = Tension3.force(wet, nx, ny, nz, bs.get(14), stress, at);
+                    // dt · σ · F / max(m, floor · ρ₀)
+                    LocalVar push = wet.let("push", div(mul(v(dt), load(params, i(SIGMA))),
+                            max(v(mass), mul(f(Tension.MASS_FLOOR), load(params, i(RHO0))))));
+                    for (int a = 0; a < 3; a++) {
+                        wet.set(vel[a], add(v(vel[a]), mul(v(push), v(force[a]))));
+                    }
+                }
             });
             for (int a = 0; a < 3; a++) {
                 int axis = a;
@@ -241,7 +276,7 @@ public final class Flip3 {
                 t.store(out[axis], v(node), v(vel[axis]));
             }
         });
-        return function("flip3Grid", b);
+        return function(tension ? "flip3GridWithTension" : "flip3Grid", b);
     }
 
     // --- advect --------------------------------------------------------------------------------------------

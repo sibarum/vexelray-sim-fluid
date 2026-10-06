@@ -4,6 +4,7 @@ import dev.vexelray.sim.fluid.ir.Body;
 import dev.vexelray.sim.fluid.particle.FlipStep.BufferSpec;
 import dev.vexelray.sim.fluid.particle.FlipStep.Pass;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,8 +29,17 @@ public final class Flip3Step implements Buffered {
     private final List<Pass> lod;
     private final List<Pass> lodTarget;
 
-    /** A step over an {@code nx × ny × nz} grid of nodes and a fixed number of particles. */
+    /** A step over an {@code nx × ny × nz} grid of nodes and a fixed number of particles, without surface tension. */
     public Flip3Step(int nx, int ny, int nz, int particles) {
+        this(nx, ny, nz, particles, false);
+    }
+
+    /**
+     * As above, and with {@code tension}, the passes of {@link Tension3} between the scatter and the grid: the mass
+     * to a colour, blurred, its capillary stress, and the grid with that stress's force. Its strength is {@code σ} in
+     * the parameters.
+     */
+    public Flip3Step(int nx, int ny, int nz, int particles, boolean tension) {
         if (particles < 1) {
             throw new IllegalArgumentException("a step needs particles, got " + particles);
         }
@@ -50,13 +60,38 @@ public final class Flip3Step implements Buffered {
         buffers.put("target", new BufferSpec("target", Body.F32, groups));
         buffers.put("stay", new BufferSpec("stay", Body.F32, particles));
         buffers.put("view", new BufferSpec("view", Body.F32, Flip3.VIEW_COUNT));
-        step = List.of(
-                new Pass("clear", Flip3.clear(nx, ny, nz), Flip3.CLEAR_BUFFERS, List.of(Flip3.CLEAR_NAMES), nodes),
-                new Pass("scatter", Flip3.scatter(nx, ny, nz), Flip3.SCATTER_BUFFERS, List.of(Flip3.SCATTER_NAMES),
-                        particles),
-                new Pass("grid", Flip3.grid(nx, ny, nz), Flip3.GRID_BUFFERS, List.of(Flip3.GRID_NAMES), nodes),
-                new Pass("advect", Flip3.advect(nx, ny, nz), Flip3.ADVECT_BUFFERS, List.of(Flip3.ADVECT_NAMES),
-                        particles));
+        List<Pass> passes = new ArrayList<>();
+        passes.add(new Pass("clear", Flip3.clear(nx, ny, nz), Flip3.CLEAR_BUFFERS, List.of(Flip3.CLEAR_NAMES), nodes));
+        passes.add(new Pass("scatter", Flip3.scatter(nx, ny, nz), Flip3.SCATTER_BUFFERS, List.of(Flip3.SCATTER_NAMES),
+                particles));
+        if (tension) {
+            for (String field : List.of("c0", "c1")) {
+                buffers.put(field, new BufferSpec(field, Body.F32, nodes));
+            }
+            for (String field : Tension3.STRESS_NAMES) {
+                buffers.put(field, new BufferSpec(field, Body.F32, nodes));
+            }
+            // The mass to a colour, then blurred; the two colour buffers take turns, and the last one written is read.
+            String from = "gm";
+            for (int k = 0; k < Flip.TENSION_BLURS; k++) {
+                String to = k % 2 == 0 ? "c0" : "c1";
+                passes.add(new Pass("blur" + k, Tension3.blur(nx, ny, nz, k == 0), Tension3.BLUR_BUFFERS,
+                        List.of(from, to, "params"), nodes));
+                from = to;
+            }
+            List<String> stress = new ArrayList<>(List.of(from));
+            stress.addAll(List.of(Tension3.STRESS_NAMES));
+            passes.add(new Pass("stress", Tension3.stress(nx, ny, nz), Tension3.STRESS_BUFFERS, stress, nodes));
+            List<String> grid = new ArrayList<>(List.of(Flip3.GRID_NAMES));
+            grid.addAll(List.of(Tension3.STRESS_NAMES));
+            grid.add(from);
+            passes.add(new Pass("grid", Flip3.gridWithTension(nx, ny, nz), Flip3.TENSION_GRID_BUFFERS, grid, nodes));
+        } else {
+            passes.add(new Pass("grid", Flip3.grid(nx, ny, nz), Flip3.GRID_BUFFERS, List.of(Flip3.GRID_NAMES), nodes));
+        }
+        passes.add(new Pass("advect", Flip3.advect(nx, ny, nz), Flip3.ADVECT_BUFFERS, List.of(Flip3.ADVECT_NAMES),
+                particles));
+        step = List.copyOf(passes);
         lodTarget = List.of(new Pass("lodTarget", Flip3.lodTarget(particles / Flip3.GROUP), Flip3.TARGET_BUFFERS,
                 List.of(Flip3.TARGET_NAMES), Math.max(1, particles / Flip3.GROUP)));
         lod = List.of(new Pass("lod", Flip3.lod(nx, ny, nz, particles / Flip3.GROUP), Flip3.LOD_BUFFERS,
@@ -83,7 +118,7 @@ public final class Flip3Step implements Buffered {
         return lodTarget;
     }
 
-    /** One step: clear, scatter, grid, advect. */
+    /** One step: clear, scatter, the tension's passes if it has them, grid, advect. */
     public List<Pass> step() {
         return step;
     }

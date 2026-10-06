@@ -20,8 +20,8 @@ import java.util.Map;
 /**
  * A particle fluid in one walled three-dimensional box, stepped on resident buffers: {@link ParticleSimulation}'s
  * counterpart for {@link Flip3Step}. The step is recorded once as a {@link DispatchSequence}, so a step is one
- * submission. It is not sorted and has none of the two-dimensional step's extras: no tension, heat, convection or
- * budgeting yet.
+ * submission. It is not sorted, and of the two-dimensional step's extras it has only surface tension: no heat,
+ * convection or budgeting yet.
  *
  * <p>Runs on the GPU when there is one and dispatch by dispatch on the CPU otherwise, through the same buffers, though the
  * CPU is far too slow to watch. Owning-thread only.
@@ -29,6 +29,7 @@ import java.util.Map;
 public final class ParticleSimulation3 implements AutoCloseable {
 
     private final Flip3Step step;
+    private final boolean tension;
     private final Accelerator accelerator;
     private final Map<String, ResidentBuffer> buffers = new LinkedHashMap<>();
     private final List<KernelHandle> handles = new ArrayList<>();
@@ -43,7 +44,12 @@ public final class ParticleSimulation3 implements AutoCloseable {
      * for a run with no window, such as a test or a benchmark.
      */
     public ParticleSimulation3(int nx, int ny, int nz, int particles) {
-        this(new Accelerator(), nx, ny, nz, particles);
+        this(nx, ny, nz, particles, false);
+    }
+
+    /** As above, and with surface tension's passes if {@code tension}; its strength is {@code σ} in the parameters. */
+    public ParticleSimulation3(int nx, int ny, int nz, int particles, boolean tension) {
+        this(new Accelerator(), nx, ny, nz, particles, tension);
     }
 
     /**
@@ -55,12 +61,18 @@ public final class ParticleSimulation3 implements AutoCloseable {
      * the device's queue is shared with whatever draws.
      */
     public ParticleSimulation3(GpuContext context, int nx, int ny, int nz, int particles) {
-        this(Accelerator.on(context), nx, ny, nz, particles);
+        this(context, nx, ny, nz, particles, false);
     }
 
-    private ParticleSimulation3(Accelerator accelerator, int nx, int ny, int nz, int particles) {
+    /** As above, and with surface tension's passes if {@code tension}. */
+    public ParticleSimulation3(GpuContext context, int nx, int ny, int nz, int particles, boolean tension) {
+        this(Accelerator.on(context), nx, ny, nz, particles, tension);
+    }
+
+    private ParticleSimulation3(Accelerator accelerator, int nx, int ny, int nz, int particles, boolean tension) {
         this.accelerator = accelerator;
-        step = new Flip3Step(nx, ny, nz, particles);
+        this.tension = tension;
+        step = new Flip3Step(nx, ny, nz, particles, tension);
         step.buffers().forEach((name, spec) -> {
             ResidentBuffer buffer = accelerator.allocate(spec.element(), spec.length());
             buffer.write(new int[spec.length()]);
@@ -105,6 +117,11 @@ public final class ParticleSimulation3 implements AutoCloseable {
 
     public int particles() {
         return step.particles;
+    }
+
+    /** Whether this step has surface tension's passes, which its parameters then set the strength of. */
+    public boolean tension() {
+        return tension;
     }
 
     /** Whether a step is one GPU submission, as opposed to the CPU fallback. */
