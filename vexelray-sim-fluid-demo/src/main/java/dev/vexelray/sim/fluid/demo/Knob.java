@@ -21,7 +21,9 @@ enum Knob {
     STONES("stones", "Nucleation sites", 0.01, false),
     RESOLUTION("resolution", "Grid (nodes a side)", 8, true),
     PUMP("pump", "Pump force (m/s)", 0.05, false),
-    ANGLE("angle", "Spout angle (deg)", 1, false);
+    ANGLE("angle", "Spout angle (deg)", 1, false),
+    /** Surface tension, as the size below which it outweighs gravity: {@code σ = ρ·g·ℓ²}, at the box's own gravity. */
+    TENSION("tension", "Capillary length (cells)", 0.5, false);
 
     private final String key;
     private final String label;

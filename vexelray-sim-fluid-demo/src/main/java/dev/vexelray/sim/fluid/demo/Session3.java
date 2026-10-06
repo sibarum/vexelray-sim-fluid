@@ -62,6 +62,8 @@ final class Session3 implements AutoCloseable {
     private int height;
     private double sound;
     private double bulk;
+    /** The surface tension, in rest density times node spacings cubed per second squared; zero is none. */
+    private double sigma;
     private double flipTime;
     private double carry;
     private double msPerStep = 1;
@@ -167,12 +169,13 @@ final class Session3 implements AutoCloseable {
                 }
             }
         }
-        if (sim == null || sim.particles() != count || sim.nx() != n) {
+        boolean tension = tuning.has(Knob.TENSION);
+        if (sim == null || sim.particles() != count || sim.nx() != n || sim.tension() != tension) {
             if (sim != null) {
                 sim.close();
             }
-            sim = lend() != null ? new ParticleSimulation3(context, n, n, n, count)
-                    : new ParticleSimulation3(n, n, n, count);
+            sim = lend() != null ? new ParticleSimulation3(context, n, n, n, count, tension)
+                    : new ParticleSimulation3(n, n, n, count, tension);
         }
         this.height = height;
         physics(tuning);
@@ -186,7 +189,9 @@ final class Session3 implements AutoCloseable {
 
     /**
      * The gravity, and the sound speed that follows from it: five times the fastest the water can fall, which is sized from the
-     * gravity and the column but never below the box's own gravity, so a lighter one keeps the tested fluid.
+     * gravity and the column but never below the box's own gravity, so a lighter one keeps the tested fluid. The surface
+     * tension is the one whose capillary length, at the box's own gravity, is the knob's: so it is the same tension
+     * however the gravity knob is set, and lighter gravity leaves it more to do.
      */
     private void physics(Scenario.Tuning tuning) {
         double factor = tuning.get(Knob.GRAVITY);
@@ -195,6 +200,9 @@ final class Session3 implements AutoCloseable {
         fall = Math.sqrt(2 * reference * Math.max(height, 1));
         sound = 5 * fall;
         bulk = sound * sound * RHO0;
+        // The knob is in the cells of the box the scenarios were written for, as the column's width is.
+        double capillary = tuning.get(Knob.TENSION) * (n - 3) / (REFERENCE - 3);
+        sigma = RHO0 * g * capillary * capillary;
     }
 
     /** The step the sound speed allows, at the Courant number the keys chose, less what three dimensions take. */
@@ -203,7 +211,7 @@ final class Session3 implements AutoCloseable {
     }
 
     int[] params() {
-        return Flip3.params(stepSize(), 0, -gravity, 0, bulk, RHO0);
+        return Flip3.params(stepSize(), 0, -gravity, 0, bulk, RHO0, sigma);
     }
 
     /** The knobs or the Courant number changed while running: the step's parameters again. */

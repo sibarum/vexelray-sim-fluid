@@ -185,7 +185,8 @@ enum Scenario {
             "The dam break in a box of\nits own: the water as a surface\nyou turn by dragging. D shows\nits state flat, V a slice.",
             param(Knob.GRAVITY, 0.05, 2, 1),
             param(Knob.COLUMN_WIDTH, 6, 28, 16),
-            param(Knob.RESOLUTION, 32, 96, 48)) {
+            param(Knob.RESOLUTION, 32, 96, 48),
+            param(Knob.TENSION, 0, 10, 0)) {
         @Override
         int dimensions() {
             return 3;
