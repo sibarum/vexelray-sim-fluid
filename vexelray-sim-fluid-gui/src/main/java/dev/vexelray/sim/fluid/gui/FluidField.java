@@ -30,6 +30,10 @@ import java.util.List;
  * and need a pass of its own to make; this needs nothing but the buffer, which is what lets a picture of the
  * state read it where the kernels wrote it.
  *
+ * <p>The grid is read through one function, {@code float mass(vec3)}, which the field calls and so does
+ * {@link WaterShading}: the shading looks into the water behind the surface to see how much of it there is, and it
+ * reads the same mass the march found the surface in.
+ *
  * <h2>Where things are</h2>
  *
  * <p>Node {@code (i, j, k)} is at index {@code (k·ny + j)·nx + i}, one node apart. The box is centred on the world
@@ -44,6 +48,9 @@ final class FluidField {
 
     /** Where the grid buffer is bound: set 0, this binding. */
     static final int GRID_BINDING = 0;
+
+    /** The name of the grid sampler, {@code float mass(vec3)}. */
+    static final String MASS_FUNCTION = "mass";
 
     /**
      * How much of the gradient bound to keep. The mass climbs across about one node at a free surface and a
@@ -61,7 +68,8 @@ final class FluidField {
     }
 
     /**
-     * The fragment stage for {@code scene}, marching the water of an {@code nx × ny × nz} grid.
+     * The fragment stage for {@code scene}, marching the water of an {@code nx × ny × nz} grid and lighting it as
+     * water: {@link WaterShading} takes the place of the scene's own shading.
      *
      * @param restMass the mass of a node of rest fluid, which for particles of one fluid at {@code ppc} a cell is
      *                 their density times a cell's volume
@@ -69,7 +77,10 @@ final class FluidField {
      *                 smoothed step sits
      */
     static byte[] fragmentSpirv(SdfScene scene, int nx, int ny, int nz, double restMass, double iso) {
-        return SdfComposer.fragmentSpirv(scene, sdf(SdfComposer.SDF_FUNCTION, nx, ny, nz, restMass, iso), null);
+        Function mass = mass(nx, ny, nz);
+        SdfScene lit = scene.withShading(new WaterShading(mass, restMass, nx, ny, nz));
+        return SdfComposer.fragmentSpirv(lit, sdf(SdfComposer.SDF_FUNCTION, mass, nx, ny, nz, restMass, iso), null,
+                List.of(mass));
     }
 
     /** The vertex stage that pairs with {@link #fragmentSpirv}: the fullscreen triangle that writes {@code vUv}. */
@@ -77,10 +88,13 @@ final class FluidField {
         return dev.supirvast.vastir.tools.Fullscreen.triangleVertexWithUvSpirv();
     }
 
-    static Function sdf(String name, int nx, int ny, int nz, double restMass, double iso) {
+    /**
+     * {@code float mass(vec3 p)}: the node mass at a world point, trilinear between the eight nodes around it. The
+     * point is held to the box first, so a point outside reads the nearest face and never past the buffer.
+     */
+    static Function mass(int nx, int ny, int nz) {
         Buffer grid = new Buffer("grid", GRID_BINDING, Ir.F32);
         double cell = cell(nx, ny, nz);
-        Type.Int i32 = Type.int32();
         List<Statement> body = new ArrayList<>();
 
         // The node coordinates of the point: the world point over the node spacing, from the box's own corner.
@@ -109,10 +123,17 @@ final class FluidField {
                 Ir.mix(Ir.mix(node(grid, x0, y0, z1, nx, ny), node(grid, x1, y0, z1, nx, ny), tx),
                         Ir.mix(node(grid, x0, y1, z1, nx, ny), node(grid, x1, y1, z1, nx, ny), tx), ty),
                 tz);
-        Expr mass = local(body, "mass", rho);
+        body.add(new Statement.Return(rho));
+        return new Function(MASS_FUNCTION, new Type.FunctionType(Ir.F32, List.of(Ir.V3)), new Region(body));
+    }
+
+    /** The field over {@code mass}, which has to be in the module beside it. */
+    static Function sdf(String name, Function mass, int nx, int ny, int nz, double restMass, double iso) {
+        double cell = cell(nx, ny, nz);
 
         // Negative inside the water, as every distance here is: the surface is where the mass is the threshold.
-        Expr water = Ir.mul(Ir.sub(Ir.f(iso * restMass), mass), Ir.f(SAFETY * cell / restMass));
+        Expr water = Ir.mul(Ir.sub(Ir.f(iso * restMass), new Expr.Call(mass, List.of(Ir.POINT))),
+                Ir.f(SAFETY * cell / restMass));
 
         // The box, so that outside it the field is the way in and nothing the grid says can be heard.
         Expr half = Ir.v3((nx - 1) * cell / 2, (ny - 1) * cell / 2, (nz - 1) * cell / 2);
@@ -121,8 +142,8 @@ final class FluidField {
         Expr inside = Ir.min(Ir.max(Ir.x(beyond), Ir.max(Ir.y(beyond), Ir.z(beyond))), Ir.f(0));
         Expr box = Ir.add(outside, inside);
 
-        body.add(new Statement.Return(Ir.max(box, water)));
-        return new Function(name, new Type.FunctionType(Ir.F32, List.of(Ir.V3)), new Region(body));
+        return new Function(name, new Type.FunctionType(Ir.F32, List.of(Ir.V3)),
+                Region.of(new Statement.Return(Ir.max(box, water))));
     }
 
     /** The mass at node {@code (x, y, z)}, whose coordinates are whole numbers held in floats. */
