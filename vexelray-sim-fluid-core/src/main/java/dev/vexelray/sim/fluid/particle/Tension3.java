@@ -13,6 +13,7 @@ import static dev.vexelray.sim.fluid.ir.Body.F32;
 import static dev.vexelray.sim.fluid.ir.Body.add;
 import static dev.vexelray.sim.fluid.ir.Body.clamp;
 import static dev.vexelray.sim.fluid.ir.Body.div;
+import static dev.vexelray.sim.fluid.ir.Body.eq;
 import static dev.vexelray.sim.fluid.ir.Body.f;
 import static dev.vexelray.sim.fluid.ir.Body.gt;
 import static dev.vexelray.sim.fluid.ir.Body.i;
@@ -22,6 +23,7 @@ import static dev.vexelray.sim.fluid.ir.Body.min;
 import static dev.vexelray.sim.fluid.ir.Body.mod;
 import static dev.vexelray.sim.fluid.ir.Body.mul;
 import static dev.vexelray.sim.fluid.ir.Body.neg;
+import static dev.vexelray.sim.fluid.ir.Body.not;
 import static dev.vexelray.sim.fluid.ir.Body.sqrt;
 import static dev.vexelray.sim.fluid.ir.Body.sub;
 import static dev.vexelray.sim.fluid.ir.Body.toFloat;
@@ -39,6 +41,12 @@ import static dev.vexelray.sim.fluid.ir.Body.v;
  * six faces, a face carrying it only where the colour at both its nodes is at least {@link Tension#MIN_COLOUR}; what
  * leaves one node enters the next, so it sums to zero over the grid. Reads of a neighbour are held to the wall ring, so
  * the interface meets a wall at a right angle.
+ *
+ * <p><b>The walls.</b> Held reads make the wall a mirror, and the wall has to look like one to all three passes, or it
+ * drives the water. A wall-ring node is full at half a rest mass a wall, since particles reach it from one side only.
+ * Across a face in a wall only the normal stress crosses, because the shear is odd in the mirror. And a node outside the
+ * ring, whose faces pair with nothing, takes no force. Without these, a drop resting on the floor turned over
+ * without end, drawn inward along the floor and rising up its middle.
  *
  * <p>Units as {@link Flip3}: {@code σ} is a force per length, in rest density times node spacings cubed per second
  * squared.
@@ -75,7 +83,19 @@ public final class Tension3 {
                         Expr value = load(BLUR_SRC, at(nx, ny, nz, at, di, dj, dk));
                         if (scaled) {
                             // A volume fraction, as in two dimensions: a dense core is no more full than a full node.
-                            value = min(div(value, load(BLUR_PARAMS, i(Flip3.RHO0))), f(1));
+                            // A node on the wall ring has the wall through it and particles on one side only, so
+                            // full, it holds half a rest mass for each wall; read as half full, the wall would be
+                            // an interface, and its tension would draw the water along the wall.
+                            int[] d = {di, dj, dk};
+                            int[] size = {nx, ny, nz};
+                            LocalVar full = t.let("full", load(BLUR_PARAMS, i(Flip3.RHO0)));
+                            for (int a = 0; a < 3; a++) {
+                                Expr c = held(v(at[a]), d[a], size[a]);
+                                int low = (int) Flip3.WALL;
+                                t.when(eq(c, i(low)), w -> w.set(full, mul(f(0.5), v(full))));
+                                t.when(eq(c, i(size[a] - 1 - low)), w -> w.set(full, mul(f(0.5), v(full))));
+                            }
+                            value = min(div(value, v(full)), f(1));
                         }
                         t.set(sum, add(v(sum), mul(f(weight), value)));
                     }
@@ -147,25 +167,40 @@ public final class Tension3 {
         LocalVar[] force = {t.let("fx", f(0)), t.let("fy", f(0)), t.let("fz", f(0))};
         Expr self = index(nx, ny, v(at[0]), v(at[1]), v(at[2]));
         Expr minColour = f(Tension.MIN_COLOUR);
+        int[] size = {nx, ny, nz};
+        int low = (int) Flip3.WALL;
+        // A node outside the wall ring reads the ring for every neighbour, so its faces pair with nothing: no force.
+        Expr ring = gt(load(colour, self), minColour);
+        for (int a = 0; a < 3; a++) {
+            ring = and(ring, and(not(lt(v(at[a]), i(low))), not(gt(v(at[a]), i(size[a] - 1 - low)))));
+        }
         for (int a = 0; a < 3; a++) {
             for (int sign = -1; sign <= 1; sign += 2) {
                 int[] d = new int[3];
                 d[a] = sign;
                 Expr there = at(nx, ny, nz, at, d[0], d[1], d[2]);
-                Expr open = new Expr.Binary(dev.supirvast.vastir.core.BinaryOp.LOGICAL_AND, gt(load(colour, self), minColour),
-                        gt(load(colour, there), minColour));
+                Expr open = and(ring, gt(load(colour, there), minColour));
+                // A face in the wall: the held read makes the colour its own mirror there, and in a mirror the
+                // stress's shear across the face changes sign, so its mean is zero. Only the normal stress crosses.
+                Expr wall = sign < 0 ? not(gt(v(at[a]), i(low))) : not(lt(v(at[a]), i(size[a] - 1 - low)));
+                LocalVar shear = t.let("shear", f(1));
+                t.when(wall, w -> w.set(shear, f(0)));
                 int axis = a;
                 int s = sign;
                 t.when(open, o -> {
                     for (int c = 0; c < 3; c++) {
                         Buffer component = tensor[axis][c];
-                        o.set(force[c], add(v(force[c]),
-                                mul(f(0.5 * s), add(load(component, self), load(component, there)))));
+                        Expr flux = mul(f(0.5 * s), add(load(component, self), load(component, there)));
+                        o.set(force[c], add(v(force[c]), c == axis ? flux : mul(v(shear), flux)));
                     }
                 });
             }
         }
         return force;
+    }
+
+    private static Expr and(Expr a, Expr b) {
+        return new Expr.Binary(dev.supirvast.vastir.core.BinaryOp.LOGICAL_AND, a, b);
     }
 
     /** A node's {@code (i, j, k)} from its index {@code (k·ny + j)·nx + i}. */

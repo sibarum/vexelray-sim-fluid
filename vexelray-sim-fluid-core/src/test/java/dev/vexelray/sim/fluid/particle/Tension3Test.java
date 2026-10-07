@@ -143,4 +143,91 @@ class Tension3Test {
                 + " of the pressure, against 2/3");
         assertTrue(one[3] < 0.5, backend + ": the drop's centre of mass moves at " + one[3]);
     }
+
+    /**
+     * The demo's dam break at its strongest tension: a column falls, and the water gathers into one wide drop on the
+     * floor, which should then come to rest. When the floor read as half full the tension took it for a surface and
+     * drew the bottom layer inward, and the drop turned over without end, up its middle and out over its top, like a
+     * spring; that turning is what this looks for, once the splash has had four seconds to settle.
+     */
+    @ParameterizedTest
+    @EnumSource(value = Backend.class, names = "GPU")
+    void aDropOnTheFloorComesToRest(Backend backend) {
+        int n = 40;
+        double g = 9.81 * (n - 1);
+        double fall = Math.sqrt(2 * g * 30);
+        double bulk = 25 * fall * fall;
+        double capillary = 10.0 * (n - 3) / 45;
+        double dt = Flip3.stableStep(bulk, 1, 2.5 * fall, 0.2);
+        int count = 16 * 30 * 20 * PPC;
+        float[][] at = new float[3][count];
+        Random random = new Random(1);
+        int k = 0;
+        for (int layer = 12; layer < 32; layer++) {
+            for (int row = 0; row < 30; row++) {
+                for (int col = 0; col < 16; col++) {
+                    for (int s = 0; s < PPC; s++, k++) {
+                        int[] cell = {col, row, layer};
+                        for (int a = 0; a < 3; a++) {
+                            at[a][k] = Flip3.WALL + cell[a] + (((s >> a) & 1) + 0.25f + 0.5f * random.nextFloat()) / 2;
+                        }
+                    }
+                }
+            }
+        }
+        float[] m = new float[count];
+        java.util.Arrays.fill(m, 1f / PPC);
+        float[] rest = new float[count];
+        java.util.Arrays.fill(rest, 1f);
+        Flip3Step step = new Flip3Step(n, n, n, count, true);
+        try (Rig rig = Rig.on(backend, step)) {
+            String[] axes = {"x", "y", "z"};
+            for (int a = 0; a < 3; a++) {
+                rig.write(axes[a], bits(at[a]));
+            }
+            rig.write("m", bits(m));
+            rig.write("j", bits(rest));
+            rig.write("params", Flip3.params(dt, 0, -g, 0, bulk, 1, g * capillary * capillary));
+            int settle = (int) Math.ceil(4 / dt);
+            int steps = (int) Math.ceil(6 / dt);
+            double rise = 0;
+            double energy = 0;
+            int samples = 0;
+            for (int s = 0; s < steps; s++) {
+                rig.run(step.step());
+                if (s < settle || s % 500 != 0) {
+                    continue;
+                }
+                float[][] position = new float[3][];
+                for (int a = 0; a < 3; a++) {
+                    position[a] = floats(rig.read(axes[a]));
+                }
+                float[][] velocity = {floats(rig.read("u")), floats(rig.read("v")), floats(rig.read("w"))};
+                double cx = 0;
+                double cz = 0;
+                for (int p = 0; p < count; p++) {
+                    cx += position[0][p] / count;
+                    cz += position[2][p] / count;
+                }
+                double up = 0;
+                int middle = 0;
+                for (int p = 0; p < count; p++) {
+                    energy += 0.5 * (velocity[0][p] * velocity[0][p] + velocity[1][p] * velocity[1][p]
+                            + velocity[2][p] * velocity[2][p]) / count;
+                    if (Math.hypot(position[0][p] - cx, position[2][p] - cz) < 3) {
+                        up += velocity[1][p];
+                        middle++;
+                    }
+                }
+                rise += up / Math.max(middle, 1);
+                samples++;
+            }
+            rise /= samples;
+            energy /= samples;
+            System.out.printf("[tension3] %s: a settled drop rises up its middle at %.2f, kinetic energy %.1f%n", backend,
+                    rise, energy);
+            assertTrue(Math.abs(rise) < 5, backend + ": the drop turns over, rising up its middle at " + rise);
+            assertTrue(energy < 120, backend + ": the settled drop keeps kinetic energy " + energy + " a unit mass");
+        }
+    }
 }
