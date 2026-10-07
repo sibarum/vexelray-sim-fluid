@@ -13,6 +13,7 @@ import dev.vexelray.sim.fluid.particle.FixedScatter.FixedPoint;
 import dev.vexelray.sim.fluid.particle.ScatterTest.Backend;
 import dev.vexelray.sim.fluid.particle.ScatterTest.Particles;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
@@ -257,6 +258,7 @@ class FixedScatterTest {
      * to spare.
      */
     @Test
+    @EnabledIfSystemProperty(named = "flip.sweep", matches = "true")
     void gpuFixedScatterCost() {
         int count = 1 << 20;
         try (Accelerator accelerator = new Accelerator()) {

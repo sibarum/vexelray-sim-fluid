@@ -1,6 +1,7 @@
 package dev.vexelray.sim.fluid.particle;
 
 import dev.vexelray.sim.fluid.particle.ScatterTest.Backend;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
@@ -152,6 +153,7 @@ class Tension3Test {
      */
     @ParameterizedTest
     @EnumSource(value = Backend.class, names = "GPU")
+    @Tag("physics")
     void aDropOnTheFloorComesToRest(Backend backend) {
         int n = 40;
         double g = 9.81 * (n - 1);

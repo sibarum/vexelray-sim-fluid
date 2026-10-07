@@ -39,6 +39,10 @@
         <tactroller.version>1.0-SNAPSHOT</tactroller.version>
 
         <junit.version>5.11.4</junit.version>
+
+        <!-- Tests tagged "physics" run a simulation for seconds of fluid time and judge what the water did; they take
+             minutes, so a build leaves them out. mvn test -Pphysics runs them as well. -->
+        <test.excludedGroups>physics</test.excludedGroups>
     </properties>
 
     <dependencyManagement>
@@ -132,8 +136,20 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.5.2</version>
+                    <configuration>
+                        <excludedGroups>${test.excludedGroups}</excludedGroups>
+                    </configuration>
                 </plugin>
             </plugins>
         </pluginManagement>
     </build>
+
+    <profiles>
+        <profile>
+            <id>physics</id>
+            <properties>
+                <test.excludedGroups />
+            </properties>
+        </profile>
+    </profiles>
 </project>

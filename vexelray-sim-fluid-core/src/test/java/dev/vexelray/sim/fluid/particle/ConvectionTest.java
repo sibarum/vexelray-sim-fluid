@@ -1,6 +1,7 @@
 package dev.vexelray.sim.fluid.particle;
 
 import dev.vexelray.sim.fluid.particle.ScatterTest.Backend;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
@@ -116,6 +117,7 @@ class ConvectionTest {
 
     @ParameterizedTest
     @EnumSource(Backend.class)
+    @Tag("physics")
     void aHotBubbleRisesInColdFluidAndOnlyIfItExpands(Backend backend) {
         double without = rise(backend, 0, 0.5);
         double with = rise(backend, 0.5, 0.5);
@@ -131,6 +133,7 @@ class ConvectionTest {
      */
     @ParameterizedTest
     @EnumSource(Backend.class)
+    @Tag("physics")
     void aBubbleRisesOnlyOnceItIsPastTheBoilingPoint(Backend backend) {
         double under = rise(backend, 0, 0.45, 0.5, 0.8, 0.5);
         double over = rise(backend, 0, 0.55, 0.5, 0.8, 0.5);
@@ -148,6 +151,7 @@ class ConvectionTest {
      */
     @ParameterizedTest
     @EnumSource(Backend.class)
+    @Tag("physics")
     void stonesLetFoamFormAtTheBoilingPointAndWithoutThemItWaitsForSuperheat(Backend backend) {
         double without = rise(backend, 0, 0.7, 0.5, 0.8, 0.4, 0, 0.5);
         double with = rise(backend, 0, 0.7, 0.5, 0.8, 0.4, 1, 0.5);

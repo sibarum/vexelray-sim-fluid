@@ -12,6 +12,7 @@ import dev.supirvast.vastir.tools.Registration;
 import dev.supirvast.vastir.tools.Rejection;
 import dev.supirvast.vastir.tools.ResidentBuffer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
@@ -225,6 +226,7 @@ class ScatterTest {
      * so the comparison is like for like. A mode the device cannot run is reported, not timed on the CPU.
      */
     @Test
+    @EnabledIfSystemProperty(named = "flip.sweep", matches = "true")
     void gpuScatterCost() {
         int count = 1 << 20;
         try (Accelerator accelerator = new Accelerator()) {

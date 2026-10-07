@@ -1,6 +1,7 @@
 package dev.vexelray.sim.fluid.particle;
 
 import dev.vexelray.sim.fluid.particle.ScatterTest.Backend;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.util.Random;
@@ -447,6 +448,7 @@ class Flip3LodTest {
 
     /** The same at the demo's own size and settings: 64 nodes, a column 22 wide and 41 high, as the scenario scales to it, the demo's gravity and step. */
     @Test
+    @Tag("physics")
     void changingTheLevelWhileTheWaterMovesDoesNotSpikeCompressionAtTheDemosSize() {
         int frames = 260;
         double g = 9.81 * 63;

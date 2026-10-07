@@ -40,7 +40,7 @@ class SharedGridMarchTest {
     private static final int PPC = 8;
     private static final double RHO0 = 1;
     private static final double G = 9.81 * (N - 1);
-    private static final int SIZE = 256;
+    private static final int SIZE = Integer.getInteger("fluid.size", 256);
 
     private record Rig(VulkanInstance instance, VulkanDevice device, GpuContext context) implements AutoCloseable {
         @Override

@@ -29,8 +29,10 @@ The stack's siblings must be installed to the local Maven repository first: `sup
 mvn install
 ```
 
-Runs every test; add `-Dsupirvast.requireGpu=true` to fail rather than skip where there is no GPU. The slow
-particle sweep, `FlipSweepTest`, is not an assertion and runs only with `-Dflip.sweep=true`.
+Runs the tests that take seconds; add `-Dsupirvast.requireGpu=true` to fail rather than skip where there is no GPU.
+The physics tests, which run seconds of fluid and judge what it did (a bubble rising, a drop's pressure, layers
+overturning), take minutes and run only with `-Pphysics`. The sweeps and benchmarks are not assertions and run only
+with `-Dflip.sweep=true`.
 
 ```bash
 mvn -pl vexelray-sim-fluid-demo exec:exec

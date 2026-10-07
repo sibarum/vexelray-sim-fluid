@@ -1,6 +1,7 @@
 package dev.vexelray.sim.fluid.particle;
 
 import dev.vexelray.sim.fluid.particle.ScatterTest.Backend;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
@@ -67,6 +68,7 @@ class RelaxTest {
 
     @ParameterizedTest
     @EnumSource(Backend.class)
+    @Tag("physics")
     void jIsDrawnToTheVolumeTheMassGivesAndOnlyIfAskedTo(Backend backend) {
         double without = medianJ(backend, 0);
         double with = medianJ(backend, 8);

@@ -1,6 +1,7 @@
 package dev.vexelray.sim.fluid.particle;
 
 import dev.vexelray.sim.fluid.particle.ScatterTest.Backend;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
@@ -191,6 +192,7 @@ class TensionTest {
 
     @ParameterizedTest
     @EnumSource(Backend.class)
+    @Tag("physics")
     void aDropsPressureIsSigmaOverItsRadius(Backend backend) {
         double sigma = 0.02 * SOUND * SOUND * 12;
         double[] none = pressure(backend, 12, 0, 1);

@@ -1,6 +1,7 @@
 package dev.vexelray.sim.fluid.particle;
 
 import dev.vexelray.sim.fluid.particle.ScatterTest.Backend;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
@@ -43,6 +44,7 @@ class TwoFluidTest {
      */
     @ParameterizedTest
     @EnumSource(Backend.class)
+    @Tag("physics")
     void lightOverHeavyStaysLayeredAndHeavyOverLightOverturns(Backend backend) {
         double stable = run(backend, HEAVY, OIL);
         double inverted = run(backend, LIGHT, HEAVY);
@@ -60,6 +62,7 @@ class TwoFluidTest {
      */
     @ParameterizedTest
     @EnumSource(Backend.class)
+    @Tag("physics")
     void aThirteenfoldContrastStaysLayeredAndOverturnsWhenInverted(Backend backend) {
         double stable = run(backend, MERCURY, HEAVY);
         double inverted = run(backend, HEAVY, MERCURY);
