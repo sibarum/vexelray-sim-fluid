@@ -26,7 +26,12 @@ import java.util.Map;
  * {@code sortEvery} steps, counted across calls, which keeps the segmented scatter's runs long.
  *
  * <p>Runs on the GPU when there is one and the scatter's needs fit it — f32 atomic add, subgroups of 32 — and
- * dispatch by dispatch on the CPU otherwise, through the same buffers. Owning-thread only.
+ * dispatch by dispatch on the CPU otherwise, through the same buffers.
+ *
+ * <p>Owning-thread only, and the owning thread is whichever made it: the device is its own, opened by the constructor,
+ * so nothing else submits to it. That lets making one — slow, since it opens the device and lowers, validates and
+ * compiles every kernel — be done on a worker, and the simulation handed to the thread that runs it, which owns it
+ * from then on.
  */
 public final class ParticleSimulation implements AutoCloseable {
 
@@ -81,11 +86,8 @@ public final class ParticleSimulation implements AutoCloseable {
         this.heat = heat;
         this.convection = convection;
         step = new FlipStep(nx, ny, particles, tension, heat, convection, relax, pump);
-        step.buffers().forEach((name, spec) -> {
-            ResidentBuffer buffer = accelerator.allocate(spec.element(), spec.length());
-            buffer.write(new int[spec.length()]);   // the sort's counts must start at zero, and it leaves them so
-            buffers.put(name, buffer);
-        });
+        step.buffers().forEach((name, spec) -> buffers.put(name, accelerator.allocate(spec.element(), spec.length())));
+        accelerator.clear(List.copyOf(buffers.values()));   // the sort's counts must start at zero, and it leaves them so
         stepSequence = record(step.step());
         sortSequence = record(step.sort());
     }

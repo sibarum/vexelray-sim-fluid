@@ -10,6 +10,7 @@ import dev.vexelray.sim.fluid.particle.ParticleDiagnostics;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.Callable;
 
 import static dev.vexelray.sim.fluid.demo.Readout.Line;
 
@@ -45,6 +46,7 @@ final class Session3 implements AutoCloseable {
     private final GuiApp app;
     private final Controls controls;
     private final Readout readout;
+    private final Metrics metrics;
     private final Map<String, String> alarms = new LinkedHashMap<>();
 
     /** The application's device, lent to the simulation; null until asked for, and if it cannot be lent. */
@@ -74,10 +76,11 @@ final class Session3 implements AutoCloseable {
     private int settle;
     private double initialMass;
 
-    Session3(GuiApp app, Controls controls, Readout readout) {
+    Session3(GuiApp app, Controls controls, Readout readout, Metrics metrics) {
         this.app = app;
         this.controls = controls;
         this.readout = readout;
+        this.metrics = metrics;
     }
 
     /**
@@ -103,7 +106,7 @@ final class Session3 implements AutoCloseable {
         return context != null;
     }
 
-    /** The simulation, for a view that reads its buffers; null before the first {@link #load}. */
+    /** The simulation, for a view that reads its buffers; null before the first {@link #install}. */
     ParticleSimulation3 simulation() {
         return sim;
     }
@@ -131,55 +134,121 @@ final class Session3 implements AutoCloseable {
         return (((s >> axis) & 1) + 0.25f + 0.5f * random.nextFloat()) / 2;
     }
 
-    /** Starts the scenario again: its particles, eight a cell, jittered, at rest. */
-    void load(Scenario next, Scenario.Tuning tuning) {
-        scenario = next;
-        alarms.clear();
-        n = (int) Math.round(tuning.get(Knob.RESOLUTION));
-        g = 9.81 * (n - 1);
-        int inside = n - 3;
-        int count = 0;
-        int height = 0;
-        for (int layer = 0; layer < inside; layer++) {
-            for (int row = 0; row < inside; row++) {
-                for (int col = 0; col < inside; col++) {
-                    if (density(next, col, row, layer, inside, tuning) > 0) {
-                        count += PPC;
-                        height = Math.max(height, row + 1);
+    /**
+     * A scenario's start, made off the frame: its particles, eight a cell, jittered, at rest; and a simulation to hold
+     * them, made as far as the offload lane can make one, when the running one cannot.
+     */
+    static final class Start implements Session.Start {
+        private final Scenario scenario;
+        private final int n;
+        private final int height;
+        private final float[][] at;
+        private final float[] mass;
+        private final double initialMass;
+        /** Null when the running simulation already has the shape; taken by the frame that starts it. */
+        private ParticleSimulation3.Prepared fresh;
+
+        private Start(Scenario scenario, int n, int height, float[][] at, float[] mass, double initialMass,
+                ParticleSimulation3.Prepared fresh) {
+            this.scenario = scenario;
+            this.n = n;
+            this.height = height;
+            this.at = at;
+            this.mass = mass;
+            this.initialMass = initialMass;
+            this.fresh = fresh;
+        }
+
+        @Override
+        public Scenario scenario() {
+            return scenario;
+        }
+
+        /** Frees the simulation made for it, if no frame took it. */
+        @Override
+        public void close() {
+            if (fresh != null) {
+                fresh.close();
+                fresh = null;
+            }
+        }
+    }
+
+    /**
+     * What starting {@code next} again takes, as work for the offload lane: its particles, and a new simulation if the one
+     * running cannot hold them — the lowering, validating and compiling of the kernels that a frame cannot wait for. Asked
+     * on this thread, which is where the device is lent from and where the running simulation's shape is read.
+     */
+    Callable<Start> plan(Scenario next, Scenario.Tuning tuning) {
+        GpuContext lent = lend();
+        int liveParticles = sim == null ? -1 : sim.particles();
+        int liveNodes = sim == null ? -1 : sim.nx();
+        boolean liveTension = sim != null && sim.tension();
+        return () -> {
+            int n = (int) Math.round(tuning.get(Knob.RESOLUTION));
+            int inside = n - 3;
+            int count = 0;
+            int height = 0;
+            for (int layer = 0; layer < inside; layer++) {
+                for (int row = 0; row < inside; row++) {
+                    for (int col = 0; col < inside; col++) {
+                        if (density(next, col, row, layer, inside, tuning) > 0) {
+                            count += PPC;
+                            height = Math.max(height, row + 1);
+                        }
                     }
                 }
             }
-        }
-        float[][] at = new float[3][count];
-        float[] mass = new float[count];
-        Random random = new Random(1);
-        int k = 0;
-        initialMass = 0;
-        for (int layer = 0; layer < inside; layer++) {
-            for (int row = 0; row < inside; row++) {
-                for (int col = 0; col < inside; col++) {
-                    double rho = density(next, col, row, layer, inside, tuning);
-                    for (int s = 0; rho > 0 && s < PPC; s++, k++) {
-                        at[0][k] = Flip3.WALL + col + octant(s, 0, random);
-                        at[1][k] = Flip3.WALL + row + octant(s, 1, random);
-                        at[2][k] = Flip3.WALL + layer + octant(s, 2, random);
-                        mass[k] = (float) (rho / PPC);
-                        initialMass += mass[k];
+            float[][] at = new float[3][count];
+            float[] mass = new float[count];
+            Random random = new Random(1);
+            int k = 0;
+            double initialMass = 0;
+            for (int layer = 0; layer < inside; layer++) {
+                for (int row = 0; row < inside; row++) {
+                    for (int col = 0; col < inside; col++) {
+                        double rho = density(next, col, row, layer, inside, tuning);
+                        for (int s = 0; rho > 0 && s < PPC; s++, k++) {
+                            at[0][k] = Flip3.WALL + col + octant(s, 0, random);
+                            at[1][k] = Flip3.WALL + row + octant(s, 1, random);
+                            at[2][k] = Flip3.WALL + layer + octant(s, 2, random);
+                            mass[k] = (float) (rho / PPC);
+                            initialMass += mass[k];
+                        }
                     }
                 }
             }
-        }
-        boolean tension = tuning.has(Knob.TENSION);
-        if (sim == null || sim.particles() != count || sim.nx() != n || sim.tension() != tension) {
+            boolean tension = tuning.has(Knob.TENSION);
+            boolean fits = count == liveParticles && n == liveNodes && tension == liveTension;
+            ParticleSimulation3.Prepared fresh = fits ? null : lent != null
+                    ? ParticleSimulation3.prepare(lent, n, n, n, count, tension)
+                    : ParticleSimulation3.prepare(n, n, n, count, tension);
+            return new Start(next, n, height, at, mass, initialMass, fresh);
+        };
+    }
+
+    /**
+     * Starts the scenario again from what {@link #plan} made: the simulation it made, if it made one, put in place of the
+     * running one, then the particles loaded. What is left for this thread is clearing the new simulation's buffers,
+     * recording its step and sending the particles, which is what starting again with no new simulation costs.
+     */
+    void install(Start start, Scenario.Tuning tuning) {
+        if (start.fresh != null) {
+            ParticleSimulation3 made = new ParticleSimulation3(start.fresh);
+            start.fresh = null;
             if (sim != null) {
                 sim.close();
             }
-            sim = lend() != null ? new ParticleSimulation3(context, n, n, n, count, tension)
-                    : new ParticleSimulation3(n, n, n, count, tension);
+            sim = made;
         }
-        this.height = height;
+        scenario = start.scenario;
+        alarms.clear();
+        n = start.n;
+        g = 9.81 * (n - 1);
+        height = start.height;
+        initialMass = start.initialMass;
         physics(tuning);
-        sim.load(at, new float[3][count], mass, params());
+        sim.load(start.at, new float[3][start.mass.length], start.mass, params());
         sentStep = stepSize();
         shown = Flip3.GROUP;                           // a loaded simulation has every slot active
         flipTime = 0;
@@ -263,6 +332,7 @@ final class Session3 implements AutoCloseable {
                 carry = 0;
                 behind = true;
             }
+            metrics.kept(steps * dt, elapsed * controls.timeScale());
         }
         long start = System.nanoTime();
         sim.advance(steps);
@@ -329,6 +399,19 @@ final class Session3 implements AutoCloseable {
 
     private void readings(ParticleDiagnostics p, double mass, int steps, boolean behind, double dt, double fastest) {
         readout.heading("particles · MLS-MPM, three dimensions");
+        metrics.fixedWork = false;
+        metrics.simTime = flipTime;
+        metrics.stepsPerFrame = steps;
+        metrics.behind = behind;
+        metrics.dt = dt;
+        metrics.stepMs = msPerStep;
+        metrics.courant = p.courant();
+        metrics.courantLimit = COURANT_ALARM;
+        metrics.compression = p.highDensity();
+        metrics.compressionLimit = COMPRESSION_ALARM;
+        metrics.particles = sim.particles();
+        metrics.activeParticles = sim.active();
+        metrics.grid = n;
         readout.set(Line.BACKEND, String.format("backend   %s · %d^3 nodes · %,d particles (%,d active)",
                 sim.onGpu() ? "GPU" : "CPU fallback", n, sim.particles(), sim.active()));
         readout.set(Line.TIME, String.format("time      %8.3f s  x%-6s %s", flipTime, controls.timeScale() >= 1
@@ -362,6 +445,7 @@ final class Session3 implements AutoCloseable {
             }
         }
         readout.set(Line.ALARM, alarms.isEmpty() ? "" : "ALARM  " + String.join("\n       ", alarms.values()));
+        metrics.problems = Metrics.plain(alarms);
     }
 
     @Override

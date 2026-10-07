@@ -4,12 +4,14 @@ import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.layout.LayoutEnums.Direction;
 import dev.vexelray.gui.core.layout.Length;
+import dev.vexelray.gui.core.style.Role;
 import dev.vexelray.gui.widget.Button;
 import dev.vexelray.gui.widget.Tabs;
 
 /**
- * The right-hand side: the transport (reset, pause, step) above three pages — the readings, the running scenario's
- * parameters, and the settings that belong to no scenario.
+ * The right-hand side: the transport (reset, pause, step) and a line on how the run is going, above two pages — the
+ * controls, with the readings each one moves beside it, and the diagnostics, every number the solver has, for whoever is
+ * debugging it.
  *
  * <p>Whatever a key changes — pause, a speed, a scenario — the pages show too, because {@link #sync} reads the controls
  * back into them whenever their {@link Controls#version() version} has moved.
@@ -17,15 +19,17 @@ import dev.vexelray.gui.widget.Tabs;
 final class Dock {
 
     private final Controls controls;
+    private final Metrics metrics;
     private final Button pause;
-    private final ScenarioPanel parameters;
-    private final SettingsPanel settings;
-    private final Node panel;
-    private long seen = -1;
-    private boolean paused;
+    private final Node status;
+    private final ControlPanel panel;
+    private final Node node;
+    private Boolean paused;
+    private String statusText;
 
-    Dock(Gui gui, Controls controls, Readout readout) {
+    Dock(Gui gui, Controls controls, Metrics metrics, Readout readout) {
         this.controls = controls;
+        this.metrics = metrics;
         Button reset = new Button(gui, "Reset").onPress(controls::reset);
         pause = new Button(gui, "Pause").onPress(controls::togglePause);
         Button step = new Button(gui, "Step").onPress(controls::step);
@@ -34,38 +38,38 @@ final class Dock {
         }
         gui.landmark("transport.pause", pause.node());
         Node transport = gui.row().width(Length.FILL).gap(Look.GAP).children(reset.node(), pause.node(), step.node());
+        status = gui.text(" ").width(Length.FILL).font(Look.UI).textSize(Look.SMALL)
+                .textColor(gui.theme().color(Role.DIM));
+        gui.landmark("status", status);
 
-        parameters = new ScenarioPanel(gui, controls);
-        settings = new SettingsPanel(gui, controls);
+        panel = new ControlPanel(gui, controls, metrics);
         Tabs tabs = new Tabs(gui)
-                .add("Readings", readout.node())
-                .add("Parameters", parameters.node())
-                .add("Settings", settings.node());
+                .add("Controls", panel.node())
+                .add("Diagnostics", readout.node());
         tabs.node().height(Length.grow(1f));
 
-        panel = gui.column().direction(Direction.COLUMN)
+        node = gui.column().direction(Direction.COLUMN)
                 .width(Length.grow(1f)).height(Length.FILL)
                 .gap(Look.GAP)
-                .children(transport, tabs.node());
+                .children(transport, status, tabs.node());
     }
 
     Node node() {
-        return panel;
+        return node;
     }
 
-    /** Reads the controls back into the pages, if anything has changed since the last call. */
+    /** Every frame: the transport and the status line, and the panel's settings and readings. */
     void sync() {
-        long now = controls.version();
-        if (now == seen) {
-            return;
-        }
-        seen = now;
         boolean isPaused = controls.paused();
-        if (isPaused != paused) {
+        if (paused == null || isPaused != paused) {
             paused = isPaused;
             pause.label(isPaused ? "Resume" : "Pause");
         }
-        parameters.sync();
-        settings.sync();
+        String text = String.format("%s  ·  %.2f s simulated", isPaused ? "Paused" : "Running", metrics.simTime);
+        if (!isPaused && !metrics.fixedWork && metrics.keepingUp < 0.95) {
+            text += "  ·  slower than asked (" + ControlPanel.percent(metrics.keepingUp) + ")";
+        }
+        statusText = Entry.set(status, statusText, text);
+        panel.sync();
     }
 }

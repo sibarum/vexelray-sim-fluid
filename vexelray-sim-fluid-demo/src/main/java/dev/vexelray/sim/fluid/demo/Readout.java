@@ -55,9 +55,16 @@ final class Readout {
             children[line.ordinal() + 1] = node;
         }
         panel.children(children);
-        set(Line.KEYS, "1-8 view · N scenario · R reset\nspace pause · . step · C stability · = - speed\n"
-                + "B budget mode · A auto · [ ] budget · ; ' frame time\nI display: hold, interpolate, live · Z X keyframe size · E ease swap\n"
-                + "3D: drag to turn · D surface or flat state · V slice or depth integrated (flat)");
+        set(Line.KEYS, "Keys\n"
+                + "space pause · . one step · R reset\n"
+                + "N next scenario · 1-8 colour view\n"
+                + "= - playback speed · C time step safe or too big\n"
+                + "3D: drag to turn · wheel to zoom\n"
+                + "3D: D surface or flat · V slice or see-through\n"
+                + "Fixed work: B on or off · A automatic\n"
+                + "Fixed work: [ ] work · ; ' frame time aimed for\n"
+                + "Fixed work: Z X steps per picture · E smooth the jump\n"
+                + "Fixed work: I hold, guess or live between pictures");
     }
 
     Node node() {

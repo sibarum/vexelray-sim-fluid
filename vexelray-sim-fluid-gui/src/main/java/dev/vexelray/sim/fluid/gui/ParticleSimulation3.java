@@ -24,20 +24,128 @@ import java.util.Map;
  * convection or budgeting yet.
  *
  * <p>Runs on the GPU when there is one and dispatch by dispatch on the CPU otherwise, through the same buffers, though the
- * CPU is far too slow to watch. Owning-thread only.
+ * CPU is far too slow to watch.
+ *
+ * <p>Owning-thread only, but for making one. That is slow — a few dozen kernels lowered, validated and compiled, and
+ * every buffer allocated — so it is done in two halves: {@link #prepare} on any thread, then {@link
+ * #ParticleSimulation3(Prepared)} on the owning one, which only clears the buffers and records the step. The other
+ * constructors do both at once, for a caller with no frame to keep, such as a test.
  */
 public final class ParticleSimulation3 implements AutoCloseable {
 
     private final Flip3Step step;
     private final boolean tension;
     private final Accelerator accelerator;
-    private final Map<String, ResidentBuffer> buffers = new LinkedHashMap<>();
+    private final Map<String, ResidentBuffer> buffers;
     private final List<KernelHandle> handles = new ArrayList<>();
     private final DispatchSequence stepSequence;
     private final DispatchSequence lodSequence;
     private long steps;
     /** The smallest mass a particle was loaded with: what a particle that is not being thinned out holds at least. */
     private float nominalMass;
+
+    /** A pass, registered: its kernel, the buffers it runs against in binding order, and its invocations. */
+    private record Registered(KernelHandle handle, List<ResidentBuffer> buffers, int invocations) {}
+
+    /**
+     * A simulation as far as it can be made off the owning thread: every kernel registered — lowered, validated and its
+     * pipeline compiled — and every buffer allocated, but nothing submitted, so nothing waited for. Made by {@link
+     * ParticleSimulation3#prepare} on any thread, and handed to the owning thread for {@link
+     * ParticleSimulation3#ParticleSimulation3(Prepared)} to finish.
+     *
+     * <p>One that is never finished is {@linkplain #close closed} instead, on the owning thread, which frees what it made.
+     */
+    public static final class Prepared implements AutoCloseable {
+        private final Flip3Step step;
+        private final boolean tension;
+        private final Accelerator accelerator;
+        private final Map<String, ResidentBuffer> buffers;
+        private final List<Registered> stepPasses;
+        private final List<Registered> lodPasses;
+        private boolean taken;
+
+        private Prepared(Flip3Step step, boolean tension, Accelerator accelerator, Map<String, ResidentBuffer> buffers,
+                List<Registered> stepPasses, List<Registered> lodPasses) {
+            this.step = step;
+            this.tension = tension;
+            this.accelerator = accelerator;
+            this.buffers = buffers;
+            this.stepPasses = stepPasses;
+            this.lodPasses = lodPasses;
+        }
+
+        public int nx() {
+            return step.nx;
+        }
+
+        public int particles() {
+            return step.particles;
+        }
+
+        public boolean tension() {
+            return tension;
+        }
+
+        /** The simulation it becomes has it now; a second simulation cannot be made from it. */
+        private void take() {
+            if (taken) {
+                throw new IllegalStateException("this preparation has already been made a simulation, or closed");
+            }
+            taken = true;
+        }
+
+        /** Frees what it made, unless a simulation has been made from it, which frees it in its turn. Idempotent. */
+        @Override
+        public void close() {
+            if (!taken) {
+                taken = true;
+                accelerator.close();
+            }
+        }
+    }
+
+    /**
+     * Makes everything for a simulation that does not need the owning thread, on whichever thread calls it: a box of
+     * {@code nx × ny × nz} nodes holding exactly {@code particles} particles, on {@code context} — an application's own
+     * device, so that a picture of the state reads {@link #vkBuffer the buffers the kernels wrote} where they are.
+     */
+    public static Prepared prepare(GpuContext context, int nx, int ny, int nz, int particles, boolean tension) {
+        return prepare(Accelerator.on(context), nx, ny, nz, particles, tension);
+    }
+
+    /** As above, on a device of its own, made on first use. */
+    public static Prepared prepare(int nx, int ny, int nz, int particles, boolean tension) {
+        return prepare(new Accelerator(), nx, ny, nz, particles, tension);
+    }
+
+    private static Prepared prepare(Accelerator accelerator, int nx, int ny, int nz, int particles, boolean tension) {
+        Flip3Step step = new Flip3Step(nx, ny, nz, particles, tension);
+        Map<String, ResidentBuffer> buffers = new LinkedHashMap<>();
+        step.buffers().forEach((name, spec) -> buffers.put(name, accelerator.allocate(spec.element(), spec.length())));
+        List<Pass> lod = new ArrayList<>(step.lodTarget());
+        lod.addAll(step.lod());
+        return new Prepared(step, tension, accelerator, buffers, register(accelerator, buffers, step.step()),
+                register(accelerator, buffers, lod));
+    }
+
+    /** Each pass's kernel registered against the buffers it binds. */
+    private static List<Registered> register(Accelerator accelerator, Map<String, ResidentBuffer> buffers,
+            List<Pass> passes) {
+        List<Registered> registered = new ArrayList<>();
+        for (Pass pass : passes) {
+            List<ResidentBuffer> bound = pass.buffers().stream().map(buffers::get).toList();
+            List<KernelColumn> columns = new ArrayList<>();
+            for (int k = 0; k < pass.bindings().size(); k++) {
+                var binding = pass.bindings().get(k);
+                columns.add(KernelColumn.output(binding.name(), binding.binding(), binding.element())
+                        .withLength(bound.get(k).elements()));
+            }
+            KernelHandle handle = accelerator.register(new KernelSpec(pass.kernel(), columns)
+                    .withWorkgroupSize(Scatter.WORKGROUP).withSubgroupSize(Scatter.SUBGROUP)).orElseThrow();
+            registered.add(new Registered(handle, bound, pass.invocations()));
+        }
+        return registered;
+    }
 
     /**
      * A box of {@code nx × ny × nz} nodes holding exactly {@code particles} particles, on a device of its own —
@@ -49,7 +157,7 @@ public final class ParticleSimulation3 implements AutoCloseable {
 
     /** As above, and with surface tension's passes if {@code tension}; its strength is {@code σ} in the parameters. */
     public ParticleSimulation3(int nx, int ny, int nz, int particles, boolean tension) {
-        this(new Accelerator(), nx, ny, nz, particles, tension);
+        this(prepare(nx, ny, nz, particles, tension));
     }
 
     /**
@@ -58,7 +166,7 @@ public final class ParticleSimulation3 implements AutoCloseable {
      * open by {@link #close()}, which frees only what this made; close this first, then the context.
      *
      * <p>Every call on this class is then on the context's thread, which for an application is the main one:
-     * the device's queue is shared with whatever draws.
+     * the device's queue is shared with whatever draws. An application should {@link #prepare} elsewhere instead.
      */
     public ParticleSimulation3(GpuContext context, int nx, int ny, int nz, int particles) {
         this(context, nx, ny, nz, particles, false);
@@ -66,39 +174,30 @@ public final class ParticleSimulation3 implements AutoCloseable {
 
     /** As above, and with surface tension's passes if {@code tension}. */
     public ParticleSimulation3(GpuContext context, int nx, int ny, int nz, int particles, boolean tension) {
-        this(Accelerator.on(context), nx, ny, nz, particles, tension);
+        this(prepare(context, nx, ny, nz, particles, tension));
     }
 
-    private ParticleSimulation3(Accelerator accelerator, int nx, int ny, int nz, int particles, boolean tension) {
-        this.accelerator = accelerator;
-        this.tension = tension;
-        step = new Flip3Step(nx, ny, nz, particles, tension);
-        step.buffers().forEach((name, spec) -> {
-            ResidentBuffer buffer = accelerator.allocate(spec.element(), spec.length());
-            buffer.write(new int[spec.length()]);
-            buffers.put(name, buffer);
-        });
-        stepSequence = sequence(step.step());
-        List<Pass> lod = new ArrayList<>(step.lodTarget());
-        lod.addAll(step.lod());
-        lodSequence = sequence(lod);
+    /**
+     * Finishes what {@link #prepare} made, on the owning thread: the buffers cleared, in one submission, and the step and
+     * the level of detail each recorded as one. The preparation is this simulation's from then on.
+     */
+    public ParticleSimulation3(Prepared prepared) {
+        prepared.take();
+        accelerator = prepared.accelerator;
+        tension = prepared.tension;
+        step = prepared.step;
+        buffers = prepared.buffers;
+        accelerator.clear(List.copyOf(buffers.values()));
+        stepSequence = sequence(prepared.stepPasses);
+        lodSequence = sequence(prepared.lodPasses);
     }
 
     /** The passes as one recorded submission. */
-    private DispatchSequence sequence(List<Pass> passes) {
+    private DispatchSequence sequence(List<Registered> passes) {
         DispatchSequence.Builder builder = accelerator.sequence();
-        for (Pass pass : passes) {
-            List<ResidentBuffer> bound = pass.buffers().stream().map(buffers::get).toList();
-            List<KernelColumn> columns = new ArrayList<>();
-            for (int k = 0; k < pass.bindings().size(); k++) {
-                var binding = pass.bindings().get(k);
-                columns.add(KernelColumn.output(binding.name(), binding.binding(), binding.element())
-                        .withLength(bound.get(k).elements()));
-            }
-            KernelHandle handle = accelerator.register(new KernelSpec(pass.kernel(), columns)
-                    .withWorkgroupSize(Scatter.WORKGROUP).withSubgroupSize(Scatter.SUBGROUP)).orElseThrow();
-            handles.add(handle);
-            builder.dispatch(handle, bound, pass.invocations());
+        for (Registered pass : passes) {
+            handles.add(pass.handle());
+            builder.dispatch(pass.handle(), pass.buffers(), pass.invocations());
         }
         return builder.build();
     }

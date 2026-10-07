@@ -11,6 +11,7 @@ import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
 import dev.vexelray.gui.core.layout.LayoutEnums.Direction;
 import dev.vexelray.gui.core.layout.Length;
+import dev.vexelray.gui.core.layout.Rect;
 import dev.vexelray.gui.core.style.Role;
 import dev.vexelray.sim.fluid.gui.DebugView;
 import dev.vexelray.sim.fluid.gui.FluidView3;
@@ -29,13 +30,18 @@ import java.util.Set;
  */
 final class FluidDemoWiring extends Wiring {
 
-    /** Every setting is a key the framework accepts as {@code --key=value}, and reads from the settings file. */
+    /** Every setting is a key the framework accepts as {@code --key=value}, for that launch only. */
     private static final AppInfo INFO = new AppInfo(FluidDemo.APP, FluidDemo.TITLE, FluidDemo.W, FluidDemo.H,
             Set.copyOf(Controls.keys()));
 
-    /** The view's box and the target drawn into it: square, so a cell is square on screen. */
-    private static final Length VIEW_SIDE = Length.dp(620);
+    /** The target drawn into the view, which is square, so a cell is square on screen. */
     private static final int VIEW_PIXELS = 1024;
+    /**
+     * What the dock is wanted at, in widths of the list: enough for its tabs and its transport. The view takes
+     * what that leaves, but never less than {@link #VIEW_MIN_SHARE} of the room, so neither shrinks to nothing.
+     */
+    private static final float DOCK_LISTS = 1.8f;
+    private static final float VIEW_MIN_SHARE = 0.5f;
     /** The surface is marched, not coloured per cell, so its target is smaller than the flat view's. */
     private static final int SURFACE_PIXELS = 768;
 
@@ -43,11 +49,15 @@ final class FluidDemoWiring extends Wiring {
     private static final String NONE = "\u0000none";
 
     private Controls controls;
+    private final Metrics metrics = new Metrics();
     private Readout readout;
     private DebugView view;
     private FluidView3 surface;
     private Sidebar sidebar;
     private Dock dock;
+    private Node canvas;
+    private Node body;
+    private float side = -1f;
 
     @Override
     public AppInfo info() {
@@ -56,13 +66,16 @@ final class FluidDemoWiring extends Wiring {
 
     @Override
     public void config(Shell shell) {
-        shell.appearance(Appearance.of(Look.THEME, Length.em(56), Length.em(36)));
+        shell.appearance(Appearance.of(Look.THEME, Length.em(60), Length.em(36)));
     }
 
     @Override
     public void model(Shell shell) {
-        // A flag, a property, the settings file, then the default: the framework's one precedence, read through it.
-        controls = new Controls(shell.settings(), key -> {
+        // Nothing is remembered between runs, so that starting again always puts a setting right. What an older build
+        // left in the settings file goes first, since the framework would read it after the flags; then a flag, a
+        // property or the default, the framework's precedence with nothing left in the file for it to find.
+        Controls.forget(shell.settings());
+        controls = new Controls(key -> {
             String value = shell.setting(key, NONE);
             return NONE.equals(value) ? null : value;
         });
@@ -71,8 +84,8 @@ final class FluidDemoWiring extends Wiring {
     @Override
     public void tree(Shell shell) {
         Gui gui = shell.gui();
-        Node canvas = gui.box()
-                .width(VIEW_SIDE).height(VIEW_SIDE)
+        // Its size is the one thing the layout cannot say, a square being no flex: fit() sets it from the body.
+        canvas = gui.box()
                 .corner(Look.CORNER)
                 .clip(true)
                 .background(gui.theme().color(Role.WELL));
@@ -84,13 +97,15 @@ final class FluidDemoWiring extends Wiring {
         surface.attach(gui);
         readout = new Readout(gui);
         sidebar = new Sidebar(gui, controls);
-        dock = new Dock(gui, controls, readout);
+        dock = new Dock(gui, controls, metrics, readout);
 
-        Node body = gui.row()
+        body = gui.row()
                 .width(Length.FILL).height(Length.grow(1f))
                 .gap(Look.GAP).padding(Look.WIDE, Look.WIDE)
-                .alignItems(AlignItems.START)
+                .alignItems(AlignItems.STRETCH)
                 .children(sidebar.node(), canvas, dock.node());
+        gui.onResize(body, layout -> fit());
+        gui.onResize(sidebar.node(), layout -> fit());
         gui.root().direction(Direction.COLUMN)
                 .background(gui.theme().color(Role.PAGE))
                 .children(shell.titleBar().node(), body);
@@ -99,19 +114,42 @@ final class FluidDemoWiring extends Wiring {
 
     @Override
     public void attach(Shell shell) {
-        Session session = shell.disposer().register(new Session(shell.app(), controls, view, surface, readout));
-        // The pages are read back from the controls before the frame acts on them; the file is written last, at most twice a
-        // second, and once more as the window closes.
+        Session session = shell.disposer().register(new Session(shell.app(), controls, view, surface, readout,
+                metrics));
+        // The panels are read back from the controls, and the last frame's readings put beside them, before the frame
+        // acts on what was asked.
         shell.hooks().add(FrameStage.APP, () -> {
             sidebar.sync();
             dock.sync();
         });
         shell.hooks().add(FrameStage.APP, session::frame);
-        shell.hooks().add(FrameStage.APP, () -> controls.flush(false));
-        shell.disposer().register(() -> controls.flush(true));
         shell.deadline(session::nanosUntilNextFrame);
         // Off unless -Dautomation or --automation asks for it, and loopback-only when it is.
         shell.disposer().register(Driver.open(shell));
+    }
+
+    /**
+     * Makes the view the largest square the window allows: as tall as the body, but leaving the dock the width it is
+     * wanted at. The dock is the flexible one and takes what the square does not.
+     *
+     * <p>The square is a percentage of the body's content box in each axis, so it is exact at any zoom and density
+     * with no unit conversion; and it is asked for again when the body moves or the list is resized, because zoom
+     * changes the second and not the first. Nothing it sets changes either, so it cannot feed itself.
+     */
+    private void fit() {
+        Rect room = body.layout().content();
+        float list = sidebar.node().layout().rect().w();
+        if (room.w() <= 0f || room.h() <= 0f || list <= 0f) {
+            return;
+        }
+        // The list is a fixed number of ems wide, so it stands in for the em: the dock's want follows zoom and density.
+        float free = room.w() - list;
+        float s = Math.max(1f, Math.min(room.h(), Math.max(VIEW_MIN_SHARE * free, free - DOCK_LISTS * list)));
+        if (side > 0f && Math.abs(s - side) < 0.5f) {
+            return;
+        }
+        side = s;
+        canvas.width(Length.percent(100f * s / room.w())).height(Length.percent(100f * s / room.h()));
     }
 
     /** Every control is one key, and every key only records a request; see {@link Controls}. */

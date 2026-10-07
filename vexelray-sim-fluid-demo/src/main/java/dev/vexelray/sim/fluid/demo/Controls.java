@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.function.UnaryOperator;
 
 /**
- * What the user has asked for, held until the next frame takes it, and remembered between runs.
+ * What the user has asked for, held until the next frame takes it — for this run only.
  *
  * <p>Key and widget handlers run on worker threads and the simulation lives on the main thread, so a handler only
  * records a request here and the frame acts on it: no handler touches the GPU, and no request is acted on halfway
@@ -20,13 +20,13 @@ import java.util.function.UnaryOperator;
  * <p>Handlers run on a pool, so two changes in quick succession can run at once. Every read-modify-write is
  * therefore synchronized: volatile alone lets both read the same value, and one of them is lost.
  *
- * <h2>Remembering</h2>
+ * <h2>Nothing is remembered</h2>
  *
- * Every setting is written to the application's {@link Settings} as it changes, and read back at start through the
- * framework's own precedence — a {@code --key=value} flag, a {@code -Dkey=value} property, the file, the default — which
- * is what the {@code read} function given to the constructor is. Only what the user changed is written, so a setting
- * they never touched follows the default when the default improves. The file is written by {@link #flush}, which the
- * frame calls; {@link #restoreAll} removes every key this class owns and leaves the window's placement alone.
+ * Every launch starts from the defaults. A setting that has gone wrong — a slider left somewhere the simulation cannot
+ * take, a mode that misbehaves — is then always fixed by starting the application again, which a remembered setting would
+ * carry into the next run. What a launch can still say is given on its command line: a {@code --key=value} flag or a
+ * {@code -Dkey=value} property, read once at start by the {@code read} function given to the constructor, and gone the
+ * next time the application starts without it.
  *
  * <p>The keys are the names below: {@code scenario}, {@code speed}, {@code unstable}, the budgeted-mode settings, and per
  * scenario {@code <scenario>.view} and {@code <scenario>.<knob>}.
@@ -83,11 +83,9 @@ final class Controls {
 
     /** How long a change to something that restarts the scenario waits for the next one, so dragging a slider restarts it once. */
     private static final long RESET_SETTLE_NANOS = 300_000_000L;
-    /** The file is written at most this often. */
-    private static final long SAVE_EVERY_NANOS = 500_000_000L;
 
     // The defaults, in one place: a reset and a first run are the same thing.
-    private static final Scenario DEFAULT_SCENARIO = Scenario.DAM_BREAK;
+    private static final Scenario DEFAULT_SCENARIO = Scenario.DAM_BREAK_3D;
     private static final double DEFAULT_SPEED = 1;
     private static final double DEFAULT_STEP = 1;
     private static final double DEFAULT_POWER = 25;
@@ -95,10 +93,6 @@ final class Controls {
     private static final long DEFAULT_BUDGET = 400_000;
     private static final int DEFAULT_KEYFRAME = 100;
     private static final double DEFAULT_TARGET = 1000.0 / 60;
-
-    private final Settings settings;
-    private boolean dirty;
-    private long lastSave;
 
     private volatile Scenario scenario;
     private final Map<Scenario, View> views = new EnumMap<>(Scenario.class);
@@ -124,17 +118,15 @@ final class Controls {
     private volatile long version;
 
     /**
-     * @param settings where changes are written
-     * @param read     a setting as the framework resolves it — flag, property, file — or null where there is none; the
-     *                 constructor falls back to the default for a missing or malformed one
+     * @param read a setting given at launch — a flag or a property — or null where there is none; the constructor falls
+     *             back to the default for a missing or malformed one
      */
-    Controls(Settings settings, UnaryOperator<String> read) {
-        this.settings = settings;
+    Controls(UnaryOperator<String> read) {
         resetNotBefore = System.nanoTime();
         load(read);
     }
 
-    /** Every setting, from where they are remembered; a missing or malformed one is its default. */
+    /** Every setting, from the launch's flags; a missing or malformed one is its default. */
     private void load(UnaryOperator<String> read) {
         scenario = choose(Scenario.values(), read.apply("scenario"), DEFAULT_SCENARIO);
         for (Scenario s : Scenario.values()) {
@@ -171,7 +163,7 @@ final class Controls {
             return;
         }
         scenario = next;
-        remember("scenario", next.name());
+        changed();
         requestReset(false);
     }
 
@@ -200,7 +192,7 @@ final class Controls {
             values.put(p.knob(), p.knob() == knob ? chosen : before.get(p.knob()));
         }
         tunings.put(scenario, new Scenario.Tuning(values));
-        remember(knobKey(scenario, knob), Double.toString(chosen));
+        changed();
         if (knob.resets()) {
             requestReset(true);
         }
@@ -223,28 +215,15 @@ final class Controls {
 
     /** The scenario's knobs and its view, as shipped. */
     synchronized void restoreScenario() {
-        forget(scenario);
         load(scenario);
         requestReset(false);
     }
 
-    /** Every setting as shipped, and the scenario started again. The window's placement is not a setting of this class. */
+    /** Every setting as shipped, and the scenario started again: what starting the application again does, without it. */
     synchronized void restoreAll() {
-        for (String key : keys()) {
-            settings.remove(key);
-        }
-        dirty = true;
         // Not through the framework's precedence: a flag given at launch does not survive being told to go back to defaults.
         load(key -> null);
         requestReset(false);
-    }
-
-    private void forget(Scenario s) {
-        settings.remove(s.name() + ".view");
-        for (Scenario.Param p : s.params()) {
-            settings.remove(knobKey(s, p.knob()));
-        }
-        dirty = true;
     }
 
     /** One scenario's view and knobs from their defaults, the rest untouched. */
@@ -256,9 +235,13 @@ final class Controls {
 
     // --- what the keys and widgets call -------------------------------------------------------------------
 
+    /** The view, if the running scenario has it; a key for one it does not is ignored. */
     synchronized void show(View view) {
+        if (!scenario.views().contains(view)) {
+            return;
+        }
         views.put(scenario, view);
-        remember(scenario.name() + ".view", view.name());
+        changed();
     }
 
     synchronized void togglePause() {
@@ -284,7 +267,7 @@ final class Controls {
     /** The stable Courant number, or the one past the limit that shows the scheme failing. */
     synchronized void stable(boolean stable) {
         unstable = !stable;
-        remember("unstable", Boolean.toString(unstable));
+        changed();
     }
 
     /** Work per tick, or the ordinary real-time stepping; a change of mode starts the scenario again. */
@@ -294,7 +277,7 @@ final class Controls {
 
     synchronized void budgeted(boolean value) {
         budgeted = value;
-        remember("budgeted", Boolean.toString(value));
+        changed();
         requestReset(false);
     }
 
@@ -309,9 +292,8 @@ final class Controls {
 
     synchronized void budget(long value) {
         auto = false;
-        remember("auto", "false");
         budget = Math.min(Math.max(value, LEAST_BUDGET), MOST_BUDGET);
-        remember("budget", Long.toString(budget));
+        changed();
     }
 
     /** The controller on or off. */
@@ -321,7 +303,7 @@ final class Controls {
 
     synchronized void auto(boolean value) {
         auto = value;
-        remember("auto", Boolean.toString(value));
+        changed();
     }
 
     /** The tick time the controller aims for, halved or doubled, between 2 and 250 ms. */
@@ -335,7 +317,7 @@ final class Controls {
 
     synchronized void target(double millis) {
         targetMillis = clamp(millis, SHORTEST_TARGET, LONGEST_TARGET);
-        remember("target", Double.toString(targetMillis));
+        changed();
     }
 
     /** What budgeted mode draws between keyframes; see {@link Display}. */
@@ -345,7 +327,7 @@ final class Controls {
 
     synchronized void display(Display value) {
         display = value;
-        remember("display", value.name());
+        changed();
     }
 
     /** Steps in a keyframe, halved or doubled, between 25 and 1600: a longer one is more to draw between. */
@@ -359,7 +341,7 @@ final class Controls {
 
     synchronized void keyframe(int steps) {
         keyframeSteps = Math.min(Math.max(steps, SHORTEST_KEYFRAME), LONGEST_KEYFRAME);
-        remember("keyframe", Integer.toString(keyframeSteps));
+        changed();
     }
 
     /** Easing the jump when a keyframe lands, on or off. */
@@ -369,7 +351,7 @@ final class Controls {
 
     synchronized void ease(boolean value) {
         ease = value;
-        remember("ease", Boolean.toString(value));
+        changed();
     }
 
     /** A three-dimensional scenario drawn as a slice through its middle, or integrated along the depth. */
@@ -379,7 +361,7 @@ final class Controls {
 
     synchronized void slice(boolean value) {
         slice = value;
-        remember("slice", Boolean.toString(value));
+        changed();
     }
 
     /** A three-dimensional scenario drawn as a lit surface you can orbit, or as the flat picture of its state. */
@@ -389,12 +371,12 @@ final class Controls {
 
     synchronized void volume(boolean value) {
         volume = value;
-        remember("volume", Boolean.toString(value));
+        changed();
     }
 
     /**
      * While the controller runs, the manual budget follows what it chose, so turning it off starts from there. Not
-     * remembered: it is the controller's, not the user's.
+     * a change of the user's: it is the controller's.
      */
     synchronized void adopt(long chosen) {
         if (auto && chosen != budget) {
@@ -413,23 +395,23 @@ final class Controls {
 
     synchronized void stepScale(double value) {
         stepScale = clamp(value, SMALLEST_STEP, LARGEST_STEP);
-        remember("stepsize", Double.toString(stepScale));
+        changed();
     }
 
     /** Holds 3D water to this many particles a cell, rounded to a power of two: the level the slots merge or split to. */
     synchronized void particles(double value) {
         particles = Math.pow(2, Math.round(Math.log(clamp(value, FEWEST_PARTICLES, MOST_PARTICLES)) / Math.log(2)));
-        remember("particles", Double.toString(particles));
+        changed();
     }
 
     synchronized void power(double value) {
         power = clamp(value, LEAST_POWER, MOST_POWER);
-        remember("power", Double.toString(power));
+        changed();
     }
 
     synchronized void speed(double value) {
         timeScale = clamp(value, SLOWEST, FASTEST);
-        remember("speed", Double.toString(timeScale));
+        changed();
     }
 
     // --- what the frame reads ----------------------------------------------------------------------------
@@ -531,21 +513,8 @@ final class Controls {
         return asked;
     }
 
-    // --- remembering --------------------------------------------------------------------------------------
-
-    /** Writes the settings file if anything changed, at most twice a second unless {@code force}d. */
-    synchronized void flush(boolean force) {
-        long now = System.nanoTime();
-        if (dirty && (force || now - lastSave >= SAVE_EVERY_NANOS)) {
-            settings.save();
-            dirty = false;
-            lastSave = now;
-        }
-    }
-
-    private void remember(String key, String value) {
-        settings.putString(key, value);
-        dirty = true;
+    /** Counts the change, so whoever shows the settings reads them again. */
+    private void changed() {
         version++;
     }
 
@@ -560,7 +529,29 @@ final class Controls {
         return scenario.name() + "." + knob.key();
     }
 
-    /** Every key this class writes, for the framework's list of the flags it accepts and for {@link #restoreAll}. */
+    /**
+     * Takes out of the settings file every key this class once wrote there, when settings were remembered between runs,
+     * and saves it if that changed anything. Without it a value left by an older build would be read back as though given
+     * at launch, since the framework's precedence reads the file after the flags; with it the file is left holding only
+     * what the framework keeps for itself, such as where the window was.
+     *
+     * @return how many keys were taken out
+     */
+    static int forget(Settings settings) {
+        int removed = 0;
+        for (String key : keys()) {
+            if (settings.has(key)) {
+                settings.remove(key);
+                removed++;
+            }
+        }
+        if (removed > 0) {
+            settings.save();
+        }
+        return removed;
+    }
+
+    /** Every key this class reads, for the framework's list of the flags it accepts. */
     static List<String> keys() {
         List<String> keys = new ArrayList<>(List.of("scenario", "speed", "stepsize", "power", "particles", "unstable", "budgeted", "auto", "budget", "target",
                 "keyframe", "display", "ease", "slice", "volume"));

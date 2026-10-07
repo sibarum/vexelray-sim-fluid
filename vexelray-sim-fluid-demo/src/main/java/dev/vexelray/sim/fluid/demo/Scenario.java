@@ -2,6 +2,7 @@ package dev.vexelray.sim.fluid.demo;
 
 import dev.vexelray.sim.fluid.gui.View;
 
+import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -182,10 +183,10 @@ enum Scenario {
      * surface off, the flat picture of its state: its depth seen through the box, or a slice through its middle.
      */
     DAM_BREAK_3D("3D dam break", Group.THREE_DIMENSIONS, View.DEPTH,
-            "The dam break in a box of\nits own: the water as a surface\nyou turn by dragging. D shows\nits state flat, V a slice.",
+            "The dam break in three\ndimensions. Drag the picture\nto turn it; scroll to zoom.",
             param(Knob.GRAVITY, 0.05, 2, 1),
             param(Knob.COLUMN_WIDTH, 6, 28, 16),
-            param(Knob.RESOLUTION, 32, 96, 48),
+            param(Knob.RESOLUTION, 32, 96, 40),
             param(Knob.TENSION, 0, 10, 0)) {
         @Override
         int dimensions() {
@@ -315,6 +316,26 @@ enum Scenario {
     /** A few short lines on what happens. */
     String about() {
         return about;
+    }
+
+    /**
+     * The views that mean something here, in the order the panel offers them. Which fluid is where needs two fluids, or
+     * foam; temperature needs heat. Three dimensions are seen flat as a thickness or a slice, where only the density and
+     * the speed say anything: the wave-speed views rebuild a depth from what is not one.
+     */
+    List<View> views() {
+        if (dimensions() == 3) {
+            return List.of(View.DEPTH, View.SPEED);
+        }
+        List<View> views = new ArrayList<>(List.of(View.DEPTH, View.SPEED, View.MOMENTUM_X, View.MOMENTUM_Y,
+                View.FROUDE, View.COURANT));
+        if (param(Knob.SECOND_DENSITY) != null || foam()) {
+            views.add(View.MATERIAL);
+        }
+        if (heat()) {
+            views.add(View.TEMPERATURE);
+        }
+        return List.copyOf(views);
     }
 
     /** The knobs, in the order the panel shows them. */

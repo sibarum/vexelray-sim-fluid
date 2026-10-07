@@ -5,7 +5,6 @@ import dev.vexelray.sim.fluid.gui.View;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.function.UnaryOperator;
 
@@ -13,107 +12,79 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** The settings survive a restart, a malformed one is a default, and defaults can be restored. */
+/** Every start is the defaults; a launch flag still says something for that launch; and defaults can be restored. */
 class ControlsTest {
 
     @TempDir
     Path dir;
 
-    private Settings open() {
-        return Settings.at(dir.resolve("settings.properties"));
-    }
+    /** No flags and no properties: what an ordinary launch reads. */
+    private static final UnaryOperator<String> NOTHING = key -> null;
 
-    /** What the framework resolver does when no flag or property is given: the file, or nothing. */
-    private static UnaryOperator<String> fileOnly(Settings settings) {
-        return key -> settings.has(key) ? settings.getString(key, null) : null;
-    }
-
-    private Controls start() {
-        Settings settings = open();
-        return new Controls(settings, fileOnly(settings));
+    private static Controls start() {
+        return new Controls(NOTHING);
     }
 
     @Test
-    void startsAsShippedWithNothingRemembered() {
+    void startsAsShipped() {
         Controls c = start();
-        assertEquals(Scenario.DAM_BREAK, c.scenario());
+        assertEquals(Scenario.DAM_BREAK_3D, c.scenario());
         assertEquals(1, c.timeScale());
         assertEquals(Controls.STABLE_COURANT, c.courant());
         assertFalse(c.budgeted());
         assertTrue(c.auto());
-        assertEquals(Scenario.DAM_BREAK.view(), c.view());
-        assertEquals(Scenario.DAM_BREAK.defaults(), c.tuning());
+        assertTrue(c.volume(), "the water of a 3D scenario is a surface, and the flat state its alternative");
+        assertEquals(Scenario.DAM_BREAK_3D.view(), c.view());
+        assertEquals(Scenario.DAM_BREAK_3D.defaults(), c.tuning());
     }
 
     @Test
-    void theWaterOfA3dScenarioIsASurfaceUnlessSomeoneHasTurnedItOff() {
-        assertTrue(start().volume(), "with nothing remembered the surface is the picture, and the flat state its alternative");
-    }
-
-    @Test
-    void aSurfaceTurnedOffStaysOffAfterARestart() {
-        Controls first = start();
-        first.toggleVolume();
-        assertFalse(first.volume());
-        first.flush(true);
-
-        assertFalse(start().volume(), "a choice made is the user's, and a new default does not overrule it");
-    }
-
-    @Test
-    void whatWasChangedComesBackAfterARestart() {
+    void nothingChangedSurvivesAStart() {
         Controls first = start();
         first.select(Scenario.BOILING);
         first.tune(Knob.STONES, 0.4);
-        first.tune(Knob.GRAVITY, 0.5);
         first.show(View.TEMPERATURE);
         first.speed(4);
         first.stable(false);
         first.budget(1 << 20);
-        first.display(Controls.Display.LIVE);
-        first.ease(false);
-        first.flush(true);
+        first.toggleVolume();
 
         Controls second = start();
-        assertEquals(Scenario.BOILING, second.scenario());
-        assertEquals(0.4, second.tuning().get(Knob.STONES));
-        assertEquals(0.5, second.tuning().get(Knob.GRAVITY));
-        assertEquals(View.TEMPERATURE, second.view());
-        assertEquals(4, second.timeScale());
-        assertEquals(Controls.UNSTABLE_COURANT, second.courant());
-        assertEquals(1 << 20, second.budget());
-        assertFalse(second.auto(), "setting the budget by hand turns the controller off, and that is remembered");
-        assertEquals(Controls.Display.LIVE, second.display());
-        assertFalse(second.ease());
-        // A scenario that was not touched keeps its own.
-        assertEquals(Scenario.CONVECTION.defaults(), second.tuning(Scenario.CONVECTION));
+        assertEquals(Scenario.DAM_BREAK_3D, second.scenario());
+        assertEquals(Scenario.BOILING.defaults(), second.tuning(Scenario.BOILING));
+        assertEquals(Scenario.BOILING.view(), second.view(Scenario.BOILING));
+        assertEquals(1, second.timeScale());
+        assertEquals(Controls.STABLE_COURANT, second.courant());
+        assertTrue(second.auto());
+        assertTrue(second.volume());
     }
 
     @Test
-    void nothingIsWrittenUntilSomethingChangesAndOnlyThatIsWritten() {
-        Controls c = start();
-        c.flush(true);
-        assertFalse(Files.exists(dir.resolve("settings.properties")));
-        c.speed(2);
-        c.flush(true);
-        Settings written = open();
-        assertTrue(written.has("speed"));
-        assertFalse(written.has("unstable"));
-        assertFalse(written.has("scenario"));
+    void aFlagGivenAtLaunchIsRead() {
+        Controls c = new Controls(key -> switch (key) {
+            case "speed" -> "8";
+            case "scenario" -> "CONVECTION";
+            case "CONVECTION.gravity" -> "0.5";
+            default -> null;
+        });
+        assertEquals(8, c.timeScale());
+        assertEquals(Scenario.CONVECTION, c.scenario());
+        assertEquals(0.5, c.tuning().get(Knob.GRAVITY));
     }
 
     @Test
-    void aMalformedOrOutOfRangeValueIsADefaultOrClamped() {
-        Settings settings = open();
-        settings.putString("speed", "fast");
-        settings.putString("scenario", "NOT_A_SCENARIO");
-        settings.putString("budgeted", "yes");
-        settings.putString("budget", "1e30");
-        settings.putString("DAM_BREAK.gravity", "NaN");
-        settings.putString("DAM_BREAK.column", "5000");
-        Controls c = new Controls(settings, fileOnly(settings));
+    void aMalformedOrOutOfRangeFlagIsADefaultOrClamped() {
+        Controls c = new Controls(key -> switch (key) {
+            case "speed" -> "fast";
+            case "scenario" -> "NOT_A_SCENARIO";
+            case "budgeted" -> "yes";
+            case "budget" -> "1e30";
+            case "DAM_BREAK.gravity" -> "NaN";
+            case "DAM_BREAK.column" -> "5000";
+            default -> null;
+        });
         assertEquals(1, c.timeScale());
-        assertEquals(Scenario.DAM_BREAK, c.scenario());
+        assertEquals(Scenario.DAM_BREAK_3D, c.scenario());
         assertFalse(c.budgeted());
         assertEquals(Controls.MOST_BUDGET, c.budget());
         assertEquals(1, c.tuning(Scenario.DAM_BREAK).get(Knob.GRAVITY));
@@ -121,59 +92,38 @@ class ControlsTest {
     }
 
     @Test
-    void aFlagBeatsTheFileButIsNotWrittenToIt() {
-        Settings settings = open();
-        settings.putString("speed", "2");
-        settings.save();
-        Controls c = new Controls(settings, key -> key.equals("speed") ? "8" : fileOnly(settings).apply(key));
-        assertEquals(8, c.timeScale());
-        c.speed(8);
-        c.flush(true);
-        // Changing it from the panel is a choice, and is written; merely launching with the flag was not.
-        assertEquals("8.0", open().getString("speed", null));
-    }
+    void whatAnOlderBuildRememberedIsForgottenAndTheWindowIsLeftAlone() {
+        Path file = dir.resolve("settings.properties");
+        Settings old = Settings.at(file);
+        old.putString("speed", "0.25");
+        old.putString("scenario", "DAM_BREAK_3D");
+        old.putString("DAM_BREAK_3D.view", "FROUDE");
+        old.putInt("window.main.width", 1111);
+        old.save();
 
-    @Test
-    void launchingWithAFlagWritesNothing() {
-        Settings settings = open();
-        Controls c = new Controls(settings, key -> key.equals("speed") ? "8" : null);
-        c.flush(true);
-        assertEquals(8, c.timeScale());
-        assertFalse(Files.exists(dir.resolve("settings.properties")));
-    }
+        assertEquals(3, Controls.forget(Settings.at(file)));
 
-    @Test
-    void restoreAllPutsEverythingBackAndLeavesTheWindowAlone() {
-        Settings settings = open();
-        settings.putInt("window.main.width", 1111);
-        Controls c = new Controls(settings, fileOnly(settings));
-        c.select(Scenario.CONVECTION);
-        c.tune(Knob.CONDUCTIVITY, 20);
-        c.speed(8);
-        c.budgeted(true);
-        c.flush(true);
-
-        c.restoreAll();
-        c.flush(true);
-
-        assertEquals(Scenario.DAM_BREAK, c.scenario());
-        assertEquals(1, c.timeScale());
-        assertFalse(c.budgeted());
-        assertEquals(Scenario.CONVECTION.defaults(), c.tuning(Scenario.CONVECTION));
-        Settings after = open();
+        Settings after = Settings.at(file);
         for (String key : Controls.keys()) {
             assertFalse(after.has(key), key + " should be gone");
         }
         assertEquals(1111, after.getInt("window.main.width", 0));
+        assertEquals(0, Controls.forget(after), "a file with nothing to forget is not written again");
     }
 
     @Test
-    void restoreAllBeatsAFlagGivenAtLaunch() {
-        Settings settings = open();
-        Controls c = new Controls(settings, key -> key.equals("speed") ? "8" : null);
-        assertEquals(8, c.timeScale());
+    void restoreAllPutsEverythingBackAndBeatsAFlag() {
+        Controls c = new Controls(key -> key.equals("speed") ? "8" : null);
+        c.select(Scenario.CONVECTION);
+        c.tune(Knob.CONDUCTIVITY, 20);
+        c.budgeted(true);
+
         c.restoreAll();
-        assertEquals(1, c.timeScale());
+
+        assertEquals(Scenario.DAM_BREAK_3D, c.scenario());
+        assertEquals(1, c.timeScale(), "a flag given at launch does not survive being told to go back to defaults");
+        assertFalse(c.budgeted());
+        assertEquals(Scenario.CONVECTION.defaults(), c.tuning(Scenario.CONVECTION));
     }
 
     @Test
@@ -199,10 +149,24 @@ class ControlsTest {
     @Test
     void aKnobTheScenarioLacksIsIgnoredAndOneOutOfRangeIsClamped() {
         Controls c = start();
+        c.select(Scenario.DAM_BREAK);
         c.tune(Knob.STONES, 0.9);
         assertEquals(Scenario.DAM_BREAK.defaults(), c.tuning());
         c.tune(Knob.GRAVITY, 99);
         assertEquals(2, c.tuning().get(Knob.GRAVITY));
+    }
+
+    @Test
+    void aViewTheScenarioLacksIsIgnored() {
+        Controls c = start();
+        c.select(Scenario.DAM_BREAK);
+        c.show(View.TEMPERATURE);
+        assertEquals(Scenario.DAM_BREAK.view(), c.view(), "water with no heat has no temperature to show");
+        c.select(Scenario.DAM_BREAK_3D);
+        c.show(View.FROUDE);
+        assertEquals(View.DEPTH, c.view(), "seen flat, a 3D box only has a thickness and a speed");
+        c.show(View.SPEED);
+        assertEquals(View.SPEED, c.view());
     }
 
     @Test
@@ -229,8 +193,9 @@ class ControlsTest {
     }
 
     @Test
-    void theViewIsRememberedPerScenario() {
+    void theViewIsKeptPerScenarioForTheRun() {
         Controls c = start();
+        c.select(Scenario.DAM_BREAK);
         c.show(View.SPEED);
         c.select(Scenario.CONVECTION);
         assertEquals(View.TEMPERATURE, c.view());
@@ -239,13 +204,16 @@ class ControlsTest {
     }
 
     @Test
-    void everyChangeMovesTheVersionSoThePanelsReadItBack() {
+    void everyChangeMovesTheVersionSoThePanelReadsItBack() {
         Controls c = start();
         long before = c.version();
         c.togglePause();
         assertTrue(c.version() > before);
         before = c.version();
         c.tune(Knob.GRAVITY, 0.3);
+        assertTrue(c.version() > before);
+        before = c.version();
+        c.speed(2);
         assertTrue(c.version() > before);
     }
 }

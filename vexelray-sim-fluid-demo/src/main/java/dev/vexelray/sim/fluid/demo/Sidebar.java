@@ -49,15 +49,18 @@ final class Sidebar {
         // The description sits at the foot and keeps its space, so choosing a scenario moves nothing above it.
         name = gui.text(" ").font(Look.UI).textSize(Look.LABEL).textColor(gui.theme().color(Role.INK));
         about = gui.text(" ").font(Look.UI).textSize(Look.SMALL).textColor(gui.theme().color(Role.DIM));
-        Node spring = gui.box().width(Length.FILL).height(Length.grow(1f));
-        children.add(spring);
-        children.add(name);
-        children.add(about);
+        // The list scrolls when the window is too short for it; the description stays put beneath, whatever the height.
+        Node list = gui.column().direction(Direction.COLUMN)
+                .width(Length.FILL).height(Length.grow(1f))
+                .gap(Look.TIGHT)
+                .children(children.toArray(Node[]::new))
+                .scroll(false, true);
+        // In em, since what it holds is text: the width follows zoom, which a dp width would not.
         panel = gui.column().direction(Direction.COLUMN)
-                .width(Length.dp(200)).height(Length.FILL)
+                .width(Length.em(13f)).height(Length.FILL)
                 .gap(Look.TIGHT).padding(Look.WIDE, Look.WIDE)
                 .background(gui.theme().color(Role.PANEL))
-                .children(children.toArray(Node[]::new));
+                .children(list, name, about);
     }
 
     Node node() {

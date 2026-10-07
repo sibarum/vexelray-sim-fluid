@@ -3,7 +3,9 @@ package dev.vexelray.sim.fluid.demo;
 import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.layout.Length;
+import dev.vexelray.gui.widget.Lattice;
 import dev.vexelray.gui.widget.Property;
+import dev.vexelray.gui.widget.Ramp;
 import dev.vexelray.gui.widget.Slider;
 
 import java.util.function.DoubleConsumer;
@@ -30,6 +32,8 @@ final class Dial implements Property {
     private final DoubleFunction<String> text;
     private Slider slider;
     private Readout value;
+    /** Kept, not just forwarded: the panel may be given its motion before this row is asked for a slider. */
+    private Ramp knob;
 
     private Dial(String section, String name, double min, double max, double step, boolean log, DoubleSupplier get,
                  DoubleConsumer set, DoubleFunction<String> text) {
@@ -70,9 +74,14 @@ final class Dial implements Property {
     public Node editor(Gui gui, Readout value) {
         this.value = value;
         double current = get.getAsDouble();
-        slider = new Slider(gui, (float) fraction(current));
+        // The step is in the track's own scale — octaves on a log track — so it is an even lattice of fractions
+        // either way, and the slider draws it, holds the thumb on it and settles there.
+        double span = scale(max) - scale(min);
+        slider = new Slider(gui, (float) fraction(current))
+                .lattice(span > 0 && step > 0 ? Lattice.every(step / span) : Lattice.none())
+                .transition(knob);
         slider.onChange(f -> {
-            double v = snap(at(f));
+            double v = exact(at(f));
             set.accept(v);
             value.show(text.apply(v));
         });
@@ -97,13 +106,22 @@ final class Dial implements Property {
         return high <= low ? 0 : Math.clamp((scale(v) - low) / (high - low), 0, 1);
     }
 
-    /** The value a fraction of the track names, before snapping. */
+    @Override
+    public void motion(Ramp ramp) {
+        this.knob = ramp;
+        if (slider != null) {
+            slider.transition(ramp);
+        }
+    }
+
+    /** The value a fraction of the track names. */
     private double at(double fraction) {
         double low = scale(min);
         return unscale(low + fraction * (scale(max) - low));
     }
 
-    private double snap(double v) {
+    /** The value a lattice point names, rounded back onto the step so the float dust of the fraction is gone. */
+    private double exact(double v) {
         if (step <= 0) {
             return v;
         }

@@ -18,6 +18,7 @@ import dev.vexelray.sim.fluid.stencil.Diagnostics;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.Callable;
 
 import static dev.vexelray.sim.fluid.demo.Readout.Line;
 
@@ -34,6 +35,11 @@ import static dev.vexelray.sim.fluid.demo.Readout.Line;
  * <p><b>Nothing jumps.</b> A view change blends the two colourings over a few frames and a reset blends the old
  * state into the new one, so the only sudden change in the picture is one the water itself makes. The scales
  * never refit to the data, so growth shows as growth.
+ *
+ * <p><b>Nothing stops.</b> A start — the particles, and a simulation to hold them when the running one cannot — is made
+ * on the offload lane ({@link Builds}), since a new simulation is its kernels lowered, validated and compiled, which
+ * takes a good part of a second. The running scenario goes on until it lands, and the frame that finds it landed
+ * starts it, which costs what starting again in a simulation of the same shape does.
  */
 final class Session implements AutoCloseable {
 
@@ -75,9 +81,15 @@ final class Session implements AutoCloseable {
     private final FluidView3 surface;
     private boolean showingSurface;
     private final Readout readout;
+    private final Metrics metrics;
     private ParticleSimulation particles;
     private final Session3 three;
+    /** The starts being made off the frame; the latest asked for is the only one that will be started. */
+    private final Builds<Start> builds;
+    /** The scenario the start being made is for, while one is. */
+    private Scenario starting;
 
+    /** The scenario running; null until the first start has landed. */
     private Scenario scenario;
     private Scales scales;
     private double initialVolume;
@@ -135,36 +147,105 @@ final class Session implements AutoCloseable {
     /** Each kind of trouble, the first time it was seen since the last reset. */
     private final Map<String, String> alarms = new LinkedHashMap<>();
 
-    Session(GuiApp app, Controls controls, DebugView view, FluidView3 surface, Readout readout) {
+    Session(GuiApp app, Controls controls, DebugView view, FluidView3 surface, Readout readout, Metrics metrics) {
         this.app = app;
         this.controls = controls;
         this.view = view;
         this.surface = surface;
         this.readout = readout;
-        this.three = new Session3(app, controls, readout);
+        this.metrics = metrics;
+        this.three = new Session3(app, controls, readout, metrics);
+        this.builds = new Builds<>(app);
     }
 
     /** What a frame draws: a grid of {@code h, hu, hv} and which fluid, and its size. */
     private record Picture(float[][] state, int nx, int ny) {}
 
-    /** The {@code FrameStage.APP} hook. */
+    /**
+     * A scenario's start, made on the offload lane, for the frame to start: {@link Session3.Start} for three dimensions,
+     * {@link Flat} for two. What it made and no frame started is freed by closing it, on this thread.
+     */
+    interface Start extends AutoCloseable {
+        Scenario scenario();
+
+        @Override
+        void close();
+    }
+
+    /**
+     * A two-dimensional scenario's start: {@code PPC} particles jittered in each cell it fills, x, y and m; and a simulation
+     * for them, made whole, when the running one does not have their shape. It can be made whole off this thread because
+     * its device is its own.
+     */
+    private static final class Flat implements Start {
+        private final Scenario scenario;
+        private final float[][] column;
+        /** Null when the running simulation already has the shape; taken by the frame that starts it. */
+        private ParticleSimulation fresh;
+
+        private Flat(Scenario scenario, float[][] column, ParticleSimulation fresh) {
+            this.scenario = scenario;
+            this.column = column;
+            this.fresh = fresh;
+        }
+
+        @Override
+        public Scenario scenario() {
+            return scenario;
+        }
+
+        @Override
+        public void close() {
+            if (fresh != null) {
+                fresh.close();
+                fresh = null;
+            }
+        }
+    }
+
+    /** The {@code FrameStage.APP} hook: the frame's work, and what the frame and the work took, for the panel. */
     void frame() {
         long now = System.nanoTime();
+        if (lastFrame != 0) {
+            double between = (now - lastFrame) / 1e6;
+            metrics.frameMs = metrics.frameMs == 0 ? between : 0.9 * metrics.frameMs + 0.1 * between;
+        }
         double elapsed = lastFrame == 0 ? 0 : Math.min((now - lastFrame) / 1e9, LONGEST_FRAME);
         lastFrame = now;
+        boolean loaded = work(now, elapsed);
+        double spent = (System.nanoTime() - now) / 1e6;
+        if (!loaded) {
+            // Not the frame that built a scenario: that is a one-off, and would read for a second as what every frame costs.
+            metrics.workMs = metrics.workMs == 0 ? spent : 0.9 * metrics.workMs + 0.1 * spent;
+        }
+    }
 
+    /** The frame's work; whether it started a scenario. */
+    private boolean work(long now, double elapsed) {
         seenVersion = controls.version();
         if (controls.takeReset()) {
-            load(controls.scenario(), now);
+            request(controls.scenario());
         }
-        // What the running scenario takes without starting again: the Courant number, and the knobs that are not what it starts as.
-        Scenario.Tuning tuning = controls.tuning();
+        Start landed = builds.take();
+        boolean loaded = landed != null;
+        if (loaded) {
+            load(landed, now);
+        }
+        if (scenario == null) {
+            // The first start is still being made: nothing to draw yet, and the window is not held up for it.
+            readout.set(Line.SCENARIO, "scenario  starting " + controls.scenario().title());
+            return loaded;
+        }
+        // What the running scenario takes without starting again: the Courant number, and the knobs that are not what it
+        // starts as. Its own knobs and view, not the selected scenario's, which differs while the selected one's start is
+        // being made, and whose knobs the running one would read as zero where it has none of them.
+        Scenario.Tuning tuning = controls.tuning(scenario);
         if (controls.courant() != appliedCourant || !tuning.equals(applied)) {
             appliedCourant = controls.courant();
             applied = tuning;
             retune();
         }
-        View wanted = controls.view();
+        View wanted = controls.view(scenario);
         if (wanted != shown) {
             // Whichever view dominates the picture now is the one the new fade starts from.
             fadingFrom = progress(now, viewFadeStart, VIEW_FADE_NANOS) >= 0.5 ? shown : fadingFrom;
@@ -172,6 +253,8 @@ final class Session implements AutoCloseable {
             viewFadeStart = now;
         }
 
+        metrics.three = scenario.dimensions() == 3;
+        metrics.surfaceAvailable = three.shared();
         Picture picture = scenario.dimensions() == 3 ? threeFrame(elapsed) : particleFrame(elapsed);
 
         float[][] display = picture.state();
@@ -189,7 +272,7 @@ final class Session implements AutoCloseable {
                 showingSurface = true;
             }
             surface.show(app, three.simulation(), three.restMass());
-            return;
+            return loaded;
         }
         if (showingSurface) {
             surface.withdraw();                       // the wheel over the node is not the surface's any more
@@ -199,6 +282,7 @@ final class Session implements AutoCloseable {
         view.show(app, display[0], display[1], display[2], display[3], display[4], picture.nx(), picture.ny(), fadingFrom, shown,
                 blend,
                 scales.stepped(lastStep, 1, 1));
+        return loaded;
     }
 
     /** For the loop's pacing: a frame now while anything moves, none while paused and still. */
@@ -206,7 +290,7 @@ final class Session implements AutoCloseable {
         long now = System.nanoTime();
         boolean fading = progress(now, viewFadeStart, VIEW_FADE_NANOS) < 1
                 || (resetFrom != null && progress(now, resetFadeStart, RESET_FADE_NANOS) < 1);
-        if (!controls.paused() || fading || controls.version() != seenVersion) {
+        if (!controls.paused() || fading || controls.version() != seenVersion || builds.landed()) {
             return 0L;
         }
         // Parked, but for a restart that is waiting for a slider to stop moving.
@@ -215,6 +299,7 @@ final class Session implements AutoCloseable {
 
     @Override
     public void close() {
+        builds.close();                               // first: a start being made may be making a simulation on the device
         view.close();
         surface.close();
         three.close();
@@ -247,6 +332,9 @@ final class Session implements AutoCloseable {
             return budgetedFrame(elapsed);
         }
         keyPicture = null;
+        metrics.fixedWork = false;
+        metrics.fixedWorkAvailable = particles.sliceable();
+        metrics.guessError = Double.NaN;
         double dt = flipStep();
         int steps = 0;
         boolean behind = false;
@@ -261,7 +349,10 @@ final class Session implements AutoCloseable {
                 flipCarry = 0;
                 behind = true;
             }
+            metrics.kept(steps * dt, elapsed * controls.timeScale());
         }
+        metrics.stepsPerFrame = steps;
+        metrics.behind = behind;
         particles.advance(steps, SORT_EVERY);
         flipTime += steps * dt;
         lastStep = dt;
@@ -368,6 +459,9 @@ final class Session implements AutoCloseable {
     private Picture budgetedFrame(double elapsed) {
         double dt = flipStep();
         lastStep = dt;
+        metrics.fixedWork = true;
+        metrics.fixedWorkAvailable = true;
+        metrics.behind = false;
         int keyframeSteps = controls.keyframeSteps();
         if (keyPicture == null) {
             // Nothing has completed yet: the grid is empty, and so is the picture.
@@ -440,9 +534,14 @@ final class Session implements AutoCloseable {
         } else if (mode == Controls.Display.INTERPOLATE && curX != null) {
             shown = interpolatedPicture(progress);
         }
-        if (mode != Controls.Display.INTERPOLATE) {
+        if (mode != Controls.Display.INTERPOLATE || curX == null) {
             readout.set(Line.HEAT, "");
+            metrics.guessError = Double.NaN;
         }
+        metrics.budget = budget;
+        metrics.keyframeRate = keyframeRate;
+        metrics.keyframeProgress = progress;
+        metrics.simTime = flipTime + (mode == Controls.Display.HOLD ? 0 : progress * keyframeSteps * dt);
         readout.set(Line.TIME, String.format("time      %8.3f s  keyframes %d %s · frame %.1f ms%s", flipTime, keyframes,
                 controls.paused() ? "paused" : "running", frameMillis, over ? " OVER" : ""));
         if (mode != Controls.Display.HOLD) {
@@ -535,6 +634,7 @@ final class Session implements AutoCloseable {
             sum += off * off;
             worst = Math.max(worst, off);
         }
+        metrics.guessError = Math.sqrt(sum / n);
         readout.set(Line.HEAT, String.format("interp    err %.2f/%.1f · jump %.2f %s · moves %.2f peak %.2f", Math.sqrt(sum / n),
                 worst, ease.jump(), controls.ease() ? "eased" : "raw", stepRms, stepPeak));
         return splatPicture(x, y, curU, curV);
@@ -589,6 +689,15 @@ final class Session implements AutoCloseable {
 
     private void particleReadings(Diagnostics d, ParticleDiagnostics p, int steps, boolean behind, double dt) {
         readout.heading("particles · MLS-MPM, weakly compressible");
+        metrics.simTime = flipTime;
+        metrics.dt = dt;
+        metrics.courant = p.courant();
+        metrics.courantLimit = Diagnostics.COURANT_LIMIT;
+        metrics.compression = p.highDensity();
+        metrics.compressionLimit = COMPRESSION_ALARM;
+        metrics.particles = particles.particles();
+        metrics.activeParticles = particles.particles();
+        metrics.grid = FLIP_N;
         commonReadings();
         String scale = switch (shown) {
             case DEPTH -> String.format("density, dry, then 0 .. %.2f of rest", scales.depth());
@@ -670,30 +779,63 @@ final class Session implements AutoCloseable {
 
     // --- the pieces -------------------------------------------------------------------------------------
 
-    private void load(Scenario next, long now) {
+    /**
+     * Asks for {@code next} to be started again, with the knobs it has now: its start is made on the offload lane, and the
+     * frame that finds it landed starts it. A request while one is being made replaces it.
+     */
+    private void request(Scenario next) {
+        Scenario.Tuning tuning = controls.tuning(next);
+        starting = next;
+        builds.start(next.dimensions() == 3 ? three.plan(next, tuning) : plan(next, tuning));
+    }
+
+    /**
+     * What starting the two-dimensional {@code next} takes, as work for the offload lane: its particles, and a whole new
+     * simulation when the running one does not have their shape. The running one's shape is read here, on this thread.
+     */
+    private Callable<Start> plan(Scenario next, Scenario.Tuning tuning) {
+        boolean heat = next.heat();
+        boolean convection = next.convection();
+        boolean relax = next.relaxation() > 0;
+        boolean pump = next.pump();
+        boolean sameKind = particles != null && particles.heat() == heat && particles.convection() == convection
+                && particles.relax() == relax && particles.pump() == pump;
+        int liveCount = sameKind ? particles.particles() : -1;
+        return () -> {
+            float[][] column = fill(next, tuning);
+            int count = column[0].length;
+            ParticleSimulation fresh = count == liveCount ? null
+                    : new ParticleSimulation(FLIP_N, FLIP_N, count, false, heat, convection, relax, pump);
+            return new Flat(next, column, fresh);
+        };
+    }
+
+    /** Starts what the offload lane made: the scenario it is for, from its first step, faded in over what was showing. */
+    private void load(Start start, long now) {
+        Scenario next = start.scenario();
         scenario = next;
         appliedCourant = controls.courant();
-        applied = controls.tuning();
+        applied = controls.tuning(next);
         lastStep = 0;
         alarms.clear();
+        metrics.reset();
         physics(applied);
-        if (next.dimensions() == 3) {
-            three.load(next, applied);
+        if (start instanceof Session3.Start begun) {
+            three.install(begun, applied);
             scales = three.scales();
             initialVolume = 0;
         } else {
-            float[][] column = fill(next, applied);
+            Flat flat = (Flat) start;
+            float[][] column = flat.column;
             int count = column[0].length;
             boolean heat = next.heat();
             boolean convection = next.convection();
-            boolean relax = next.relaxation() > 0;
-            boolean pump = next.pump();
-            if (particles == null || particles.particles() != count || particles.heat() != heat
-                    || particles.convection() != convection || particles.relax() != relax || particles.pump() != pump) {
+            if (flat.fresh != null) {
                 if (particles != null) {
                     particles.close();
                 }
-                particles = new ParticleSimulation(FLIP_N, FLIP_N, count, false, heat, convection, relax, pump);
+                particles = flat.fresh;
+                flat.fresh = null;
             }
             lightestMass = Double.POSITIVE_INFINITY;
             heaviestMass = 0;
@@ -801,7 +943,9 @@ final class Session implements AutoCloseable {
     }
 
     private void commonReadings() {
-        readout.set(Line.SCENARIO, "scenario  " + scenario.title());
+        // A start being made says so, since the picture goes on being the running scenario's until it lands.
+        String making = !builds.busy() ? "" : starting == scenario ? " · restarting" : " · starting " + starting.title();
+        readout.set(Line.SCENARIO, "scenario  " + scenario.title() + making);
         // The formula appears only once the fade has finished, so a script can wait for a view to be on screen
         // rather than photograph the first frame of a fade.
         boolean fading = progress(System.nanoTime(), viewFadeStart, VIEW_FADE_NANOS) < 1;
@@ -853,6 +997,7 @@ final class Session implements AutoCloseable {
 
     private void alarmReading() {
         readout.set(Line.ALARM, alarms.isEmpty() ? "" : "ALARM  " + String.join("\n       ", alarms.values()));
+        metrics.problems = Metrics.plain(alarms);
     }
 
     private static String trim(double value) {

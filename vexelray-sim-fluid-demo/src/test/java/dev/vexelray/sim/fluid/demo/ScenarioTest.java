@@ -1,5 +1,6 @@
 package dev.vexelray.sim.fluid.demo;
 
+import dev.vexelray.sim.fluid.gui.View;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -9,6 +10,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -79,6 +81,18 @@ class ScenarioTest {
         }
         assertTrue(Scenario.BOILING.foam());
         assertEquals(0, Scenario.BOILING.param(Knob.STONES).min(), "no stones is bumping");
+    }
+
+    @Test
+    void everyScenarioOpensOnAViewItOffersAndOffersOnlyViewsThatMeanSomethingThere() {
+        for (Scenario s : Scenario.values()) {
+            assertTrue(s.views().contains(s.view()), s + " opens on " + s.view() + ", which it does not offer");
+            assertEquals(s.heat(), s.views().contains(View.TEMPERATURE), s + ": temperature, exactly where there is heat");
+        }
+        assertFalse(Scenario.DAM_BREAK.views().contains(View.MATERIAL), "one fluid has no 'which fluid' to show");
+        assertTrue(Scenario.OIL_ON_WATER.views().contains(View.MATERIAL));
+        assertTrue(Scenario.BOILING.views().contains(View.MATERIAL), "foam is shown as the lighter material");
+        assertEquals(List.of(View.DEPTH, View.SPEED), Scenario.DAM_BREAK_3D.views());
     }
 
     @Test

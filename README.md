@@ -37,26 +37,24 @@ mvn -pl vexelray-sim-fluid-demo exec:exec
 ```
 
 Opens the demo: a list of simulations on the left (the running one is filled), the picture in the middle, and on the
-right a transport (reset, pause, step) above three pages.
+right a transport (reset, pause, step) and a status line above two pages.
 
 | Page | What it holds |
 | --- | --- |
-| **Readings** | What is running and whether it is healthy: time, steps, mass drift, density, speed, Courant number, and the latched alarms. |
-| **Parameters** | The running scenario's own: how it is drawn (the view, and for 3D whether the water is a surface you drag to turn or the flat picture of its state, and a slice through the middle of that), and each knob it has — gravity, the other fluid's density, the width of the column, heat conductivity and expansion, the boiling point, foam, nucleation sites. |
-| **Settings** | What belongs to no scenario: speed, a time step past the stable limit, and budgeted mode (work per tick, the controller, keyframes, what is drawn between them). **Restore defaults** puts every setting back, the scenarios' knobs and views with them. |
+| **Controls** | Every setting, each with a sentence on what it does, and only those that do something to the simulation that is running. Four groups: **Picture** (what the colours show; for 3D, a surface you drag to turn or a flat picture), **Scenario** (its physics knobs), **Speed and performance** (playback speed; for 3D the physics time a frame, particles per cell and grid size; for 2D real-time or fixed-work pacing), and **Stability** (the time step, and for 3D the step size). The live readings each control moves sit in a box beside it — keeping up, frame time, step cost beside the speed and performance controls; step safety, compression and any problems beside the time step. **Reset every setting** puts everything back. |
+| **Diagnostics** | Every number the solver has, for debugging it: time, steps, mass drift, density, speed, Courant number, the latched alarms, and the keys. |
 
 The simulations: a water dam break, oil on water, water on mercury, Rayleigh-Taylor, convection, boiling (with
 no nucleation sites it bumps) and a 3D dam break. A knob that changes the state a scenario starts from restarts it
 once the slider has stopped moving; every other knob reaches the running simulation.
 
-Everything is remembered between runs in the framework's settings file, `$HOME/.vexelray-sim-fluid-demo/settings.properties`,
-beside the window's placement: the scenario, its view and knobs, speed and the budget. Only what has been
-changed is written. Each setting is also a flag, `--speed=4` or `--BOILING.stones=0`, which beats the file for that
-launch without being written to it.
+Nothing is remembered between runs: every launch starts from the defaults, so a setting that has gone wrong is
+always fixed by starting again. Only the window's placement is kept. Each setting is a flag for one launch,
+`--speed=4` or `--BOILING.stones=0`; settings an older build saved in the settings file are cleared on first launch.
 
-Keys still work: **1–8** view · **N** next scenario · **R** reset · **space** pause · **.** single step ·
-**C** toggle a Courant number past the stable limit · **= / −** speed · **D** the 3D water as a surface you drag to turn, **V** a flat 3D slice, and **B A [ ] ; ' I Z X E**
-for budgeted mode.
+Keys still work: **1–8** colour view · **N** next scenario · **R** reset · **space** pause · **.** single step ·
+**C** time step safe or too big · **= / −** speed · **D** the 3D water as a surface or flat, **V** a flat 3D slice or
+see-through, and **B A [ ] ; ' I Z X E** for fixed-work pacing.
 
 The debug view reserves two colours: **magenta** is a broken cell (NaN, infinity, negative depth), and
 **orange to red** is a cell outside the step size the scheme is guaranteed stable for. Alarms latch, with the
