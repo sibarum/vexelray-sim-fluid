@@ -219,6 +219,15 @@
     },
     {
       "type": "sun.text.resources.cldr.FormatData_en_US"
+    },
+    {
+      "type": "sun.util.resources.cldr.TimeZoneNames"
+    },
+    {
+      "type": "sun.util.resources.cldr.TimeZoneNames_en"
+    },
+    {
+      "type": "sun.util.resources.cldr.TimeZoneNames_en_US"
     }
   ],
   "resources": [
@@ -227,6 +236,9 @@
     },
     {
       "glob": "META-INF/services/dev.vexelray.os.NativePlatform"
+    },
+    {
+      "glob": "META-INF/services/java.time.zone.ZoneRulesProvider"
     },
     {
       "glob": "META-INF/services/sibarum.tactroller.api.InputBackend"
@@ -256,10 +268,25 @@
       "glob": "dev/supirvast/vastir/tools/native/windows-x64/spirv-val.exe"
     },
     {
+      "glob": "dev/vexelray/text/atlas/fonts.json"
+    },
+    {
+      "glob": "dev/vexelray/text/atlas/mono/regular.json"
+    },
+    {
+      "glob": "dev/vexelray/text/atlas/mono/regular.rgba"
+    },
+    {
       "glob": "dev/vexelray/text/atlas/primary.json"
     },
     {
       "glob": "dev/vexelray/text/atlas/primary.rgba"
+    },
+    {
+      "glob": "dev/vexelray/text/atlas/sans/regular.json"
+    },
+    {
+      "glob": "dev/vexelray/text/atlas/sans/regular.rgba"
     },
     {
       "glob": "vulkan-1.dll"
@@ -344,6 +371,16 @@
           "void*",
           "jint",
           "void*"
+        ]
+      },
+      {
+        "returnType": "void",
+        "parameterTypes": [
+          "void*",
+          "jlong",
+          "jlong",
+          "jlong",
+          "jint"
         ]
       },
       {
@@ -487,10 +524,28 @@
         ]
       },
       {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "jint",
+          "void*",
+          "jint"
+        ]
+      },
+      {
         "returnType": "void",
         "parameterTypes": [
           "void*",
           "jint",
+          "jint",
+          "void*"
+        ]
+      },
+      {
+        "returnType": "void",
+        "parameterTypes": [
+          "void*",
+          "jlong",
           "jint",
           "void*"
         ]
@@ -706,6 +761,15 @@
         "returnType": "void",
         "parameterTypes": [
           "void*",
+          "jint",
+          "jint",
+          "jint"
+        ]
+      },
+      {
+        "returnType": "void",
+        "parameterTypes": [
+          "void*",
           "jlong"
         ]
       },
@@ -758,6 +822,16 @@
           "void*",
           "jint",
           "jlong"
+        ]
+      },
+      {
+        "returnType": "void",
+        "parameterTypes": [
+          "void*",
+          "jlong",
+          "jlong",
+          "jint",
+          "void*"
         ]
       },
       {

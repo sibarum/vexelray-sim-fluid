@@ -1,7 +1,6 @@
 package dev.vexelray.sim.fluid.demo;
 
 import dev.vexelray.framework.api.FrameStage;
-import dev.vexelray.framework.automation.Driver;
 import dev.vexelray.framework.shell.AppInfo;
 import dev.vexelray.framework.shell.Appearance;
 import dev.vexelray.framework.shell.Shell;
@@ -124,8 +123,8 @@ final class FluidDemoWiring extends Wiring {
         });
         shell.hooks().add(FrameStage.APP, session::frame);
         shell.deadline(session::nanosUntilNextFrame);
-        // Off unless -Dautomation or --automation asks for it, and loopback-only when it is.
-        shell.disposer().register(Driver.open(shell));
+        // The driving socket in the debug edition, nothing in the release one.
+        shell.disposer().register(Edition.driver(shell));
     }
 
     /**

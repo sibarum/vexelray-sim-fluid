@@ -64,32 +64,71 @@ simulated time they were first seen, until a reset.
 
 ### Native executable
 
-With a GraalVM JDK (25, as `JAVA_HOME`), the demo builds to a native binary. It is profile-gated, so ordinary
-builds stay fast:
+With a GraalVM JDK (25, as `JAVA_HOME`), the demo builds to a native binary, as two editions of the same code.
+Both are profile-gated, so ordinary builds stay fast:
 
 ```bash
-mvn -Pnative -pl vexelray-sim-fluid-demo package
+mvn -Pnative-release -pl vexelray-sim-fluid-demo package -DskipTests
 ```
 
-That gives `vexelray-sim-fluid-demo/target/vexelray-sim-fluid-demo(.exe)`, about 49 MB, built in under a
-minute. It is the only file: it runs from a folder holding nothing else, and extracts nothing. It takes the same
-arguments (`--automation=0` included). That depends on nothing in the stack reaching AWT, which on Windows a
+```bash
+mvn -Pnative -pl vexelray-sim-fluid-demo package -DskipTests
+```
+
+- **release** gives `vexelray-sim-fluid-demo/target/fluid-sim.exe`: what ships, and what `installer.json` points
+  at. It is a Windows GUI subsystem program, so no console window appears, and it is built without the automation
+  module: `src/edition-release` is compiled instead of `src/edition-debug`, so the binary cannot open a driving
+  socket (`--automation` parses and does nothing). The log is still written, to `~/.vexelray-sim-fluid-demo/logs`.
+- **debug** gives `vexelray-sim-fluid-demo/target/vexelray-sim-fluid-demo.exe`: a console program with automation,
+  so `--automation=0` prints the port `ottermate --launch` reads. The plain JVM build, the tests and `exec:exec` are
+  this edition too.
+
+Either is about 57 MB, built in under a minute. It is the only file: it runs from a folder holding nothing else,
+and extracts nothing. It takes the same arguments as the JVM run. That depends on nothing in the stack reaching AWT, which on Windows a
 native image can only ship as nine DLLs beside the executable. `vexelray-gui` keeps it so: the font atlas loads as
 RGBA pixels, captures are written by its own PNG writer, and a guard test fails on any reference to AWT or ImageIO.
 If the build's artifacts ever list a `.dll` again, something has started to reach AWT.
 
 The reachability metadata (FFM downcalls and upcalls, the window procedure, the input backend, the shaders) is in `vexelray-sim-fluid-demo/src/main/resources/META-INF/native-image/`. It was
 recorded by running the demo under the tracing agent while `ottermate` drove every scenario, view and key.
-After a change that reaches new native or reflective code, record it again the same way:
+After a change that reaches new native or reflective code, anywhere in the stack, record it again the same way.
+A metadata gap does not fail the build; the binary fails when it reaches the missing call, so run it afterwards.
 
 ```bash
-mvn -pl vexelray-sim-fluid-demo exec:exec -Dautomation=0 "-Dapp.jvmArgs=-agentlib:native-image-agent=config-output-dir=vexelray-sim-fluid-demo/src/main/resources/META-INF/native-image/dev.vexelray.sim/vexelray-sim-fluid-demo,config-write-period-secs=5"
+mvn -pl vexelray-sim-fluid-demo exec:exec -Dautomation=0 "-Dapp.jvmArgs=-agentlib:native-image-agent=config-merge-dir=$(pwd)/vexelray-sim-fluid-demo/src/main/resources/META-INF/native-image/dev.vexelray.sim/vexelray-sim-fluid-demo,config-write-period-secs=5"
 ```
 
+The directory must be absolute, because `exec:exec` runs in the module's folder and a relative one lands in a new
+directory beside it. `config-merge-dir` adds what the run saw to what is there, so a run need not reach everything.
 The periodic write matters, because `ottermate` ends the process rather than letting it exit, and the agent
-otherwise writes only at exit. Only the GPU path has been recorded and tried. SupirVast's CPU fallback, which
+otherwise writes only at exit.
+
+The font set is listed by hand, in `vexelray-sim-fluid-demo-fonts/` beside the traced file, which a re-trace does
+not touch: the manifest and every face's metrics and pixels, whichever faces `vexelray-text` bakes. A trace only
+lists the files one run opened, so it went stale when the atlas became a set of families. Only the GPU path has been recorded and tried. SupirVast's CPU fallback, which
 lowers kernels through Truffle, cannot be forced on a machine with a GPU, so a native binary on a machine without
 one is untested.
+
+### Installer
+
+`installer.json` describes a per-user install of the release edition through
+[`vexelray-installer`](https://github.com/sibarum/vexelray-installer): `fluid-sim.exe` in
+`%LOCALAPPDATA%\Programs\Fluid Sim`, with Start menu and desktop shortcuts and an Apps entry. Installing through
+`irm ... | iex` rather than a browser download means the executable never carries the Mark of the Web, so
+SmartScreen does not stand between a person and the first run. From a checkout of `vexelray-installer`, after
+`mvn -Pnative-release -pl vexelray-sim-fluid-demo package -DskipTests` here:
+
+```bash
+java -jar installer-core/target/installer-core-0.1.0-SNAPSHOT-cli.jar --config ../vexelray-sim-fluid/installer.json --version 0.1.0 --out ../vexelray-sim-fluid --assets ../vexelray-sim-fluid/target/installer-assets
+```
+
+Upload `target/installer-assets/0.1.0/fluid-sim.exe` to the release `v0.1.0` (or add `--publish`), then commit the
+generated `install.ps1`, `uninstall.ps1`, `update.ps1`, `manifest.json` and `INSTALL.md` (the generator leaves
+this README alone). The one-liner is then:
+
+```powershell
+irm https://raw.githubusercontent.com/sibarum/vexelray-sim-fluid/main/install.ps1 | iex
+```
 
 ### Screenshots while developing
 

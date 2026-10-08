@@ -25,6 +25,17 @@
         <!-- The automation driver: "off", "on" for the default port, or a port number; 0 is a free one. -->
         <automation>off</automation>
         <app.jvmArgs></app.jvmArgs>
+        <!--
+          Two editions of the same code. The debug edition links the automation socket; the release edition does not
+          contain it at all: -Pnative-release swaps the source root below for src/edition-release (an Edition with no
+          driver) and gives the automation modules scope test, so they are on no runtime classpath. Everything but
+          -Pnative-release - tests, exec:exec, -Pnative - is the debug edition.
+        -->
+        <edition.src>src/edition-debug/java</edition.src>
+        <automation.scope>compile</automation.scope>
+        <!-- The debug edition is a console program, so ottermate can read the port it prints. -->
+        <native.imageName>vexelray-sim-fluid-demo</native.imageName>
+        <native.subsystem>CONSOLE</native.subsystem>
     </properties>
 
     <dependencies>
@@ -38,11 +49,12 @@
             <artifactId>vexelray-framework-shell</artifactId>
             <version>${vexelray.framework.version}</version>
         </dependency>
-        <!-- The driving socket, off unless asked for. -->
+        <!-- The driving socket, off unless asked for; in the debug edition only. -->
         <dependency>
             <groupId>dev.vexelray.framework</groupId>
             <artifactId>vexelray-framework-automation</artifactId>
             <version>${vexelray.framework.version}</version>
+            <scope>${automation.scope}</scope>
         </dependency>
         <!-- The title bar, which the framework hands over and this application places. -->
         <dependency>
@@ -54,6 +66,7 @@
             <groupId>dev.vexelray.gui</groupId>
             <artifactId>vexelray-gui-automation</artifactId>
             <version>${vexelray.gui.version}</version>
+            <scope>${automation.scope}</scope>
         </dependency>
         <dependency>
             <groupId>sibarum.tactroller</groupId>
@@ -68,7 +81,67 @@
     </dependencies>
 
     <build>
+        <pluginManagement>
+            <plugins>
+                <!--
+                  GraalVM native image, shared by -Pnative and -Pnative-release, which differ only in the image's
+                  name, its subsystem and which edition is compiled. The reachability metadata (FFM downcalls and
+                  upcalls, reflection, resources) is under src/main/resources/META-INF/native-image/; see the README
+                  for how to record it again.
+                -->
+                <plugin>
+                    <groupId>org.graalvm.buildtools</groupId>
+                    <artifactId>native-maven-plugin</artifactId>
+                    <version>0.10.6</version>
+                    <extensions>true</extensions>
+                    <executions>
+                        <execution>
+                            <id>build-native</id>
+                            <goals><goal>compile-no-fork</goal></goals>
+                            <phase>package</phase>
+                        </execution>
+                    </executions>
+                    <configuration>
+                        <imageName>${native.imageName}</imageName>
+                        <mainClass>${app.mainClass}</mainClass>
+                        <buildArgs>
+                            <buildArg>--no-fallback</buildArg>
+                            <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
+                            <buildArg>-H:+ForeignAPISupport</buildArg>
+                            <!-- tactroller's raw input registrations each get an Arena.ofShared; without this
+                                 closing one throws, and that hides whatever ended the run. -->
+                            <buildArg>-H:+SharedArenaSupport</buildArg>
+                            <buildArg>--enable-native-access=ALL-UNNAMED</buildArg>
+                            <buildArg>-Dstdout.encoding=UTF-8</buildArg>
+                            <buildArg>-H:IncludeResources=META-INF/supirvast/shaders/.*</buildArg>
+                            <!-- WINDOWS = no console window, and /ENTRY:mainCRTStartup is not optional alongside it:
+                                 the linker would otherwise look for WinMain, and the image's entry is the C main.
+                                 CONSOLE is the linker's default, spelled out so both editions pass the same
+                                 options. Windows linker options. -->
+                            <buildArg>-H:NativeLinkerOption=/SUBSYSTEM:${native.subsystem}</buildArg>
+                            <buildArg>-H:NativeLinkerOption=/ENTRY:mainCRTStartup</buildArg>
+                        </buildArgs>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
+            <!-- The edition's own source (Edition): src/edition-debug, or src/edition-release under -Pnative-release. -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <id>add-edition-source</id>
+                        <phase>generate-sources</phase>
+                        <goals><goal>add-source</goal></goals>
+                        <configuration>
+                            <sources><source>${edition.src}</source></sources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
@@ -94,11 +167,13 @@
 
     <profiles>
         <!--
-          GraalVM native image:  mvn -Pnative -pl vexelray-sim-fluid-demo -am package  ->  target/vexelray-sim-fluid-demo(.exe)
-          Profile-gated as vexelray-gui-demo's is: native-image takes minutes and needs a GraalVM JDK, and an
-          ordinary package must not pay for it. The reachability metadata (FFM downcalls and upcalls, reflection,
-          resources) is under src/main/resources/META-INF/native-image/, recorded with the tracing agent; see
-          the README for how to record it again.
+          GraalVM native images, profile-gated as vexelray-gui-demo's are: native-image takes a minute and needs a
+          GraalVM JDK, and an ordinary package must not pay for it.
+
+          mvn -Pnative-release -pl vexelray-sim-fluid-demo -am package  ->  target/fluid-sim.exe
+              what ships: a GUI subsystem program with no automation module; installer.json points at it.
+          mvn -Pnative -pl vexelray-sim-fluid-demo -am package          ->  target/vexelray-sim-fluid-demo.exe
+              the debug edition: a console program that ottermate can drive with its automation flag.
         -->
         <profile>
             <id>native</id>
@@ -107,35 +182,23 @@
                     <plugin>
                         <groupId>org.graalvm.buildtools</groupId>
                         <artifactId>native-maven-plugin</artifactId>
-                        <version>0.10.6</version>
-                        <extensions>true</extensions>
-                        <executions>
-                            <execution>
-                                <id>build-native</id>
-                                <goals><goal>compile-no-fork</goal></goals>
-                                <phase>package</phase>
-                            </execution>
-                        </executions>
-                        <configuration>
-                            <imageName>vexelray-sim-fluid-demo</imageName>
-                            <mainClass>${app.mainClass}</mainClass>
-                            <buildArgs>
-                                <buildArg>--no-fallback</buildArg>
-                                <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
-                                <buildArg>-H:+ForeignAPISupport</buildArg>
-                                <!-- tactroller's raw input registrations each get an Arena.ofShared; without this
-                                     closing one throws, and that hides whatever ended the run. -->
-                                <buildArg>-H:+SharedArenaSupport</buildArg>
-                                <buildArg>--enable-native-access=ALL-UNNAMED</buildArg>
-                                <buildArg>-Dstdout.encoding=UTF-8</buildArg>
-                                <buildArg>-H:IncludeResources=META-INF/supirvast/shaders/.*</buildArg>
-                                <!-- The font set: a manifest and the metrics and pixels it names, in whatever
-                                     layout vexelray-text ships. The traced metadata only lists the files one run
-                                     opened, so it goes stale when the atlas is reorganised. The PNGs are left out,
-                                     because nothing at runtime decodes them. -->
-                                <buildArg>-H:IncludeResources=dev/vexelray/text/atlas/.*\.(json|rgba)</buildArg>
-                            </buildArgs>
-                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>native-release</id>
+            <properties>
+                <edition.src>src/edition-release/java</edition.src>
+                <automation.scope>test</automation.scope>
+                <native.imageName>fluid-sim</native.imageName>
+                <native.subsystem>WINDOWS</native.subsystem>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
                     </plugin>
                 </plugins>
             </build>
