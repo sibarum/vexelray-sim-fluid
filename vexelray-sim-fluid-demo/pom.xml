@@ -123,9 +123,17 @@
                                 <buildArg>--no-fallback</buildArg>
                                 <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
                                 <buildArg>-H:+ForeignAPISupport</buildArg>
+                                <!-- tactroller's raw input registrations each get an Arena.ofShared; without this
+                                     closing one throws, and that hides whatever ended the run. -->
+                                <buildArg>-H:+SharedArenaSupport</buildArg>
                                 <buildArg>--enable-native-access=ALL-UNNAMED</buildArg>
                                 <buildArg>-Dstdout.encoding=UTF-8</buildArg>
                                 <buildArg>-H:IncludeResources=META-INF/supirvast/shaders/.*</buildArg>
+                                <!-- The font set: a manifest and the metrics and pixels it names, in whatever
+                                     layout vexelray-text ships. The traced metadata only lists the files one run
+                                     opened, so it goes stale when the atlas is reorganised. The PNGs are left out,
+                                     because nothing at runtime decodes them. -->
+                                <buildArg>-H:IncludeResources=dev/vexelray/text/atlas/.*\.(json|rgba)</buildArg>
                             </buildArgs>
                         </configuration>
                     </plugin>
