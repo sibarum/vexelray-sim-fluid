@@ -3,13 +3,13 @@ package dev.vexelray.sim.fluid.particle;
 import dev.supirvast.vast.CoreToTruffle;
 import dev.supirvast.vast.CpuKernel;
 import dev.supirvast.vastir.core.Function;
+import dev.supirvast.vastir.pass.Buffered;
+import dev.supirvast.vastir.pass.Pass;
 import dev.supirvast.vastir.tools.Accelerator;
 import dev.supirvast.vastir.tools.DispatchSequence;
 import dev.supirvast.vastir.tools.KernelHandle;
 import dev.supirvast.vastir.tools.KernelSpec;
 import dev.supirvast.vastir.tools.ResidentBuffer;
-import dev.vexelray.sim.core.step.Buffered;
-import dev.vexelray.sim.core.step.Pass;
 import dev.vexelray.sim.fluid.particle.ScatterTest.Backend;
 
 import java.util.IdentityHashMap;

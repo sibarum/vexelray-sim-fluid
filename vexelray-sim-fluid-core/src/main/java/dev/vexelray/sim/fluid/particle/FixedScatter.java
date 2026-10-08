@@ -1,25 +1,25 @@
 package dev.vexelray.sim.fluid.particle;
 
+import dev.supirvast.vastir.build.Body;
 import dev.supirvast.vastir.core.AtomicOp;
 import dev.supirvast.vastir.core.Buffer;
 import dev.supirvast.vastir.core.Expr;
 import dev.supirvast.vastir.core.Function;
 import dev.supirvast.vastir.core.LocalVar;
 import dev.supirvast.vastir.type.Type;
-import dev.vexelray.sim.core.ir.Body;
 
 import java.util.List;
 
-import static dev.vexelray.sim.core.ir.Body.I32;
-import static dev.vexelray.sim.core.ir.Body.add;
-import static dev.vexelray.sim.core.ir.Body.div;
-import static dev.vexelray.sim.core.ir.Body.f;
-import static dev.vexelray.sim.core.ir.Body.i;
-import static dev.vexelray.sim.core.ir.Body.mod;
-import static dev.vexelray.sim.core.ir.Body.mul;
-import static dev.vexelray.sim.core.ir.Body.sub;
-import static dev.vexelray.sim.core.ir.Body.toInt;
-import static dev.vexelray.sim.core.ir.Body.v;
+import static dev.supirvast.vastir.build.Body.I32;
+import static dev.supirvast.vastir.build.Body.add;
+import static dev.supirvast.vastir.build.Body.div;
+import static dev.supirvast.vastir.build.Body.f;
+import static dev.supirvast.vastir.build.Body.i;
+import static dev.supirvast.vastir.build.Body.mod;
+import static dev.supirvast.vastir.build.Body.mul;
+import static dev.supirvast.vastir.build.Body.sub;
+import static dev.supirvast.vastir.build.Body.toInt;
+import static dev.supirvast.vastir.build.Body.v;
 
 /**
  * The particle-to-grid scatter in fixed point: the same transfer as {@link Scatter}, with the conserved pair held

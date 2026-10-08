@@ -1,5 +1,6 @@
 package dev.vexelray.sim.fluid.gui;
 
+import dev.supirvast.vastir.build.Body;
 import dev.supirvast.vastir.core.Buffer;
 import dev.supirvast.vastir.core.CoreModule;
 import dev.supirvast.vastir.core.EntryPoint;
@@ -11,40 +12,39 @@ import dev.supirvast.vastir.core.PushConstants;
 import dev.supirvast.vastir.core.ShaderStage;
 import dev.supirvast.vastir.lower.CoreToSpirv;
 import dev.supirvast.vastir.type.Type;
-import dev.vexelray.sim.core.ir.Body;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
 
-import static dev.vexelray.sim.core.ir.Body.F32;
-import static dev.vexelray.sim.core.ir.Body.VEC2;
-import static dev.vexelray.sim.core.ir.Body.VEC4;
-import static dev.vexelray.sim.core.ir.Body.abs;
-import static dev.vexelray.sim.core.ir.Body.add;
-import static dev.vexelray.sim.core.ir.Body.clamp;
-import static dev.vexelray.sim.core.ir.Body.component;
-import static dev.vexelray.sim.core.ir.Body.div;
-import static dev.vexelray.sim.core.ir.Body.eq;
-import static dev.vexelray.sim.core.ir.Body.f;
-import static dev.vexelray.sim.core.ir.Body.floor;
-import static dev.vexelray.sim.core.ir.Body.gt;
-import static dev.vexelray.sim.core.ir.Body.input;
-import static dev.vexelray.sim.core.ir.Body.load;
-import static dev.vexelray.sim.core.ir.Body.lt;
-import static dev.vexelray.sim.core.ir.Body.max;
-import static dev.vexelray.sim.core.ir.Body.mix;
-import static dev.vexelray.sim.core.ir.Body.mul;
-import static dev.vexelray.sim.core.ir.Body.not;
-import static dev.vexelray.sim.core.ir.Body.pushed;
-import static dev.vexelray.sim.core.ir.Body.splat3;
-import static dev.vexelray.sim.core.ir.Body.sqrt;
-import static dev.vexelray.sim.core.ir.Body.sub;
-import static dev.vexelray.sim.core.ir.Body.toInt;
-import static dev.vexelray.sim.core.ir.Body.v;
-import static dev.vexelray.sim.core.ir.Body.vec3;
-import static dev.vexelray.sim.core.ir.Body.vec4;
+import static dev.supirvast.vastir.build.Body.F32;
+import static dev.supirvast.vastir.build.Body.VEC2;
+import static dev.supirvast.vastir.build.Body.VEC4;
+import static dev.supirvast.vastir.build.Body.abs;
+import static dev.supirvast.vastir.build.Body.add;
+import static dev.supirvast.vastir.build.Body.clamp;
+import static dev.supirvast.vastir.build.Body.component;
+import static dev.supirvast.vastir.build.Body.div;
+import static dev.supirvast.vastir.build.Body.eq;
+import static dev.supirvast.vastir.build.Body.f;
+import static dev.supirvast.vastir.build.Body.floor;
+import static dev.supirvast.vastir.build.Body.gt;
+import static dev.supirvast.vastir.build.Body.input;
+import static dev.supirvast.vastir.build.Body.load;
+import static dev.supirvast.vastir.build.Body.lt;
+import static dev.supirvast.vastir.build.Body.max;
+import static dev.supirvast.vastir.build.Body.mix;
+import static dev.supirvast.vastir.build.Body.mul;
+import static dev.supirvast.vastir.build.Body.not;
+import static dev.supirvast.vastir.build.Body.pushed;
+import static dev.supirvast.vastir.build.Body.splat3;
+import static dev.supirvast.vastir.build.Body.sqrt;
+import static dev.supirvast.vastir.build.Body.sub;
+import static dev.supirvast.vastir.build.Body.toInt;
+import static dev.supirvast.vastir.build.Body.v;
+import static dev.supirvast.vastir.build.Body.vec3;
+import static dev.supirvast.vastir.build.Body.vec4;
 
 /**
  * The debug view's fragment stage: one pixel, one cell, one colour — written by hand in SupirVast IR, beside

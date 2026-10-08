@@ -1,40 +1,40 @@
 package dev.vexelray.sim.fluid.stencil;
 
+import dev.supirvast.vastir.build.Body;
 import dev.supirvast.vastir.core.AtomicOp;
 import dev.supirvast.vastir.core.Buffer;
 import dev.supirvast.vastir.core.Expr;
 import dev.supirvast.vastir.core.Function;
 import dev.supirvast.vastir.core.LocalVar;
 import dev.supirvast.vastir.type.Type;
-import dev.vexelray.sim.core.ir.Body;
 import dev.vexelray.sim.core.time.Clock;
 
 import java.util.List;
 
-import static dev.vexelray.sim.core.ir.Body.F32;
-import static dev.vexelray.sim.core.ir.Body.I32;
-import static dev.vexelray.sim.core.ir.Body.abs;
-import static dev.vexelray.sim.core.ir.Body.bitsOf;
-import static dev.vexelray.sim.core.ir.Body.floatOf;
-import static dev.vexelray.sim.core.ir.Body.add;
-import static dev.vexelray.sim.core.ir.Body.div;
-import static dev.vexelray.sim.core.ir.Body.eq;
-import static dev.vexelray.sim.core.ir.Body.f;
-import static dev.vexelray.sim.core.ir.Body.gt;
-import static dev.vexelray.sim.core.ir.Body.i;
-import static dev.vexelray.sim.core.ir.Body.load;
-import static dev.vexelray.sim.core.ir.Body.lt;
-import static dev.vexelray.sim.core.ir.Body.max;
-import static dev.vexelray.sim.core.ir.Body.min;
-import static dev.vexelray.sim.core.ir.Body.mod;
-import static dev.vexelray.sim.core.ir.Body.mul;
-import static dev.vexelray.sim.core.ir.Body.neg;
-import static dev.vexelray.sim.core.ir.Body.not;
-import static dev.vexelray.sim.core.ir.Body.sqrt;
-import static dev.vexelray.sim.core.ir.Body.sub;
-import static dev.vexelray.sim.core.ir.Body.toFloat;
-import static dev.vexelray.sim.core.ir.Body.toInt;
-import static dev.vexelray.sim.core.ir.Body.v;
+import static dev.supirvast.vastir.build.Body.F32;
+import static dev.supirvast.vastir.build.Body.I32;
+import static dev.supirvast.vastir.build.Body.abs;
+import static dev.supirvast.vastir.build.Body.add;
+import static dev.supirvast.vastir.build.Body.bitsOf;
+import static dev.supirvast.vastir.build.Body.div;
+import static dev.supirvast.vastir.build.Body.eq;
+import static dev.supirvast.vastir.build.Body.f;
+import static dev.supirvast.vastir.build.Body.floatOf;
+import static dev.supirvast.vastir.build.Body.gt;
+import static dev.supirvast.vastir.build.Body.i;
+import static dev.supirvast.vastir.build.Body.load;
+import static dev.supirvast.vastir.build.Body.lt;
+import static dev.supirvast.vastir.build.Body.max;
+import static dev.supirvast.vastir.build.Body.min;
+import static dev.supirvast.vastir.build.Body.mod;
+import static dev.supirvast.vastir.build.Body.mul;
+import static dev.supirvast.vastir.build.Body.neg;
+import static dev.supirvast.vastir.build.Body.not;
+import static dev.supirvast.vastir.build.Body.sqrt;
+import static dev.supirvast.vastir.build.Body.sub;
+import static dev.supirvast.vastir.build.Body.toFloat;
+import static dev.supirvast.vastir.build.Body.toInt;
+import static dev.supirvast.vastir.build.Body.v;
 
 /**
  * One explicit step of the shallow-water equations over one bounded patch — the first kernel, written by

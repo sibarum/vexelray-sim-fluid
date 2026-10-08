@@ -1,5 +1,6 @@
 package dev.vexelray.sim.fluid.gui;
 
+import dev.supirvast.vastir.pass.Pass;
 import dev.supirvast.vastir.tools.Accelerator;
 import dev.supirvast.vastir.tools.DispatchSequence;
 import dev.supirvast.vastir.tools.KernelColumn;
@@ -8,7 +9,6 @@ import dev.supirvast.vastir.tools.KernelSpec;
 import dev.supirvast.vastir.tools.ResidentBuffer;
 import dev.vexelray.sim.fluid.particle.Flip;
 import dev.vexelray.sim.fluid.particle.FlipStep;
-import dev.vexelray.sim.core.step.Pass;
 import dev.vexelray.sim.fluid.particle.Scatter;
 
 import java.util.ArrayList;
