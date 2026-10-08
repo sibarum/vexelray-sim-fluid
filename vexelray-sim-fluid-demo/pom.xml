@@ -105,15 +105,10 @@
                         <imageName>${native.imageName}</imageName>
                         <mainClass>${app.mainClass}</mainClass>
                         <buildArgs>
+                            <!-- The FFM flags, the shaders and the font atlas come from the libraries' own
+                                 META-INF/native-image metadata. -->
                             <buildArg>--no-fallback</buildArg>
-                            <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
-                            <buildArg>-H:+ForeignAPISupport</buildArg>
-                            <!-- tactroller's raw input registrations each get an Arena.ofShared; without this
-                                 closing one throws, and that hides whatever ended the run. -->
-                            <buildArg>-H:+SharedArenaSupport</buildArg>
-                            <buildArg>--enable-native-access=ALL-UNNAMED</buildArg>
                             <buildArg>-Dstdout.encoding=UTF-8</buildArg>
-                            <buildArg>-H:IncludeResources=META-INF/supirvast/shaders/.*</buildArg>
                             <!-- WINDOWS = no console window, and /ENTRY:mainCRTStartup is not optional alongside it:
                                  the linker would otherwise look for WinMain, and the image's entry is the C main.
                                  CONSOLE is the linker's default, spelled out so both editions pass the same

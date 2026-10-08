@@ -1,7 +1,0 @@
-{
-  "resources": [
-    { "glob": "dev/vexelray/text/atlas/fonts.json" },
-    { "glob": "dev/vexelray/text/atlas/*/*.json" },
-    { "glob": "dev/vexelray/text/atlas/*/*.rgba" }
-  ]
-}

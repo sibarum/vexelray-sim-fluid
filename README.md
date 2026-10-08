@@ -93,10 +93,14 @@ native image can only ship as nine DLLs beside the executable. `vexelray-gui` ke
 RGBA pixels, captures are written by its own PNG writer, and a guard test fails on any reference to AWT or ImageIO.
 If the build's artifacts ever list a `.dll` again, something has started to reach AWT.
 
-The reachability metadata (FFM downcalls and upcalls, the window procedure, the input backend, the shaders) is in `vexelray-sim-fluid-demo/src/main/resources/META-INF/native-image/`. It was
-recorded by running the demo under the tracing agent while `ottermate` drove every scenario, view and key.
-After a change that reaches new native or reflective code, anywhere in the stack, record it again the same way.
-A metadata gap does not fail the build; the binary fails when it reaches the missing call, so run it afterwards.
+The libraries carry their own reachability metadata in their jars: the FFM build flags, every downcall shape they
+declare, the window procedure, the input backend, the shaders and the font atlas. What is this demo's own (its main
+class, LWJGL, SupirVast's bundled SPIR-V tools, JDK entries) is in
+`vexelray-sim-fluid-demo/src/main/resources/META-INF/native-image/`. It was recorded by running the demo under the
+tracing agent while `ottermate` drove every scenario, view and key, then trimmed of what the libraries list. After a
+change that reaches new native or reflective code here, record it again the same way and trim it again; a gap in a
+library belongs in that library's metadata. A metadata gap does not fail the build; the binary fails when it reaches
+the missing call, so run it afterwards.
 
 ```bash
 mvn -pl vexelray-sim-fluid-demo exec:exec -Dautomation=0 "-Dapp.jvmArgs=-agentlib:native-image-agent=config-merge-dir=$(pwd)/vexelray-sim-fluid-demo/src/main/resources/META-INF/native-image/dev.vexelray.sim/vexelray-sim-fluid-demo,config-write-period-secs=5"
@@ -107,9 +111,7 @@ directory beside it. `config-merge-dir` adds what the run saw to what is there, 
 The periodic write matters, because `ottermate` ends the process rather than letting it exit, and the agent
 otherwise writes only at exit.
 
-The font set is listed by hand, in `vexelray-sim-fluid-demo-fonts/` beside the traced file, which a re-trace does
-not touch: the manifest and every face's metrics and pixels, whichever faces `vexelray-text` bakes. A trace only
-lists the files one run opened, so it went stale when the atlas became a set of families. Only the GPU path has been recorded and tried. SupirVast's CPU fallback, which
+Only the GPU path has been recorded and tried. SupirVast's CPU fallback, which
 lowers kernels through Truffle, cannot be forced on a machine with a GPU, so a native binary on a machine without
 one is untested.
 
