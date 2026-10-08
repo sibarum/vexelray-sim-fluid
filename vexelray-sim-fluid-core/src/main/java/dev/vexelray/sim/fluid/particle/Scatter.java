@@ -9,6 +9,7 @@ import dev.supirvast.vastir.core.LocalVar;
 import dev.supirvast.vastir.core.SharedArray;
 import dev.supirvast.vastir.core.Statement;
 import dev.supirvast.vastir.core.SubgroupOp;
+import dev.supirvast.vastir.pass.CountingSort;
 import dev.supirvast.vastir.type.Type;
 
 import java.util.List;
@@ -435,6 +436,33 @@ public final class Scatter {
                 }
             }
         }));
+    }
+
+    // --- the sort by cell ----------------------------------------------------------------------------------
+
+    public static final Buffer SORT_X = new Buffer("px", 0, F32);
+    public static final Buffer SORT_Y = new Buffer("py", 1, F32);
+    public static final Buffer SORT_COUNTS = new Buffer("counts", 2, Body.I32);
+    public static final Buffer SORT_KEYS = new Buffer("keys", 3, Body.I32);
+    public static final Buffer SORT_RANKS = new Buffer("ranks", 4, Body.I32);
+
+    /** Every buffer {@link #sortCount} binds, in binding order. */
+    public static final List<Buffer> SORT_COUNT_BUFFERS = List.of(SORT_X, SORT_Y, SORT_COUNTS, SORT_KEYS, SORT_RANKS);
+
+    /**
+     * The first pass of a {@link CountingSort} by cell — the order {@link #gather} needs, and the starts it reads:
+     * one invocation per particle, keyed by {@link #cell}. The counts are {@link CountingSort#length
+     * CountingSort.length((nx − 1)(ny − 1))} long and must be zero on entry, as the sort's scan leaves them. The
+     * rest of the sort is {@link CountingSort#scan} and {@link CountingSort#permute}.
+     */
+    public static Function sortCount(int nx, int ny) {
+        requireGrid(nx, ny);
+        Body b = new Body();
+        LocalVar p = b.let("p", new Expr.InvocationId());
+        Cell cell = Cell.of(b, "", v(p), nx, ny, SORT_X, SORT_Y);
+        CountingSort.count(b, v(p), add(mul(v(cell.row()), i(nx - 1)), v(cell.col())), SORT_COUNTS, SORT_KEYS,
+                SORT_RANKS);
+        return new Function("sortCount", new Type.FunctionType(Type.VOID, List.of()), b.finish());
     }
 
     /**

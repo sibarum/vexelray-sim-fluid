@@ -46,8 +46,8 @@ import static dev.supirvast.vastir.build.Body.v;
  *   <li>{@link #advect}: each particle's velocity and its affine velocity {@code C} back from the grid, its
  *       compression carried forward by {@code tr C}, and its position moved.</li>
  * </ol>
- * Every few steps a {@link Sort} and a {@link #copy} back keep the particles in cell order, which keeps the
- * segmented scatter's runs long.
+ * Every few steps a sort by cell ({@link Scatter#sortCount} and SupirVast's {@code CountingSort}) and a
+ * {@link #copy} back keep the particles in cell order, which keeps the segmented scatter's runs long.
  *
  * <h2>APIC in place of the FLIP blend</h2>
  * Each particle carries {@code C}, a 2×2 affine velocity, and deposits momentum {@code w·m·(v + C·(xᵢ − xₚ))}. So

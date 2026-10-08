@@ -174,9 +174,9 @@ cannot be fixed from here at all.
       running in the window, only tested headless.
 
 - [ ] **Sort particles by their stencil, not their cell.** `Flip` scatters over a 3×3 quadratic stencil
-      keyed by `⌊x − ½⌋`, but `Sort` orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one key
-      and half the next, interleaved, so the segmented scatter's runs are about half as long as they could be.
-      Offset the sort's key by half a cell. Then measure the scatter as it now is: 27 amounts a lane (nine
+      keyed by `⌊x − ½⌋`, but the sort orders by the cell `⌊x⌋`. Half of a sorted cell's particles have one
+      key and half the next, interleaved, so the segmented scatter's runs are about half as long as they could
+      be. Offset the sort's key, in `Scatter.sortCount`, by half a cell. Then measure the scatter as it now is: 27 amounts a lane (nine
       nodes, three fields), five shuffle rounds each, against the benchmark's twelve.
 
 - [ ] **MLS-MPM: what the dam break has not tested.** Taller columns, more particles per cell, a second
@@ -253,10 +253,11 @@ cannot be fixed from here at all.
       `b = 10` that is `2^42`, so the share products need 64-bit intermediates (non-atomic `shaderInt64`,
       optional but common) or far fewer offset bits.
 
-- [ ] **Sorting to gather does not pay for itself every step.** `particle.Sort` is a five-pass counting
-      sort (count and rank by integer atomic, a three-pass workgroup-memory scan, permute), exact against
-      the host's sort on both backends and needing no optional capability. `SortTest.gpuSortCost`, 2²⁰
-      particles, RTX, ms per step, typical of three runs — dispatched one by one, and recorded once as a
+- [ ] **Sorting to gather does not pay for itself every step.** The sort by cell is a five-pass counting
+      sort (count and rank by integer atomic, a three-pass workgroup-memory scan, permute): SupirVast's
+      `CountingSort`, keyed by cell in `Scatter.sortCount`, where the fluid's own `particle.Sort` was. It is
+      exact against the host's sort on both backends and needs no optional capability.
+      `SortTest.gpuSortCost`, 2²⁰ particles, RTX, ms per step, typical of three runs — dispatched one by one, and recorded once as a
       `DispatchSequence` run as one submission:
 
       | ppc | input | sort | sort + gather | sort, seq | sort + gather, seq | direct | segmented |

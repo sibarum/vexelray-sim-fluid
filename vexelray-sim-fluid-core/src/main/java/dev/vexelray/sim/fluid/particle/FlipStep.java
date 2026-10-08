@@ -5,6 +5,7 @@ import dev.supirvast.vastir.core.Buffer;
 import dev.supirvast.vastir.core.Function;
 import dev.supirvast.vastir.pass.BufferSpec;
 import dev.supirvast.vastir.pass.Buffered;
+import dev.supirvast.vastir.pass.CountingSort;
 import dev.supirvast.vastir.pass.Pass;
 import dev.supirvast.vastir.type.Type;
 
@@ -89,7 +90,7 @@ public final class FlipStep implements Buffered {
         this.ny = ny;
         this.particles = particles;
         int nodes = nx * ny;
-        int length = Sort.length(nx, ny);
+        int length = CountingSort.length((nx - 1) * (ny - 1));
 
         List<String> particle = heat
                 ? List.of("x", "y", "u", "v", "m", "j", "c00", "c01", "c10", "c11", "t")
@@ -102,7 +103,7 @@ public final class FlipStep implements Buffered {
         add("ranks", Body.I32, particles);
         add("counts", Body.I32, length);
         add("starts", Body.I32, length);
-        add("sums", Body.I32, Sort.blocks(length));
+        add("sums", Body.I32, CountingSort.blocks(length));
         for (String field : List.of("gm", "gmu", "gmv", "gu", "gv")) {
             add(field, Body.F32, nodes);
         }
@@ -179,18 +180,16 @@ public final class FlipStep implements Buffered {
                 new Pass("scatter", Flip.scatterSliced(nx, ny), Flip.SCATTER_BUFFERS, passes.get(1).buffers(), SLICE),
                 passes.get(2),
                 new Pass("advect", Flip.advectSliced(nx, ny), Flip.ADVECT_BUFFERS, passes.get(3).buffers(), SLICE));
-        sort = List.of(
-                new Pass("count", Sort.count(nx, ny), Sort.COUNT_BUFFERS,
-                        List.of("x", "y", "counts", "keys", "ranks"), particles),
-                new Pass("scanBlocks", Sort.scanBlocks(length), Sort.SCAN_BLOCKS_BUFFERS,
-                        List.of("counts", "starts", "sums"), length),
-                new Pass("scanSums", Sort.scanSums(length), Sort.SCAN_SUMS_BUFFERS, List.of("sums"), Sort.BLOCK),
-                new Pass("addOffsets", Sort.addOffsets(length), Sort.ADD_OFFSETS_BUFFERS,
-                        List.of("starts", "sums", "counts"), length),
-                new Pass("permute", Sort.permute(particle.size()), Sort.permuteBuffers(particle.size()),
-                        concat(List.of("keys", "ranks", "starts"), concat(particle, sorted)), particles),
-                new Pass("copy", Flip.copy(particle.size()), Flip.copyBuffers(particle.size()), concat(sorted, particle),
-                        particles));
+        List<Pass> sorting = new ArrayList<>();
+        sorting.add(new Pass("count", Scatter.sortCount(nx, ny), Scatter.SORT_COUNT_BUFFERS,
+                List.of("x", "y", "counts", "keys", "ranks"), particles));
+        sorting.addAll(CountingSort.scan(length, "counts", "starts", "sums"));
+        sorting.add(new Pass("permute", CountingSort.permute(particle.size()),
+                CountingSort.permuteBuffers(particle.size()),
+                concat(List.of("keys", "ranks", "starts"), concat(particle, sorted)), particles));
+        sorting.add(new Pass("copy", Flip.copy(particle.size()), Flip.copyBuffers(particle.size()),
+                concat(sorted, particle), particles));
+        sort = List.copyOf(sorting);
     }
 
     @Override

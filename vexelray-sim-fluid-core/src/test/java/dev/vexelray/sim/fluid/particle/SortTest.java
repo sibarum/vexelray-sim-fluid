@@ -4,6 +4,7 @@ import dev.supirvast.vast.CoreToTruffle;
 import dev.supirvast.vast.CpuKernel;
 import dev.supirvast.vastir.core.Buffer;
 import dev.supirvast.vastir.core.Function;
+import dev.supirvast.vastir.pass.CountingSort;
 import dev.supirvast.vastir.tools.Accelerator;
 import dev.supirvast.vastir.tools.DispatchSequence;
 import dev.supirvast.vastir.tools.KernelHandle;
@@ -36,6 +37,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * sorting and then gathering costs against scattering the particles as they come.
  */
 class SortTest {
+
+    /** The particle fields the sort moves: {@code x, y, u, v, m}. */
+    private static final int FIELDS = 5;
 
     // --- correctness ------------------------------------------------------------------------------------
 
@@ -124,7 +128,7 @@ class SortTest {
         for (int k = 0; k < a.length; k++) {
             assertEquals(Scatter.cell(ef[0][e[k]], ef[1][e[k]], n, n), Scatter.cell(af[0][a[k]], af[1][a[k]], n, n),
                     backend + ": particle " + k + " is in another cell");
-            for (int f = 0; f < Sort.FIELDS; f++) {
+            for (int f = 0; f < FIELDS; f++) {
                 assertEquals(ef[f][e[k]], af[f][a[k]], 0f, backend + ": field " + f + " of particle " + k);
             }
         }
@@ -204,24 +208,24 @@ class SortTest {
         Function empty = new Function("empty", new dev.supirvast.vastir.type.Type.FunctionType(
                 dev.supirvast.vastir.type.Type.VOID, List.of()), b.finish());
         KernelHandle handle = accelerator.register(new KernelSpec(empty, columns(List.of(out), new int[][] {{0}}))
-                .withWorkgroupSize(Sort.BLOCK)).orElseThrow();
+                .withWorkgroupSize(CountingSort.BLOCK)).orElseThrow();
         ResidentBuffer buffer = accelerator.allocate(out.element(), 1);
         try {
             for (int s = 0; s < 20; s++) {
-                handle.dispatch(List.of(buffer), Sort.BLOCK);
+                handle.dispatch(List.of(buffer), CountingSort.BLOCK);
             }
             buffer.read();
             int timed = 500;
             long start = System.nanoTime();
             for (int s = 0; s < timed; s++) {
-                handle.dispatch(List.of(buffer), Sort.BLOCK);
+                handle.dispatch(List.of(buffer), CountingSort.BLOCK);
             }
             buffer.read();
             double single = (System.nanoTime() - start) / 1e6 / timed;
 
             DispatchSequence.Builder builder = accelerator.sequence();
             for (int s = 0; s < 5; s++) {
-                builder.dispatch(handle, List.of(buffer), Sort.BLOCK);
+                builder.dispatch(handle, List.of(buffer), CountingSort.BLOCK);
             }
             try (DispatchSequence five = builder.build()) {
                 for (int s = 0; s < 20; s++) {
@@ -244,8 +248,9 @@ class SortTest {
     // --- running it -------------------------------------------------------------------------------------
 
     /**
-     * The five passes of {@link Sort} over one set of buffers, and the gather and the direct scatter over the
-     * same buffers: sorted particles, starts and grid all stay where the passes left them.
+     * The five passes of the sort by cell — {@link Scatter#sortCount}, then {@link CountingSort}'s — over one set
+     * of buffers, and the gather and the direct scatter over the same buffers: sorted particles, starts and grid
+     * all stay where the passes left them.
      */
     abstract static sealed class Sorter implements AutoCloseable permits CpuSorter, GpuSorter {
 
@@ -260,8 +265,8 @@ class SortTest {
         Sorter(int n, int count) {
             this.n = n;
             this.count = count;
-            this.length = Sort.length(n, n);
-            this.blocks = Sort.blocks(length);
+            this.length = CountingSort.length((n - 1) * (n - 1));
+            this.blocks = CountingSort.blocks(length);
             this.sort = sortPasses();
             this.gather = gatherPass();
             this.scatter = scatterPass();
@@ -291,14 +296,14 @@ class SortTest {
             List<String> permute = new ArrayList<>(List.of("keys", "ranks", "starts"));
             permute.addAll(in);
             permute.addAll(out);
-            return List.of(
-                    new Pass(Sort.count(n, n), Sort.COUNT_BUFFERS, List.of("x", "y", "counts", "keys", "ranks"), count),
-                    new Pass(Sort.scanBlocks(length), Sort.SCAN_BLOCKS_BUFFERS, List.of("counts", "starts", "sums"),
-                            length),
-                    new Pass(Sort.scanSums(length), Sort.SCAN_SUMS_BUFFERS, List.of("sums"), Sort.BLOCK),
-                    new Pass(Sort.addOffsets(length), Sort.ADD_OFFSETS_BUFFERS, List.of("starts", "sums", "counts"),
-                            length),
-                    new Pass(Sort.permute(), Sort.PERMUTE_BUFFERS, permute, count));
+            List<Pass> passes = new ArrayList<>();
+            passes.add(new Pass(Scatter.sortCount(n, n), Scatter.SORT_COUNT_BUFFERS,
+                    List.of("x", "y", "counts", "keys", "ranks"), count));
+            for (var scan : CountingSort.scan(length, "counts", "starts", "sums")) {
+                passes.add(new Pass(scan.kernel(), scan.bindings(), scan.buffers(), scan.invocations()));
+            }
+            passes.add(new Pass(CountingSort.permute(FIELDS), CountingSort.permuteBuffers(FIELDS), permute, count));
+            return List.copyOf(passes);
         }
 
         private Pass gatherPass() {
@@ -402,7 +407,7 @@ class SortTest {
         @Override
         void run(Pass pass) {
             CpuKernel kernel = lowered.computeIfAbsent(pass.kernel(),
-                    k -> new CoreToTruffle().lowerDispatch(k, pass.bindings(), Sort.BLOCK));
+                    k -> new CoreToTruffle().lowerDispatch(k, pass.bindings(), CountingSort.BLOCK));
             kernel.dispatch(pass.buffers().stream().map(arrays::get).toArray(int[][]::new), pass.invocations());
         }
     }
@@ -422,7 +427,7 @@ class SortTest {
             java.util.Map<String, int[]> layout = layout();
             layout.forEach((name, words) -> {
                 boolean isFloat = !List.of("keys", "ranks", "counts", "starts", "sums").contains(name);
-                ResidentBuffer buffer = accelerator.allocate(isFloat ? Scatter.PX.element() : Sort.COUNT_KEYS.element(),
+                ResidentBuffer buffer = accelerator.allocate(isFloat ? Scatter.PX.element() : Scatter.SORT_KEYS.element(),
                         words.length);
                 buffer.write(words);   // zero: the counts must start so, and the rest is overwritten
                 buffers.put(name, buffer);
@@ -469,7 +474,7 @@ class SortTest {
         private void register(Pass pass) {
             int[][] words = pass.buffers().stream().map(b -> new int[buffers.get(b).elements()]).toArray(int[][]::new);
             KernelHandle handle = accelerator.register(new KernelSpec(pass.kernel(), columns(pass.bindings(), words))
-                    .withWorkgroupSize(Sort.BLOCK)).orElseThrow();
+                    .withWorkgroupSize(CountingSort.BLOCK)).orElseThrow();
             handles.put(pass, handle);
         }
 
