@@ -195,12 +195,12 @@ class SortTest {
      * at a time, and then per dispatch in a {@link DispatchSequence} of five, which pays the fixed cost once.
      */
     private static double[] dispatchFloor(Accelerator accelerator) {
-        Buffer out = new Buffer("out", 0, dev.vexelray.sim.fluid.ir.Body.I32);
-        dev.vexelray.sim.fluid.ir.Body b = new dev.vexelray.sim.fluid.ir.Body();
+        Buffer out = new Buffer("out", 0, dev.vexelray.sim.core.ir.Body.I32);
+        dev.vexelray.sim.core.ir.Body b = new dev.vexelray.sim.core.ir.Body();
         dev.supirvast.vastir.core.LocalVar k = b.let("k", new dev.supirvast.vastir.core.Expr.InvocationId());
-        b.when(dev.vexelray.sim.fluid.ir.Body.eq(dev.vexelray.sim.fluid.ir.Body.v(k),
-                dev.vexelray.sim.fluid.ir.Body.i(0)), t -> t.store(out, dev.vexelray.sim.fluid.ir.Body.i(0),
-                dev.vexelray.sim.fluid.ir.Body.i(1)));
+        b.when(dev.vexelray.sim.core.ir.Body.eq(dev.vexelray.sim.core.ir.Body.v(k),
+                dev.vexelray.sim.core.ir.Body.i(0)), t -> t.store(out, dev.vexelray.sim.core.ir.Body.i(0),
+                dev.vexelray.sim.core.ir.Body.i(1)));
         Function empty = new Function("empty", new dev.supirvast.vastir.type.Type.FunctionType(
                 dev.supirvast.vastir.type.Type.VOID, List.of()), b.finish());
         KernelHandle handle = accelerator.register(new KernelSpec(empty, columns(List.of(out), new int[][] {{0}}))

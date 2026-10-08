@@ -9,28 +9,28 @@ import dev.supirvast.vastir.core.SharedArray;
 import dev.supirvast.vastir.core.Statement;
 import dev.supirvast.vastir.core.SubgroupOp;
 import dev.supirvast.vastir.type.Type;
-import dev.vexelray.sim.fluid.ir.Body;
+import dev.vexelray.sim.core.ir.Body;
 
 import java.util.List;
 
-import static dev.vexelray.sim.fluid.ir.Body.F32;
-import static dev.vexelray.sim.fluid.ir.Body.add;
-import static dev.vexelray.sim.fluid.ir.Body.clamp;
-import static dev.vexelray.sim.fluid.ir.Body.div;
-import static dev.vexelray.sim.fluid.ir.Body.eq;
-import static dev.vexelray.sim.fluid.ir.Body.f;
-import static dev.vexelray.sim.fluid.ir.Body.i;
-import static dev.vexelray.sim.fluid.ir.Body.load;
-import static dev.vexelray.sim.fluid.ir.Body.lt;
-import static dev.vexelray.sim.fluid.ir.Body.min;
-import static dev.vexelray.sim.fluid.ir.Body.mod;
-import static dev.vexelray.sim.fluid.ir.Body.mul;
-import static dev.vexelray.sim.fluid.ir.Body.not;
-import static dev.vexelray.sim.fluid.ir.Body.sharedLoad;
-import static dev.vexelray.sim.fluid.ir.Body.sub;
-import static dev.vexelray.sim.fluid.ir.Body.toFloat;
-import static dev.vexelray.sim.fluid.ir.Body.toInt;
-import static dev.vexelray.sim.fluid.ir.Body.v;
+import static dev.vexelray.sim.core.ir.Body.F32;
+import static dev.vexelray.sim.core.ir.Body.add;
+import static dev.vexelray.sim.core.ir.Body.clamp;
+import static dev.vexelray.sim.core.ir.Body.div;
+import static dev.vexelray.sim.core.ir.Body.eq;
+import static dev.vexelray.sim.core.ir.Body.f;
+import static dev.vexelray.sim.core.ir.Body.i;
+import static dev.vexelray.sim.core.ir.Body.load;
+import static dev.vexelray.sim.core.ir.Body.lt;
+import static dev.vexelray.sim.core.ir.Body.min;
+import static dev.vexelray.sim.core.ir.Body.mod;
+import static dev.vexelray.sim.core.ir.Body.mul;
+import static dev.vexelray.sim.core.ir.Body.not;
+import static dev.vexelray.sim.core.ir.Body.sharedLoad;
+import static dev.vexelray.sim.core.ir.Body.sub;
+import static dev.vexelray.sim.core.ir.Body.toFloat;
+import static dev.vexelray.sim.core.ir.Body.toInt;
+import static dev.vexelray.sim.core.ir.Body.v;
 
 /**
  * Particle-to-grid in two dimensions: every particle deposits its mass and momentum on the four grid nodes

@@ -13,12 +13,16 @@
     <artifactId>vexelray-sim-fluid-core</artifactId>
 
     <description>
-        The fluid simulation: water and air in a volume, static geometry, convex rigid bodies. Authored as
+        The fluid simulation: water and air in a volume, static geometry, boundaries moved from outside. Authored as
         SupirVast IR, so one program lowers to SPIR-V and runs on the CPU with nothing to keep in agreement.
         Depends on vastir and the JDK only: no engine and no window, so the simulation is testable headlessly.
     </description>
 
     <dependencies>
+        <dependency>
+            <groupId>dev.vexelray.sim</groupId>
+            <artifactId>vexelray-sim-core</artifactId>
+        </dependency>
         <dependency>
             <groupId>dev.supirvast</groupId>
             <artifactId>vastir</artifactId>

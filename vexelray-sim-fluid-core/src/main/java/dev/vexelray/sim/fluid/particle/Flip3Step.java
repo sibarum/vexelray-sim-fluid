@@ -1,8 +1,9 @@
 package dev.vexelray.sim.fluid.particle;
 
-import dev.vexelray.sim.fluid.ir.Body;
-import dev.vexelray.sim.fluid.particle.FlipStep.BufferSpec;
-import dev.vexelray.sim.fluid.particle.FlipStep.Pass;
+import dev.vexelray.sim.core.ir.Body;
+import dev.vexelray.sim.core.step.BufferSpec;
+import dev.vexelray.sim.core.step.Buffered;
+import dev.vexelray.sim.core.step.Pass;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;

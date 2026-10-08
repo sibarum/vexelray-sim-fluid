@@ -7,6 +7,7 @@ import dev.vexelray.gui.core.input.DragEvent;
 import dev.vexelray.gui.core.input.InputTopics;
 import dev.vexelray.gui.core.layout.NodeLayout;
 import dev.vexelray.gui.core.layout.Rect;
+import dev.vexelray.sim.core.gui.Orbit;
 import dev.vexelray.surface.Surface;
 import dev.vexelray.technique.sdf.MarchSettings;
 import dev.vexelray.technique.sdf.SdfComposer;

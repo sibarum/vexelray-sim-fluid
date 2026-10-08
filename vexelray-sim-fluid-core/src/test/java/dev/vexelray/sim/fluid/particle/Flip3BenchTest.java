@@ -70,7 +70,7 @@ class Flip3BenchTest {
                 rig.read("gm");
                 double whole = (System.nanoTime() - start) / 1e6 / steps;
                 // The scatter alone, to see how much of the step it is.
-                java.util.List<FlipStep.Pass> scatterOnly = java.util.List.of(step.step().get(1));
+                java.util.List<dev.vexelray.sim.core.step.Pass> scatterOnly = java.util.List.of(step.step().get(1));
                 start = System.nanoTime();
                 for (int s = 0; s < steps; s++) {
                     rig.run(scatterOnly);

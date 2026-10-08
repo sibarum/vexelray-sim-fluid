@@ -9,6 +9,8 @@ import dev.vexelray.gui.core.style.Role;
 import dev.vexelray.gui.widget.Button;
 import dev.vexelray.gui.widget.Property;
 import dev.vexelray.gui.widget.Property.Option;
+import dev.vexelray.sim.core.gui.Dial;
+import dev.vexelray.sim.core.gui.Pick;
 import dev.vexelray.sim.fluid.gui.View;
 
 import java.util.ArrayList;

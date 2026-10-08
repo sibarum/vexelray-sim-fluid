@@ -26,6 +26,23 @@ What that asks of every piece:
   the debug renderer. That is the part worth making solid early, because every experiment after it pays
   less.
 
+## Where this sits
+
+The fluid is one simulation of several, in sibling repos that depend downward only:
+
+| Repo | What it is |
+| --- | --- |
+| `vexelray-sim-core` | What every simulation shares: the kernel body, a step as passes over named buffers, the clock, the work budget, the camera, the panel's rows. Infrastructure, never technique. |
+| `vexelray-sim-fluid` | This: the fluid solver and its experiments. |
+| `vexelray-sim-rigid` | The rigid-body solver and its experiments. |
+| `vexelray-sim-physics` | The two coupled, and the front door: what an application that wants physics depends on. |
+
+**Fluid and rigid do not know about each other.** The fluid takes a solid as a boundary — where it is, and how
+fast its surface moves — and gives back what the fluid did to it, and it does not care what is moving that
+boundary. Making the boundary a body, and turning what the fluid did into buoyancy and drag on it, is
+`vexelray-sim-physics`'. A contract both sides must agree on belongs in `vexelray-sim-core`, and moves there
+when a second simulation asks for it, not before.
+
 ## Two scales of fluid
 
 There will eventually be two fluid simulations here, not one, and they are distinguished by what the fluid
@@ -64,7 +81,7 @@ sense for one, it belongs to that one.
 | --- | --- | --- |
 | **The fluid model** — equations derived from Navier–Stokes: conservation of mass and momentum, compressibility, gravity, viscosity, material parameters | water in a jug, oil in a flask | the sea, a river, a lava lake |
 | **The free surface** — where fluid meets air, as a surface that moves and reshapes | sloshing in a glass | the ocean's surface |
-| **Solids** — fluid against static SDF geometry and convex rigid bodies, buoyancy and drag coupled both ways | the container's walls, a cork | a shoreline, a ship |
+| **Solids** — fluid against static SDF geometry, and against moving boundaries whose motion is supplied from outside; the bodies, and the buoyancy and drag coupled both ways, are `vexelray-sim-rigid`'s and `vexelray-sim-physics`' ([above](#where-this-sits)) | the container's walls, a cork | a shoreline, a ship |
 | **Disturbance** — the player and the world pushing on the fluid | knocking it, pouring | a wake, a cannonball |
 | **The symbolic layer** — spray, foam, bubbles, splashes, detected and then evolved cheaply | a splash out of a bucket | a breaking wave |
 | **Optics** — the surface as an SDF, raymarched with refraction, Fresnel and absorption | through glass, a second interface | at a glancing angle, over distance |

@@ -6,34 +6,35 @@ import dev.supirvast.vastir.core.Expr;
 import dev.supirvast.vastir.core.Function;
 import dev.supirvast.vastir.core.LocalVar;
 import dev.supirvast.vastir.type.Type;
-import dev.vexelray.sim.fluid.ir.Body;
+import dev.vexelray.sim.core.ir.Body;
+import dev.vexelray.sim.core.time.Clock;
 
 import java.util.List;
 
-import static dev.vexelray.sim.fluid.ir.Body.F32;
-import static dev.vexelray.sim.fluid.ir.Body.I32;
-import static dev.vexelray.sim.fluid.ir.Body.abs;
-import static dev.vexelray.sim.fluid.ir.Body.bitsOf;
-import static dev.vexelray.sim.fluid.ir.Body.floatOf;
-import static dev.vexelray.sim.fluid.ir.Body.add;
-import static dev.vexelray.sim.fluid.ir.Body.div;
-import static dev.vexelray.sim.fluid.ir.Body.eq;
-import static dev.vexelray.sim.fluid.ir.Body.f;
-import static dev.vexelray.sim.fluid.ir.Body.gt;
-import static dev.vexelray.sim.fluid.ir.Body.i;
-import static dev.vexelray.sim.fluid.ir.Body.load;
-import static dev.vexelray.sim.fluid.ir.Body.lt;
-import static dev.vexelray.sim.fluid.ir.Body.max;
-import static dev.vexelray.sim.fluid.ir.Body.min;
-import static dev.vexelray.sim.fluid.ir.Body.mod;
-import static dev.vexelray.sim.fluid.ir.Body.mul;
-import static dev.vexelray.sim.fluid.ir.Body.neg;
-import static dev.vexelray.sim.fluid.ir.Body.not;
-import static dev.vexelray.sim.fluid.ir.Body.sqrt;
-import static dev.vexelray.sim.fluid.ir.Body.sub;
-import static dev.vexelray.sim.fluid.ir.Body.toFloat;
-import static dev.vexelray.sim.fluid.ir.Body.toInt;
-import static dev.vexelray.sim.fluid.ir.Body.v;
+import static dev.vexelray.sim.core.ir.Body.F32;
+import static dev.vexelray.sim.core.ir.Body.I32;
+import static dev.vexelray.sim.core.ir.Body.abs;
+import static dev.vexelray.sim.core.ir.Body.bitsOf;
+import static dev.vexelray.sim.core.ir.Body.floatOf;
+import static dev.vexelray.sim.core.ir.Body.add;
+import static dev.vexelray.sim.core.ir.Body.div;
+import static dev.vexelray.sim.core.ir.Body.eq;
+import static dev.vexelray.sim.core.ir.Body.f;
+import static dev.vexelray.sim.core.ir.Body.gt;
+import static dev.vexelray.sim.core.ir.Body.i;
+import static dev.vexelray.sim.core.ir.Body.load;
+import static dev.vexelray.sim.core.ir.Body.lt;
+import static dev.vexelray.sim.core.ir.Body.max;
+import static dev.vexelray.sim.core.ir.Body.min;
+import static dev.vexelray.sim.core.ir.Body.mod;
+import static dev.vexelray.sim.core.ir.Body.mul;
+import static dev.vexelray.sim.core.ir.Body.neg;
+import static dev.vexelray.sim.core.ir.Body.not;
+import static dev.vexelray.sim.core.ir.Body.sqrt;
+import static dev.vexelray.sim.core.ir.Body.sub;
+import static dev.vexelray.sim.core.ir.Body.toFloat;
+import static dev.vexelray.sim.core.ir.Body.toInt;
+import static dev.vexelray.sim.core.ir.Body.v;
 
 /**
  * One explicit step of the shallow-water equations over one bounded patch — the first kernel, written by
@@ -142,8 +143,8 @@ public final class ShallowWater {
     /** How many elements {@link #PARAMS} holds. */
     public static final int PARAM_COUNT = 5;
 
-    /** Time's denominator: a tick is a microsecond — a 10 ms step rounds by 0.01%, always downward. */
-    public static final long TICKS_PER_SECOND = 1_000_000L;
+    /** Time's denominator, the {@link Clock}'s: a tick is a microsecond — a 10 ms step rounds by 0.01%, always downward. */
+    public static final long TICKS_PER_SECOND = Clock.TICKS_PER_SECOND;
 
     /**
      * The longest single step, in seconds. A patch with nothing moving has no fastest wave, so its allowed step

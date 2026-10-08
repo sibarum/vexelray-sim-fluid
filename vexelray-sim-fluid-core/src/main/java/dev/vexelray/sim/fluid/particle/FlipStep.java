@@ -3,7 +3,10 @@ package dev.vexelray.sim.fluid.particle;
 import dev.supirvast.vastir.core.Buffer;
 import dev.supirvast.vastir.core.Function;
 import dev.supirvast.vastir.type.Type;
-import dev.vexelray.sim.fluid.ir.Body;
+import dev.vexelray.sim.core.ir.Body;
+import dev.vexelray.sim.core.step.BufferSpec;
+import dev.vexelray.sim.core.step.Buffered;
+import dev.vexelray.sim.core.step.Pass;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -20,19 +23,6 @@ import java.util.Map;
  * Scatter#SUBGROUP}: the scatter needs both, the sort's scans need the workgroup, and the rest do not mind.
  */
 public final class FlipStep implements Buffered {
-
-    /** One dispatch: a kernel, its bindings in order, the named buffers bound to them, and its invocations. */
-    public record Pass(String name, Function kernel, List<Buffer> bindings, List<String> buffers, int invocations) {
-        public Pass {
-            if (bindings.size() != buffers.size()) {
-                throw new IllegalArgumentException(name + ": " + bindings.size() + " bindings but " + buffers.size()
-                        + " buffers");
-            }
-        }
-    }
-
-    /** A buffer every pass refers to by name: its element type and length. */
-    public record BufferSpec(String name, Type element, int length) {}
 
     public final int nx;
     public final int ny;

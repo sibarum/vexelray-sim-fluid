@@ -8,7 +8,8 @@ import dev.supirvast.vastir.tools.DispatchSequence;
 import dev.supirvast.vastir.tools.KernelHandle;
 import dev.supirvast.vastir.tools.KernelSpec;
 import dev.supirvast.vastir.tools.ResidentBuffer;
-import dev.vexelray.sim.fluid.particle.FlipStep.Pass;
+import dev.vexelray.sim.core.step.Buffered;
+import dev.vexelray.sim.core.step.Pass;
 import dev.vexelray.sim.fluid.particle.ScatterTest.Backend;
 
 import java.util.IdentityHashMap;

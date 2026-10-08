@@ -10,6 +10,10 @@ scale** (fluid in containers) and **world scale** (fluid that is the environment
 what they share. [docs/architecture.md](docs/architecture.md) is the reasoning; [docs/TODO.md](docs/TODO.md) is
 what is known and not done.
 
+It is one of several simulations. They all build on `vexelray-sim-core`, which is what they share. Rigid bodies are
+`vexelray-sim-rigid`. Coupling the two, so a body floats or a wake pushes it, is `vexelray-sim-physics`, which is
+also the front door for an application.
+
 ![A dam break of water onto mercury, MLS-MPM, in the material view: water (blue) rides on mercury (red) 13.6 times as dense](docs/images/water-on-mercury.png)
 
 *Water on mercury (13.6 : 1) five seconds after a dam break, in the demo's material view, on the MLS-MPM particle step.*
@@ -23,7 +27,7 @@ what is known and not done.
 ## Running
 
 The stack's siblings must be installed to the local Maven repository first: `supirvast`, `vexelray`,
-`tactroller`, `atchung`, `vexelray-gui`, `vexelray-framework`.
+`tactroller`, `atchung`, `vexelray-gui`, `vexelray-framework`, `vexelray-sim-core`.
 
 ```bash
 mvn install

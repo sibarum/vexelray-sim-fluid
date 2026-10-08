@@ -9,7 +9,7 @@ import dev.supirvast.vastir.tools.KernelSpec;
 import dev.supirvast.vastir.tools.ResidentBuffer;
 import dev.vexelray.sim.fluid.particle.Flip3;
 import dev.vexelray.sim.fluid.particle.Flip3Step;
-import dev.vexelray.sim.fluid.particle.FlipStep.Pass;
+import dev.vexelray.sim.core.step.Pass;
 import dev.vexelray.sim.fluid.particle.Scatter;
 
 import java.util.ArrayList;

@@ -9,6 +9,7 @@ import dev.supirvast.vastir.tools.KernelColumn;
 import dev.supirvast.vastir.tools.KernelHandle;
 import dev.supirvast.vastir.tools.KernelSpec;
 import dev.supirvast.vastir.tools.ResidentBuffer;
+import dev.vexelray.sim.core.time.Clock;
 
 import java.util.ArrayList;
 import java.util.List;

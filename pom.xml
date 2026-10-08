@@ -11,9 +11,10 @@
 
     <name>vexelray-sim-fluid</name>
     <description>
-        Fluid simulation for VexelRay: a volume holding both water and air, static geometry and convex
-        rigid bodies, drawn by an SDF raymarcher from the same field it simulates. The simulation is
-        SupirVast IR in -core, the stack is in -gui, and -demo is an application of both.
+        Fluid simulation for VexelRay: a volume holding both water and air, against static geometry and
+        boundaries moved from outside, drawn by an SDF raymarcher from the same field it simulates. The
+        simulation is SupirVast IR in -core, the stack is in -gui, and -demo is an application of both.
+        Rigid bodies and the coupling are vexelray-sim-rigid's and vexelray-sim-physics'.
     </description>
 
     <modules>
@@ -23,7 +24,7 @@
         <!-- The simulation on the VexelRay stack: the engine, the GUI, and whatever else of it is needed to
              show and drive the field. -->
         <module>vexelray-sim-fluid-gui</module>
-        <!-- The application that drives it: piloting a pirate ship. -->
+        <!-- The experiments, on screen, with their readings. (The pirate ship is vexelray-sim-physics'.) -->
         <module>vexelray-sim-fluid-demo</module>
     </modules>
 
@@ -37,6 +38,7 @@
         <vexelray.gui.version>0.1.0-SNAPSHOT</vexelray.gui.version>
         <vexelray.framework.version>0.1.0-SNAPSHOT</vexelray.framework.version>
         <tactroller.version>1.0-SNAPSHOT</tactroller.version>
+        <vexelray.sim.core.version>0.1.0-SNAPSHOT</vexelray.sim.core.version>
 
         <junit.version>5.11.4</junit.version>
 
@@ -59,7 +61,20 @@
                 <version>${project.version}</version>
             </dependency>
 
-            <!-- SupirVast's pure-Java IR, and the only thing -core depends on. -->
+            <!-- What the simulations share (vexelray-sim-core, a sibling checkout): the kernel body, a step as
+                 data and the clock in the first, the work budget, camera and panel rows in the second. -->
+            <dependency>
+                <groupId>dev.vexelray.sim</groupId>
+                <artifactId>vexelray-sim-core</artifactId>
+                <version>${vexelray.sim.core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vexelray.sim</groupId>
+                <artifactId>vexelray-sim-core-gui</artifactId>
+                <version>${vexelray.sim.core.version}</version>
+            </dependency>
+
+            <!-- SupirVast's pure-Java IR, and with vexelray-sim-core the only thing -core depends on. -->
             <dependency>
                 <groupId>dev.supirvast</groupId>
                 <artifactId>vastir</artifactId>

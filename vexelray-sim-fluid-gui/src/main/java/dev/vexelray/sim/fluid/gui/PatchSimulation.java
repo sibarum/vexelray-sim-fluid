@@ -6,7 +6,7 @@ import dev.supirvast.vastir.tools.KernelColumn;
 import dev.supirvast.vastir.tools.KernelHandle;
 import dev.supirvast.vastir.tools.KernelSpec;
 import dev.supirvast.vastir.tools.ResidentBuffer;
-import dev.vexelray.sim.fluid.stencil.Clock;
+import dev.vexelray.sim.core.time.Clock;
 import dev.vexelray.sim.fluid.stencil.Edges;
 import dev.vexelray.sim.fluid.stencil.ShallowWater;
 

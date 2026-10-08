@@ -7,23 +7,23 @@ import dev.supirvast.vastir.core.Function;
 import dev.supirvast.vastir.core.LocalVar;
 import dev.supirvast.vastir.core.SharedArray;
 import dev.supirvast.vastir.type.Type;
-import dev.vexelray.sim.fluid.ir.Body;
+import dev.vexelray.sim.core.ir.Body;
 
 import java.util.List;
 
-import static dev.vexelray.sim.fluid.ir.Body.F32;
-import static dev.vexelray.sim.fluid.ir.Body.I32;
-import static dev.vexelray.sim.fluid.ir.Body.add;
-import static dev.vexelray.sim.fluid.ir.Body.div;
-import static dev.vexelray.sim.fluid.ir.Body.eq;
-import static dev.vexelray.sim.fluid.ir.Body.i;
-import static dev.vexelray.sim.fluid.ir.Body.load;
-import static dev.vexelray.sim.fluid.ir.Body.lt;
-import static dev.vexelray.sim.fluid.ir.Body.mul;
-import static dev.vexelray.sim.fluid.ir.Body.not;
-import static dev.vexelray.sim.fluid.ir.Body.sharedLoad;
-import static dev.vexelray.sim.fluid.ir.Body.sub;
-import static dev.vexelray.sim.fluid.ir.Body.v;
+import static dev.vexelray.sim.core.ir.Body.F32;
+import static dev.vexelray.sim.core.ir.Body.I32;
+import static dev.vexelray.sim.core.ir.Body.add;
+import static dev.vexelray.sim.core.ir.Body.div;
+import static dev.vexelray.sim.core.ir.Body.eq;
+import static dev.vexelray.sim.core.ir.Body.i;
+import static dev.vexelray.sim.core.ir.Body.load;
+import static dev.vexelray.sim.core.ir.Body.lt;
+import static dev.vexelray.sim.core.ir.Body.mul;
+import static dev.vexelray.sim.core.ir.Body.not;
+import static dev.vexelray.sim.core.ir.Body.sharedLoad;
+import static dev.vexelray.sim.core.ir.Body.sub;
+import static dev.vexelray.sim.core.ir.Body.v;
 
 /**
  * Particles sorted by cell on the device — the order {@link Scatter#gather} needs, and the table of where each

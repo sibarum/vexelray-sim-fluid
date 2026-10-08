@@ -1,7 +1,8 @@
 package dev.vexelray.sim.fluid.demo;
 
 import dev.vexelray.gui.core.app.GuiApp;
-import dev.vexelray.sim.fluid.gui.BudgetController;
+import dev.vexelray.sim.core.gui.Builds;
+import dev.vexelray.sim.core.gui.BudgetController;
 import dev.vexelray.sim.fluid.gui.DebugView;
 import dev.vexelray.sim.fluid.gui.FluidView3;
 import dev.vexelray.sim.fluid.gui.ParticleSimulation;

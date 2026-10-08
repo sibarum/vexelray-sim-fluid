@@ -23,6 +23,11 @@
             <groupId>dev.vexelray.sim</groupId>
             <artifactId>vexelray-sim-fluid-core</artifactId>
         </dependency>
+        <!-- The work budget and the orbit camera, and for the demo above, Builds, Dial and Pick. -->
+        <dependency>
+            <groupId>dev.vexelray.sim</groupId>
+            <artifactId>vexelray-sim-core-gui</artifactId>
+        </dependency>
         <!-- Accelerator, resident buffers, and the fullscreen vertex stage the view draws with. The simulation
              computes on the device the application draws on (GuiApp.gpu()), so a picture of its state reads the
              buffers the kernels wrote rather than a copy; without a window it opens a device of its own. -->
