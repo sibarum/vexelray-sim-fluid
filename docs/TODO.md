@@ -14,8 +14,6 @@ cannot be fixed from here at all.
         scaling, and its steps given to the render thread by Kronometer's `Handoff`. `Handoff.phase` is the blend
         between steps that the budgeted mode's interpolation hand-makes. `SwapEase` and `Session`'s view and reset
         blends become Kronometer curves.
-      - **Runners**: `ParticleSimulation`, `ParticleSimulation3` and the test `Rig` each allocate, register and
-        record a pass list by hand. SupirVast's `PassRunner` (vastir-tools) does all three, on the GPU or the CPU.
       - **Shared pieces**: `Look` is sim-core-gui's `DemoLook`. `FluidView3`'s drag and wheel handling is
         `OrbitControl`. `Session3`'s private `lend()` is `AppCompute.lend`, and `Session3` never closes the
         context it lends; `AppCompute` says whose it is to close.

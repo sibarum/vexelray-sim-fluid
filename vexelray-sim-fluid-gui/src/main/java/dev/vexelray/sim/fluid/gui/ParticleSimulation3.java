@@ -2,24 +2,18 @@ package dev.vexelray.sim.fluid.gui;
 
 import dev.supirvast.vastir.pass.Pass;
 import dev.supirvast.vastir.tools.Accelerator;
-import dev.supirvast.vastir.tools.DispatchSequence;
 import dev.supirvast.vastir.tools.GpuContext;
-import dev.supirvast.vastir.tools.KernelColumn;
-import dev.supirvast.vastir.tools.KernelHandle;
-import dev.supirvast.vastir.tools.KernelSpec;
-import dev.supirvast.vastir.tools.ResidentBuffer;
+import dev.supirvast.vastir.tools.PassRunner;
 import dev.vexelray.sim.fluid.particle.Flip3;
 import dev.vexelray.sim.fluid.particle.Flip3Step;
 import dev.vexelray.sim.fluid.particle.Scatter;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * A particle fluid in one walled three-dimensional box, stepped on resident buffers: {@link ParticleSimulation}'s
- * counterpart for {@link Flip3Step}. The step is recorded once as a {@link DispatchSequence}, so a step is one
+ * counterpart for {@link Flip3Step}. The step is run by a {@link PassRunner} that records it once, so a step is one
  * submission. It is not sorted, and of the two-dimensional step's extras it has only surface tension: no heat,
  * convection or budgeting yet.
  *
@@ -28,7 +22,7 @@ import java.util.Map;
  *
  * <p>Owning-thread only, but for making one. That is slow — a few dozen kernels lowered, validated and compiled, and
  * every buffer allocated — so it is done in two halves: {@link #prepare} on any thread, then {@link
- * #ParticleSimulation3(Prepared)} on the owning one, which only clears the buffers and records the step. The other
+ * #ParticleSimulation3(Prepared)} on the owning one, which only clears the buffers. The other
  * constructors do both at once, for a caller with no frame to keep, such as a test.
  */
 public final class ParticleSimulation3 implements AutoCloseable {
@@ -36,16 +30,12 @@ public final class ParticleSimulation3 implements AutoCloseable {
     private final Flip3Step step;
     private final boolean tension;
     private final Accelerator accelerator;
-    private final Map<String, ResidentBuffer> buffers;
-    private final List<KernelHandle> handles = new ArrayList<>();
-    private final DispatchSequence stepSequence;
-    private final DispatchSequence lodSequence;
+    private final PassRunner runner;
+    /** The level of detail's target and then its passes, as one list. */
+    private final List<Pass> lod;
     private long steps;
     /** The smallest mass a particle was loaded with: what a particle that is not being thinned out holds at least. */
     private float nominalMass;
-
-    /** A pass, registered: its kernel, the buffers it runs against in binding order, and its invocations. */
-    private record Registered(KernelHandle handle, List<ResidentBuffer> buffers, int invocations) {}
 
     /**
      * A simulation as far as it can be made off the owning thread: every kernel registered — lowered, validated and its
@@ -59,19 +49,16 @@ public final class ParticleSimulation3 implements AutoCloseable {
         private final Flip3Step step;
         private final boolean tension;
         private final Accelerator accelerator;
-        private final Map<String, ResidentBuffer> buffers;
-        private final List<Registered> stepPasses;
-        private final List<Registered> lodPasses;
+        private final PassRunner runner;
+        private final List<Pass> lod;
         private boolean taken;
 
-        private Prepared(Flip3Step step, boolean tension, Accelerator accelerator, Map<String, ResidentBuffer> buffers,
-                List<Registered> stepPasses, List<Registered> lodPasses) {
+        private Prepared(Flip3Step step, boolean tension, Accelerator accelerator, PassRunner runner, List<Pass> lod) {
             this.step = step;
             this.tension = tension;
             this.accelerator = accelerator;
-            this.buffers = buffers;
-            this.stepPasses = stepPasses;
-            this.lodPasses = lodPasses;
+            this.runner = runner;
+            this.lod = lod;
         }
 
         public int nx() {
@@ -99,6 +86,7 @@ public final class ParticleSimulation3 implements AutoCloseable {
         public void close() {
             if (!taken) {
                 taken = true;
+                runner.close();
                 accelerator.close();
             }
         }
@@ -120,31 +108,12 @@ public final class ParticleSimulation3 implements AutoCloseable {
 
     private static Prepared prepare(Accelerator accelerator, int nx, int ny, int nz, int particles, boolean tension) {
         Flip3Step step = new Flip3Step(nx, ny, nz, particles, tension);
-        Map<String, ResidentBuffer> buffers = new LinkedHashMap<>();
-        step.buffers().forEach((name, spec) -> buffers.put(name, accelerator.allocate(spec.element(), spec.length())));
+        PassRunner runner = PassRunner.gpu(accelerator, step, Scatter.WORKGROUP, Scatter.SUBGROUP);
         List<Pass> lod = new ArrayList<>(step.lodTarget());
         lod.addAll(step.lod());
-        return new Prepared(step, tension, accelerator, buffers, register(accelerator, buffers, step.step()),
-                register(accelerator, buffers, lod));
-    }
-
-    /** Each pass's kernel registered against the buffers it binds. */
-    private static List<Registered> register(Accelerator accelerator, Map<String, ResidentBuffer> buffers,
-            List<Pass> passes) {
-        List<Registered> registered = new ArrayList<>();
-        for (Pass pass : passes) {
-            List<ResidentBuffer> bound = pass.buffers().stream().map(buffers::get).toList();
-            List<KernelColumn> columns = new ArrayList<>();
-            for (int k = 0; k < pass.bindings().size(); k++) {
-                var binding = pass.bindings().get(k);
-                columns.add(KernelColumn.output(binding.name(), binding.binding(), binding.element())
-                        .withLength(bound.get(k).elements()));
-            }
-            KernelHandle handle = accelerator.register(new KernelSpec(pass.kernel(), columns)
-                    .withWorkgroupSize(Scatter.WORKGROUP).withSubgroupSize(Scatter.SUBGROUP)).orElseThrow();
-            registered.add(new Registered(handle, bound, pass.invocations()));
-        }
-        return registered;
+        runner.prepare(step.step());
+        runner.prepare(lod);
+        return new Prepared(step, tension, accelerator, runner, List.copyOf(lod));
     }
 
     /**
@@ -178,28 +147,17 @@ public final class ParticleSimulation3 implements AutoCloseable {
     }
 
     /**
-     * Finishes what {@link #prepare} made, on the owning thread: the buffers cleared, in one submission, and the step and
-     * the level of detail each recorded as one. The preparation is this simulation's from then on.
+     * Finishes what {@link #prepare} made, on the owning thread: the buffers cleared, in one submission. The step and the
+     * level of detail are each recorded as one on their first run. The preparation is this simulation's from then on.
      */
     public ParticleSimulation3(Prepared prepared) {
         prepared.take();
         accelerator = prepared.accelerator;
         tension = prepared.tension;
         step = prepared.step;
-        buffers = prepared.buffers;
-        accelerator.clear(List.copyOf(buffers.values()));
-        stepSequence = sequence(prepared.stepPasses);
-        lodSequence = sequence(prepared.lodPasses);
-    }
-
-    /** The passes as one recorded submission. */
-    private DispatchSequence sequence(List<Registered> passes) {
-        DispatchSequence.Builder builder = accelerator.sequence();
-        for (Registered pass : passes) {
-            handles.add(pass.handle());
-            builder.dispatch(pass.handle(), pass.buffers(), pass.invocations());
-        }
-        return builder.build();
+        runner = prepared.runner;
+        lod = prepared.lod;
+        runner.clear();
     }
 
     public int nx() {
@@ -225,7 +183,7 @@ public final class ParticleSimulation3 implements AutoCloseable {
 
     /** Whether a step is one GPU submission, as opposed to the CPU fallback. */
     public boolean onGpu() {
-        return stepSequence.recorded();
+        return runner.onDevice();
     }
 
     /**
@@ -252,8 +210,8 @@ public final class ParticleSimulation3 implements AutoCloseable {
         for (String affine : List.of("c00", "c01", "c02", "c10", "c11", "c12", "c20", "c21", "c22")) {
             write(affine, new float[mass.length]);
         }
-        buffers.get("params").write(params);
-        float[] full = new float[buffers.get("level").elements()];
+        runner.write("params", params);
+        float[] full = new float[runner.program().buffers().get("level").length()];
         java.util.Arrays.fill(full, Flip3.GROUP);
         write("level", full);
         float[] ones = new float[mass.length];
@@ -266,13 +224,13 @@ public final class ParticleSimulation3 implements AutoCloseable {
 
     /** Replaces the parameters without touching the particles. */
     public void params(int[] params) {
-        buffers.get("params").write(params);
+        runner.write("params", params);
     }
 
     /** Takes {@code count} steps. */
     public void advance(int count) {
         for (int k = 0; k < count; k++) {
-            stepSequence.run();
+            runner.run(step.step());
             steps++;
         }
     }
@@ -327,7 +285,7 @@ public final class ParticleSimulation3 implements AutoCloseable {
      */
     public void refine(float[] eye, float near, int floor) {
         write("view", new float[] {eye[0], eye[1], eye[2], near, floor});
-        lodSequence.run();
+        runner.run(lod);
     }
 
     /** How many slots are active: those with mass, which includes any still giving theirs away. A readback. */
@@ -357,39 +315,29 @@ public final class ParticleSimulation3 implements AutoCloseable {
      * @throws IllegalStateException    if the simulation is on the CPU, where there is no {@code VkBuffer}
      */
     public long vkBuffer(String name) {
-        ResidentBuffer buffer = buffers.get(name);
-        if (buffer == null) {
-            throw new IllegalArgumentException("no buffer named '" + name + "'; it has " + buffers.keySet());
+        if (!runner.program().buffers().containsKey(name)) {
+            throw new IllegalArgumentException("no buffer named '" + name + "'; it has "
+                    + runner.program().buffers().keySet());
         }
-        return buffer.vkBuffer();
+        return runner.resident(name).vkBuffer();
     }
 
     /** Blocks until every step taken so far has finished: the dependency between the kernels and a draw. */
     public void finish() {
-        accelerator.finish();
+        runner.finish();
     }
 
     @Override
     public void close() {
-        stepSequence.close();
-        lodSequence.close();
+        runner.close();
         accelerator.close();
     }
 
     private void write(String buffer, float[] values) {
-        int[] words = new int[values.length];
-        for (int k = 0; k < values.length; k++) {
-            words[k] = Float.floatToRawIntBits(values[k]);
-        }
-        buffers.get(buffer).write(words);
+        runner.write(buffer, values);
     }
 
     private float[] read(String buffer) {
-        int[] words = buffers.get(buffer).read();
-        float[] values = new float[words.length];
-        for (int k = 0; k < words.length; k++) {
-            values[k] = Float.intBitsToFloat(words[k]);
-        }
-        return values;
+        return runner.floats(buffer);
     }
 }

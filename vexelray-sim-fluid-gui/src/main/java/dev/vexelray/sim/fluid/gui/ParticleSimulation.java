@@ -2,24 +2,17 @@ package dev.vexelray.sim.fluid.gui;
 
 import dev.supirvast.vastir.pass.Pass;
 import dev.supirvast.vastir.tools.Accelerator;
-import dev.supirvast.vastir.tools.DispatchSequence;
-import dev.supirvast.vastir.tools.KernelColumn;
-import dev.supirvast.vastir.tools.KernelHandle;
-import dev.supirvast.vastir.tools.KernelSpec;
-import dev.supirvast.vastir.tools.ResidentBuffer;
+import dev.supirvast.vastir.tools.PassRunner;
 import dev.vexelray.sim.fluid.particle.Flip;
 import dev.vexelray.sim.fluid.particle.FlipStep;
 import dev.vexelray.sim.fluid.particle.Scatter;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * A particle fluid ({@code Flip}, MLS-MPM) in one walled box, stepped on resident buffers: the counterpart of
- * {@link PatchSimulation} for particles. The step and the sort are {@link FlipStep}'s, each recorded once as a {@link DispatchSequence},
- * so a step is one submission however many passes it holds.
+ * {@link PatchSimulation} for particles. The step and the sort are {@link FlipStep}'s, run by a {@link PassRunner} that
+ * records each once, so a step is one submission however many passes it holds.
  *
  * <p>The step is fixed, not measured — a weakly compressible fluid's is bounded by its sound speed, which the
  * caller chose — so {@link #advance} takes a number of steps. The particles are sorted by cell every
@@ -42,10 +35,7 @@ public final class ParticleSimulation implements AutoCloseable {
     private final boolean relax;
     private final boolean pump;
     private final Accelerator accelerator = new Accelerator();
-    private final Map<String, ResidentBuffer> buffers = new LinkedHashMap<>();
-    private final List<KernelHandle> handles = new ArrayList<>();
-    private final DispatchSequence stepSequence;
-    private final DispatchSequence sortSequence;
+    private final PassRunner runner;
     private long steps;
 
     /** A box of {@code nx × ny} nodes holding exactly {@code particles} particles, without surface tension. */
@@ -86,10 +76,10 @@ public final class ParticleSimulation implements AutoCloseable {
         this.heat = heat;
         this.convection = convection;
         step = new FlipStep(nx, ny, particles, tension, heat, convection, relax, pump);
-        step.buffers().forEach((name, spec) -> buffers.put(name, accelerator.allocate(spec.element(), spec.length())));
-        accelerator.clear(List.copyOf(buffers.values()));   // the sort's counts must start at zero, and it leaves them so
-        stepSequence = record(step.step());
-        sortSequence = record(step.sort());
+        runner = PassRunner.gpu(accelerator, step, Scatter.WORKGROUP, Scatter.SUBGROUP);
+        runner.clear();   // the sort's counts must start at zero, and it leaves them so
+        runner.prepare(step.step());
+        runner.prepare(step.sort());
     }
 
     public int nx() {
@@ -131,7 +121,7 @@ public final class ParticleSimulation implements AutoCloseable {
 
     /** Whether a step is one GPU submission, as opposed to the CPU fallback. */
     public boolean onGpu() {
-        return stepSequence.recorded() && sortSequence.recorded();
+        return runner.onDevice();
     }
 
     /**
@@ -154,7 +144,7 @@ public final class ParticleSimulation implements AutoCloseable {
         phase = Phase.CLEAR;
         cursor = 0;
         stepInKeyframe = 0;
-        buffers.get("params").write(params);
+        runner.write("params", params);
         steps = 0;
     }
 
@@ -185,16 +175,16 @@ public final class ParticleSimulation implements AutoCloseable {
     /** Replaces the parameters without touching the particles — the step changed mid-run, say. */
     public void params(int[] params) {
         this.params = params.clone();
-        buffers.get("params").write(params);
+        runner.write("params", params);
     }
 
     /** Takes {@code count} steps, sorting first on every step whose number is a multiple of {@code sortEvery}. */
     public void advance(int count, int sortEvery) {
         for (int k = 0; k < count; k++) {
             if (steps % sortEvery == 0) {
-                sortSequence.run();
+                runner.run(step.sort());
             }
-            stepSequence.run();
+            runner.run(step.step());
             steps++;
         }
     }
@@ -243,10 +233,11 @@ public final class ParticleSimulation implements AutoCloseable {
 
     private enum Phase { CLEAR, SCATTER, GRID, ADVECT }
 
-    private DispatchSequence clearOnly;
-    private DispatchSequence scatterSlice;
-    private DispatchSequence gridOnly;
-    private DispatchSequence advectSlice;
+    // Each one pass of the sliced step, as a list made once: the runner knows a list it has recorded by its identity.
+    private List<Pass> clearOnly;
+    private List<Pass> scatterSlice;
+    private List<Pass> gridOnly;
+    private List<Pass> advectSlice;
     private int[] params = new int[Flip.PARAM_COUNT];
     private Phase phase = Phase.CLEAR;
     private int cursor;
@@ -275,23 +266,23 @@ public final class ParticleSimulation implements AutoCloseable {
         this.keyframeSteps = keyframeSteps;
         if (scatterSlice == null) {
             List<Pass> passes = step.sliced();
-            clearOnly = record(List.of(passes.get(0)));
-            scatterSlice = record(List.of(passes.get(1)));
-            gridOnly = record(List.of(passes.get(2)));
-            advectSlice = record(List.of(passes.get(3)));
+            clearOnly = List.of(passes.get(0));
+            scatterSlice = List.of(passes.get(1));
+            gridOnly = List.of(passes.get(2));
+            advectSlice = List.of(passes.get(3));
         }
         int n = step.particles;
         while (work > 0) {
             switch (phase) {
                 case CLEAR -> {
                     if (steps % sortEvery == 0) {
-                        sortSequence.run();
+                        runner.run(step.sort());
                     }
                     if (work >= 2L * n) {
                         // A whole step fits in what is left: the recorded step, one submission and as fast as ever.
                         // Slicing costs a submission and a parameter write per slice, so only a step that has to be
                         // split pays it. It is the same step either way.
-                        stepSequence.run();
+                        runner.run(step.step());
                         work -= 2L * n;
                         steps++;
                         if (++stepInKeyframe >= keyframeSteps) {
@@ -299,7 +290,7 @@ public final class ParticleSimulation implements AutoCloseable {
                             return new Budgeted(Math.max(work, 0), true);
                         }
                     } else {
-                        clearOnly.run();
+                        runner.run(clearOnly);
                         phase = Phase.SCATTER;
                         cursor = 0;
                     }
@@ -307,7 +298,7 @@ public final class ParticleSimulation implements AutoCloseable {
                 case SCATTER -> {
                     int hi = Math.min(n, cursor + FlipStep.SLICE);
                     bounds(cursor, hi);
-                    scatterSlice.run();
+                    runner.run(scatterSlice);
                     work -= hi - cursor;
                     cursor = hi;
                     if (cursor >= n) {
@@ -315,14 +306,14 @@ public final class ParticleSimulation implements AutoCloseable {
                     }
                 }
                 case GRID -> {
-                    gridOnly.run();
+                    runner.run(gridOnly);
                     phase = Phase.ADVECT;
                     cursor = 0;
                 }
                 case ADVECT -> {
                     int hi = Math.min(n, cursor + FlipStep.SLICE);
                     bounds(cursor, hi);
-                    advectSlice.run();
+                    runner.run(advectSlice);
                     work -= hi - cursor;
                     cursor = hi;
                     if (cursor >= n) {
@@ -355,7 +346,7 @@ public final class ParticleSimulation implements AutoCloseable {
         int[] with = params.clone();
         with[Flip.SLICE_BASE] = Float.floatToRawIntBits(lo);
         with[Flip.SLICE_END] = Float.floatToRawIntBits(hi);
-        buffers.get("params").write(with);
+        runner.write("params", with);
     }
 
     /** Steps taken since the last {@link #load}. */
@@ -365,45 +356,15 @@ public final class ParticleSimulation implements AutoCloseable {
 
     @Override
     public void close() {
-        stepSequence.close();
-        sortSequence.close();
+        runner.close();
         accelerator.close();
     }
 
-    private DispatchSequence record(List<Pass> passes) {
-        DispatchSequence.Builder builder = accelerator.sequence();
-        for (Pass pass : passes) {
-            List<ResidentBuffer> bound = pass.buffers().stream().map(buffers::get).toList();
-            // Every column an output: a column's direction steers only the accelerator's copying paths, which resident
-            // buffers never take, and the read-only promise the driver gets is derived from the kernel itself.
-            List<KernelColumn> columns = new ArrayList<>();
-            for (int k = 0; k < pass.bindings().size(); k++) {
-                var binding = pass.bindings().get(k);
-                columns.add(KernelColumn.output(binding.name(), binding.binding(), binding.element())
-                        .withLength(bound.get(k).elements()));
-            }
-            KernelHandle handle = accelerator.register(new KernelSpec(pass.kernel(), columns)
-                    .withWorkgroupSize(Scatter.WORKGROUP).withSubgroupSize(Scatter.SUBGROUP)).orElseThrow();
-            handles.add(handle);
-            builder.dispatch(handle, bound, pass.invocations());
-        }
-        return builder.build();
-    }
-
     private void write(String buffer, float[] values) {
-        int[] words = new int[values.length];
-        for (int k = 0; k < values.length; k++) {
-            words[k] = Float.floatToRawIntBits(values[k]);
-        }
-        buffers.get(buffer).write(words);
+        runner.write(buffer, values);
     }
 
     private float[] read(String buffer) {
-        int[] words = buffers.get(buffer).read();
-        float[] values = new float[words.length];
-        for (int k = 0; k < words.length; k++) {
-            values[k] = Float.intBitsToFloat(words[k]);
-        }
-        return values;
+        return runner.floats(buffer);
     }
 }
