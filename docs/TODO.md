@@ -8,18 +8,40 @@ cannot be fixed from here at all.
 
 ## Next
 
-- [ ] **Refactor onto the pattern the rigid demo sets.** vexelray-sim-rigid's demo is built on Kronometer (through
-      the framework's `krono()`), with what is reusable put at its natural level. Bring this repo over to it:
-      - **Timing**: a fixed physics `Rate` in a playback `Tempo` instead of the wall-clock-to-simulated-time
-        scaling, and its steps given to the render thread by Kronometer's `Handoff`. `Handoff.phase` is the blend
-        between steps that the budgeted mode's interpolation hand-makes. `SwapEase` and `Session`'s view and reset
-        blends become Kronometer curves.
+- [ ] **Finish the refactor onto the pattern the rigid demo sets.** The runners are `PassRunner`s, and the timing is
+      the rigid demo's physics timing plan (vexelray-sim-rigid `docs/physics-timing.md`, stages 3 to 5): `Physics` is a
+      component on its own lane, lent the app's compute queue, paced by a `Dilated` 60 Hz world clock, handing flat
+      pictures through `FlatPictures` and the 3D surface through sim-core-gui's `ShownRing` and `KeptSlots`; the wiring
+      is generated. What is left:
       - **Shared pieces**: `Look` is sim-core-gui's `DemoLook`. `FluidView3`'s drag and wheel handling is
-        `OrbitControl`. `Session3`'s private `lend()` is `AppCompute.lend`, and `Session3` never closes the
-        context it lends; `AppCompute` says whose it is to close.
+        `OrbitControl`.
       - **The panel**: whatever of `Controls`, `ControlPanel`, `Dock`, `Sidebar`, `Readout` and `Metrics` turns out
         to be the same as the rigid demo's `Controls`, `Panel` and `Readings` goes to sim-core-gui. The rigid demo
         uses vexelray-gui's own `Inspector` for its rows, which may cover much of `ControlPanel` and `Entry`.
+      - **The fades**: `Session`'s view and new-start blends are still timed by `System.nanoTime` on the frame. They
+        are the wall's, as they should be, but would read better as Kronometer curves on the timeline.
+      - **The rigid demo's ring** (vexelray-sim-rigid): its `ShownRing` and `ShownSlots` are what sim-core-gui's
+        generic `ShownRing` and `KeptSlots` were made from; it can move onto them and drop its copies.
+
+- [ ] **The 2D simulation is on a device of its own.** `ParticleSimulation` makes its own `Accelerator`, so on the
+      physics lane it is a second Vulkan device beside the app's, and every picture is read back. It has no
+      constructor on a `GpuContext` as `ParticleSimulation3` has; with one it would run on the lent compute queue.
+      The readback stays either way, since `DebugView` colours from host arrays.
+
+- [ ] **The 3D flat picture costs the world its pace.** Drawn flat, a 3D scenario reads the whole `n³` grid back
+      after every world step to integrate or slice it on the host: at 40³ that took the default dam break from 100%
+      to 93% of real time. The surface needs no readback (the readings are read every sixth step). Integrating or
+      slicing on the device, into an `n²` buffer, would make the flat picture as cheap.
+
+- [ ] **Each setting's flag is turned into a property before the framework reads the command line**
+      (`Controls.asProperties`). The demo's settings are made from the scenarios at run time, more than `@Setting`
+      parameters could name, and the generated wiring's `AppInfo` lists only those, so the framework would refuse
+      `--speed=4` as unknown. A way for a `@VexelApp` to add keys it accepts (vexelray-framework) would let the
+      flags through as themselves.
+
+- [ ] **The native image has not been rebuilt since the wiring was generated and physics moved to a lane.** The
+      metadata under `META-INF/native-image/` was recorded against the hand-written wiring. Build `-Pnative`, run it
+      through every scenario, and record again if it fails.
 
 - [ ] **The flux is computed twice per face.** Each cell computes all four of its faces, so every interior
       face is computed by both cells that share it. Correct and conservative, and half wasted. A face pass
@@ -41,6 +63,10 @@ cannot be fixed from here at all.
       delete this entry once the double `key N` is seen to advance twice. *Seen again since, 2026-09-25:*
       `key SPACE`, `key PERIOD`, `key SPACE`, `key R` sent back to back left the demo paused, so a press was
       still lost (or the step or reset re-paused it; not isolated). With an `await` between keys, never.
+      *A cause for SPACE, 2026-10-09:* after a click on a scenario in the list, SPACE never paused, with or without
+      `settle` between keys, while `=` and `-` were taken: the clicked button has focus, and SPACE presses it rather
+      than reaching the shortcut. The Pause button worked. Whether a focused button should swallow a shortcut is
+      vexelray-gui's question; the demo could also give SPACE back to the view after a click.
 
 - [ ] **The debug view's box is a fixed 720 dp and its target a fixed 1024 px.** Square and legible, but it
       neither fills a larger window nor re-mints the target to the box's real pixels, so cells are
@@ -98,52 +124,28 @@ cannot be fixed from here at all.
       fraction of nodes with a stone is the `STONES` knob. The void at the lid, where the cold plume pulls the
       fluid away, is still there at 16 s.
 
-- [ ] **Budgeted mode is a proof of the mechanism, not yet a budget.** `B` spreads a keyframe of 100 steps over ticks
-      of at most a set particle work (`ParticleSimulation.advanceBudgeted`; `Flip.scatterSliced` and
-      `Flip.advectSliced` take a slice from two parameters), and the picture is the last keyframe that finished.
-      The sliced step matches the whole one to 7e-6 cells (`SlicedStepTest`). Still to do: (1) nothing sets the
-      budget from frame time, so the `[` `]` keys are the controller; (2) the clear, the grid pass and the sort are
-      not counted in the work, and the sort runs whole (the controller below is done: `BudgetController`, key `A`,
-      `;` and `'` for the target); (3) it is for the plain step only, since tension, heat,
-      convection and relaxation are not sliced; (4) each slice is a submission and a parameter write, which cost
-      about 35 times a whole step when every step had to be sliced, so a whole step now runs as the recorded one
-      whenever the budget covers it, and a step too big for it pays the price; (5) it does the same work as the
-      ordinary path, so it saves nothing at this size, and shows its worth only where a step is slower than a frame.
-      The controller aims a tick at 0.8 of a target time from the throughput measured across finished keyframes;
-      at 16.7 ms it climbs to its ceiling in about 40 keyframes (a whole keyframe takes about 7 ms here), at 8.3 ms
-      it settles at 147k a tick with 5.9 ms frames, and under about 8 ms it cannot, since a frame costs about 6 ms
-      in drawing and readbacks whatever the budget, so it falls to its floor and the readout says OVER. It
-      estimates throughput with that fixed cost folded in, which is what puts the fixed point at
-      `r0 · (0.8 · target − overhead)`; measuring the overhead apart would let it say how far over it is.
+- [ ] **The sliced step and the splat are in the core, and nothing uses them.** The demo's budgeted mode spread a
+      keyframe of steps over ticks of a set particle work (`Flip.scatterSliced`, `Flip.advectSliced`,
+      `FlipStep.sliced`; `SlicedStepTest` holds the sliced step to the whole one), and drew between keyframes by
+      carrying particles along their velocity and splatting them on the host (`ParticleSplat`; measured by
+      `InterpolationErrorSweepTest`: 0.17, 0.60 and 2.06 nodes rms at keyframes of 13, 27 and 54 ms, growing with the
+      square of the keyframe, and missing collisions rather than acceleration). The world clock replaced it,
+      2026-10-09: a slow step now slows the world, and the picture blends two finished steps by the clock's
+      prediction, so nothing is guessed. The mode, `SwapEase` and the budget controller's use went with it. What is
+      left could still serve the rigid plan's other lever, a step submitted in slices so a GPU shared with drawing
+      is never held for long; if nothing takes it up, delete it with its tests.
 
-- [ ] **Interpolation between keyframes works, and stops at collisions.** `I` in budgeted mode cycles hold,
-      interpolate and live; `Z` and `X` size the keyframe. Interpolate moves each particle of the last finished keyframe
-      along its own velocity toward a predicted next state by the share of the next keyframe's work that is done (the
-      sort is off while it does, so particle k stays particle k), and splats the result on the host
-      (`ParticleSplat`). Live is the working state, which is the truth it estimates, so the readout gives the error
-      against it. `InterpolationErrorSweepTest` (`-Dflip.sweep=true`) puts numbers on it, in nodes, at the end of a
-      keyframe: 13 ms: rms 0.17 against 2.41 for holding the picture; 27 ms: 0.60 against 4.76; 54 ms: 2.06 against
-      9.57; and the worst single particle is 9, 16 and 40. The error grows about with the square of the keyframe. Adding
-      an acceleration from the previous keyframe does nothing (0.15, 0.58, 2.25: no better, and worse at 54 ms), so it
-      is not smooth acceleration that is missed but collisions and fragments. Visible artifacts: a particle carried into
-      a wall by its velocity is clamped there and piles up into a bright blob, and a splash along the ceiling is not
-      there until the keyframe lands. The jump at the swap is the prediction error plus the share of the keyframe the
-      display had not reached: 5.6 to 5.9 nodes rms at 800 steps. `SwapEase` (key `E` turns it off) keeps each
-      particle's offset at the swap and eases it out over 150 ms, which takes the largest frame-to-frame motion in the
-      second after a swap from 5.86 nodes to 0.36; the price is that the picture is, for that 150 ms, as far from
-      the truth as the old one was (5.5 rms against live). Two buffers mean the display runs on a prediction; true
-      interpolation, between two finished keyframes, needs a third buffer and a display one keyframe behind.
-
-- [ ] **3D: the step, a lit surface you turn by dragging, a grid size and a level of detail exist; the budgeted mode, interpolation and the 2D step's features do not.**
+- [ ] **3D: the step, a lit surface you turn by dragging, a grid size and a level of detail exist; the 2D step's features do not.**
       `Flip3`/`Flip3Step` are the 2D step with a 3×3×3 stencil, a 3×3 `C`, six walls, and a direct atomic scatter (108 adds a
-      particle, no sort). `Session3` runs the 3D dam break in a box of 32 to 96 nodes a side (the Grid knob; it restarts the scenario, and
+      particle, no sort). `BoxRun` (on the physics lane) runs the 3D dam break in a box of 32 to 96 nodes a side (the Grid knob; it restarts the scenario, and
       the scenario's cells are looked up from the 48-node layout it is written for), as a surface marched from the grid
       (`FluidView3`, `D`; drag to turn, wheel to zoom) or as the flat depth-integrated picture or slice (`V`). The march
       needs `1.1 · 2√3 / (0.6 · 0.5 · node)` steps to cross the box's empty part along its diagonal (`FluidView3.stepsFor`):
       256 is a little short even at 48³, and at 88³ it lost 6% of the water, which a hit threshold that grew with distance
       had been hiding as false hits. Settings, under "3D simulation": the step size (×0.25 to ×2 of what the Courant number
-      allows; larger is faster and less stable), the processing power (the longest a frame spends stepping, 1.6 to 50 ms; there is
-      no budgeted mode, a frame takes as many steps as fit), and the particles a cell (8, 4, 2, 1).
+      allows; larger is faster and less stable: it sets how many of the fluid's steps fill a world step), and the particles a
+      cell (8, 4, 2, 1). The processing-power setting (the longest a frame spent stepping) went with the move to the world
+      clock, which runs steps back to back and slows the world instead.
       `Flip3Test`: a lone particle falls exactly, the scatter conserves mass and momentum, and a dam break in a full-depth
       slab stays in the box, under Ritter's limit (GPU only). `Flip3BenchTest` (`-Dflip.sweep=true`): 32³ with 108k particles
       is 0.23 ms a step and 158% of real time; 48³ with 389k is 0.83 ms and 36%; 64³ with 953k is 1.82 ms and 14%; the scatter is 93% of the step.
@@ -158,16 +160,15 @@ cannot be fixed from here at all.
       and 1 a cell against 8: the water's centre within 0.3 node, kinetic energy 1%, 2% and 6% lower, `J` in band; at 1 a
       cell the water is calmer and settles sooner. Positions stay put, so a group's centre of mass moves a little (up to
       0.4 node). The readout's `J` leaves out slots under half a particle's mass, which are carried along as tracers and wander. Still
-      to do: the budgeted mode and interpolation in 3D; an indirect dispatch over the active slots; the camera-distance
+      to do: an indirect dispatch over the active slots; the camera-distance
       target (`Flip3.lodTarget` is written and tested; the demo drives the same passes by hand); the sort and a scatter that
       uses it; and the features of the 2D step built on it: tension, heat, convection, foam, `J` relaxation, two fluids.
 
-- [ ] **The pump (drain and spout) is 2D, unmarked, and not sliced.** `Pump` is one pass after the advect: a particle inside
+- [ ] **The pump (drain and spout) is 2D and unmarked.** `Pump` is one pass after the advect: a particle inside
       the drain's radius is put at the spout's mouth with velocity `force · direction` (`J` to 1, `C` to 0, mass and
       temperature kept), and those within four radii are pulled toward it. Count and mass never change (`PumpTest`).
       Not done: 3D (`Flip3Step`, and the LOD's inactive slots would need skipping); a mark on the picture where the drain
-      and spout are, since the debug view draws only the field; the budgeted mode, which a pumped step falls back
-      out of like tension and heat; momentum is not conserved across the pair, by design. The demo's "Drain and spout"
+      and spout are, since the debug view draws only the field; momentum is not conserved across the pair, by design. The demo's "Drain and spout"
       scenario has fixed positions (`Scenario.DRAIN_X` and the rest) and live force and angle knobs. Not yet seen
       running in the window, only tested headless.
 
@@ -288,7 +289,8 @@ matters depends on the approach.
       is a fixed set of buffers.
 
 - [ ] **The engine cannot dispatch compute inside a frame** (fix belongs in `vexelray`).
-      `TechniqueContext` names pure compute only as a future technique kind, so the demo runs the simulation
-      on SupirVast's own Vulkan device and the window on vexelray's. Two devices cannot share buffers, so every
-      frame reads the field back to the host and writes it into the window's storage buffer: cheap at 256²,
-      and the readback is needed for the diagnostics anyway, but it is a copy that one device would not make.
+      `TechniqueContext` names pure compute only as a future technique kind. The 3D simulation goes round it: it runs
+      on the window's own device, on the compute queue the application lends the physics lane, and the surface reads
+      a copy kept on that device with no readback. The 2D one is still on a device of its own (above), so every
+      picture is read back to the host and written into the window's storage buffer: cheap at 128², and the readback
+      is needed for the diagnostics anyway, but it is a copy that one device would not make.

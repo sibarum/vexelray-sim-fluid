@@ -230,36 +230,62 @@ enum Scenario {
     /**
      * What the user chose for a scenario's knobs. A knob the scenario does not have reads as 0, and a scenario only
      * asks for its own.
+     *
+     * <p>A record of plain values, one a knob and which of them the scenario has, so it is immutable as its type says
+     * and crosses to the physics lane as itself: the framework refuses a payload holding a map, which a sender could
+     * still change. Made by {@link #of}.
+     *
+     * @param held a bit for each knob the scenario has, by its ordinal
      */
-    static final class Tuning {
+    record Tuning(long held, double gravity, double secondDensity, double columnWidth, double conductivity,
+                  double expansion, double boilPoint, double foamDrop, double superheat, double stones, double resolution,
+                  double pump, double angle, double tension) {
 
-        private final Map<Knob, Double> values;
-
-        Tuning(Map<Knob, Double> values) {
-            this.values = new EnumMap<>(values);
+        /** The knobs in {@code values}, each held; every other one not, and read as 0. */
+        static Tuning of(Map<Knob, Double> values) {
+            long held = 0;
+            for (Knob k : values.keySet()) {
+                held |= 1L << k.ordinal();
+            }
+            return new Tuning(held, value(values, Knob.GRAVITY), value(values, Knob.SECOND_DENSITY),
+                    value(values, Knob.COLUMN_WIDTH), value(values, Knob.CONDUCTIVITY), value(values, Knob.EXPANSION),
+                    value(values, Knob.BOIL_POINT), value(values, Knob.FOAM_DROP), value(values, Knob.SUPERHEAT),
+                    value(values, Knob.STONES), value(values, Knob.RESOLUTION), value(values, Knob.PUMP),
+                    value(values, Knob.ANGLE), value(values, Knob.TENSION));
         }
 
-        double get(Knob knob) {
+        private static double value(Map<Knob, Double> values, Knob knob) {
             return values.getOrDefault(knob, 0.0);
         }
 
+        double get(Knob knob) {
+            if (!has(knob)) {
+                return 0;
+            }
+            return switch (knob) {
+                case GRAVITY -> gravity;
+                case SECOND_DENSITY -> secondDensity;
+                case COLUMN_WIDTH -> columnWidth;
+                case CONDUCTIVITY -> conductivity;
+                case EXPANSION -> expansion;
+                case BOIL_POINT -> boilPoint;
+                case FOAM_DROP -> foamDrop;
+                case SUPERHEAT -> superheat;
+                case STONES -> stones;
+                case RESOLUTION -> resolution;
+                case PUMP -> pump;
+                case ANGLE -> angle;
+                case TENSION -> tension;
+            };
+        }
+
         boolean has(Knob knob) {
-            return values.containsKey(knob);
+            return (held & (1L << knob.ordinal())) != 0;
         }
 
         /** A whole number of cells. */
         int cells(Knob knob) {
             return (int) Math.round(get(knob));
-        }
-
-        @Override
-        public boolean equals(Object other) {
-            return other instanceof Tuning t && values.equals(t.values);
-        }
-
-        @Override
-        public int hashCode() {
-            return values.hashCode();
         }
     }
 
@@ -358,7 +384,7 @@ enum Scenario {
         for (Param p : params) {
             values.put(p.knob(), p.def());
         }
-        return new Tuning(values);
+        return Tuning.of(values);
     }
 
     /** A particle scenario's rest density in the cell {@code col} across and {@code row} up from the box's inside corner, or 0. */

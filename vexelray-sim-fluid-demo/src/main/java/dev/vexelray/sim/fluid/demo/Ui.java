@@ -1,10 +1,5 @@
 package dev.vexelray.sim.fluid.demo;
 
-import dev.vexelray.framework.api.FrameStage;
-import dev.vexelray.framework.shell.AppInfo;
-import dev.vexelray.framework.shell.Appearance;
-import dev.vexelray.framework.shell.Shell;
-import dev.vexelray.framework.shell.Wiring;
 import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
@@ -12,77 +7,42 @@ import dev.vexelray.gui.core.layout.LayoutEnums.Direction;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.layout.Rect;
 import dev.vexelray.gui.core.style.Role;
+import dev.vexelray.gui.widget.TitleBar;
 import dev.vexelray.sim.fluid.gui.DebugView;
 import dev.vexelray.sim.fluid.gui.FluidView3;
 import dev.vexelray.sim.fluid.gui.View;
 import sibarum.tactroller.api.Key;
 
-import java.util.Set;
-
 /**
- * What the demo builds, and in which phase — the template's shape, one method per phase.
+ * The window's tree: the list of scenarios, the picture, and the dock of settings and readings beside it, and every key.
  *
- * <p>The phases fall where the dependencies put them: the controls are state, so {@code MODEL}; the tree and the
- * keys need only the {@code Gui}, so {@code TREE}; the simulation and the view need the window's device and the
- * frame loop, so {@code ATTACH}. The keys are registered before there is anything to act on, which is fine,
- * because all a key does is leave a request in {@link Controls} for the next frame.
+ * <p>Built before the window, so it holds nothing made on the device: the two pictures make their targets and
+ * pipelines on their first draw, and the {@link Session}, built after the device, closes them before it goes. All a key
+ * or a widget does is leave a request in {@link Controls} for the next frame.
  */
-final class FluidDemoWiring extends Wiring {
+final class Ui {
 
-    /** Every setting is a key the framework accepts as {@code --key=value}, for that launch only. */
-    private static final AppInfo INFO = new AppInfo(FluidDemo.APP, FluidDemo.TITLE, FluidDemo.W, FluidDemo.H,
-            Set.copyOf(Controls.keys()));
-
-    /** The target drawn into the view, which is square, so a cell is square on screen. */
+    /** The target drawn into the flat view, which is square, so a cell is square on screen. */
     private static final int VIEW_PIXELS = 1024;
+    /** The surface is marched, not coloured per cell, so its target is smaller than the flat view's. */
+    private static final int SURFACE_PIXELS = 768;
     /**
      * What the dock is wanted at, in widths of the list: enough for its tabs and its transport. The view takes
      * what that leaves, but never less than {@link #VIEW_MIN_SHARE} of the room, so neither shrinks to nothing.
      */
     private static final float DOCK_LISTS = 1.8f;
     private static final float VIEW_MIN_SHARE = 0.5f;
-    /** The surface is marched, not coloured per cell, so its target is smaller than the flat view's. */
-    private static final int SURFACE_PIXELS = 768;
 
-    /** What {@code Shell.setting} returns when no source has the key: nothing a setting could be. */
-    private static final String NONE = "\u0000none";
-
-    private Controls controls;
-    private final Metrics metrics = new Metrics();
-    private Readout readout;
-    private DebugView view;
-    private FluidView3 surface;
-    private Sidebar sidebar;
-    private Dock dock;
-    private Node canvas;
-    private Node body;
+    private final DebugView view;
+    private final FluidView3 surface;
+    private final Readout readout;
+    private final Sidebar sidebar;
+    private final Dock dock;
+    private final Node canvas;
+    private final Node body;
     private float side = -1f;
 
-    @Override
-    public AppInfo info() {
-        return INFO;
-    }
-
-    @Override
-    public void config(Shell shell) {
-        shell.appearance(Appearance.of(Look.THEME, Length.em(60), Length.em(36)));
-    }
-
-    @Override
-    public void model(Shell shell) {
-        // Nothing is remembered between runs, so that starting again always puts a setting right. What an older build
-        // left in the settings file goes first, since the framework would read it after the flags; then a flag, a
-        // property or the default, the framework's precedence with nothing left in the file for it to find.
-        Controls.forget(shell.settings());
-        controls = new Controls(key -> {
-            String value = shell.setting(key, NONE);
-            return NONE.equals(value) ? null : value;
-        });
-    }
-
-    @Override
-    public void tree(Shell shell) {
-        Gui gui = shell.gui();
+    Ui(Gui gui, TitleBar titleBar, Controls controls, Metrics metrics) {
         // Its size is the one thing the layout cannot say, a square being no flex: fit() sets it from the body.
         canvas = gui.box()
                 .corner(Look.CORNER)
@@ -107,24 +67,26 @@ final class FluidDemoWiring extends Wiring {
         gui.onResize(sidebar.node(), layout -> fit());
         gui.root().direction(Direction.COLUMN)
                 .background(gui.theme().color(Role.PAGE))
-                .children(shell.titleBar().node(), body);
+                .children(titleBar.node(), body);
         keys(gui, controls);
     }
 
-    @Override
-    public void attach(Shell shell) {
-        Session session = shell.disposer().register(new Session(shell.app(), controls, view, surface, readout,
-                metrics));
-        // The panels are read back from the controls, and the last frame's readings put beside them, before the frame
-        // acts on what was asked.
-        shell.hooks().add(FrameStage.APP, () -> {
-            sidebar.sync();
-            dock.sync();
-        });
-        shell.hooks().add(FrameStage.APP, session::frame);
-        shell.deadline(session::nanosUntilNextFrame);
-        // The driving socket in the debug edition, nothing in the release one.
-        shell.disposer().register(Edition.driver(shell));
+    DebugView view() {
+        return view;
+    }
+
+    FluidView3 surface() {
+        return surface;
+    }
+
+    Readout readout() {
+        return readout;
+    }
+
+    /** The panels read back from the controls, with the last frame's readings beside them. */
+    void sync() {
+        sidebar.sync();
+        dock.sync();
     }
 
     /**
@@ -164,18 +126,8 @@ final class FluidDemoWiring extends Wiring {
         gui.shortcut(Key.SPACE, controls::togglePause);
         gui.shortcut(Key.PERIOD, controls::step);
         gui.shortcut(Key.C, controls::toggleStability);
-        gui.shortcut(Key.B, controls::toggleBudget);
-        gui.shortcut(Key.LEFT_BRACKET, controls::lessBudget);
-        gui.shortcut(Key.RIGHT_BRACKET, controls::moreBudget);
-        gui.shortcut(Key.A, controls::toggleAuto);
-        gui.shortcut(Key.I, controls::cycleDisplay);
-        gui.shortcut(Key.E, controls::toggleEase);
         gui.shortcut(Key.V, controls::toggleSlice);
         gui.shortcut(Key.D, controls::toggleVolume);
-        gui.shortcut(Key.Z, controls::shorterKeyframe);
-        gui.shortcut(Key.X, controls::longerKeyframe);
-        gui.shortcut(Key.SEMICOLON, controls::shorterTarget);
-        gui.shortcut(Key.APOSTROPHE, controls::longerTarget);
         gui.shortcut(Key.EQUAL, controls::faster);
         gui.shortcut(Key.MINUS, controls::slower);
     }

@@ -31,8 +31,8 @@ class ControlsTest {
         assertEquals(Scenario.DAM_BREAK_3D, c.scenario());
         assertEquals(1, c.timeScale());
         assertEquals(Controls.STABLE_COURANT, c.courant());
-        assertFalse(c.budgeted());
-        assertTrue(c.auto());
+        assertEquals(1, c.stepScale());
+        assertEquals(8, c.particles());
         assertTrue(c.volume(), "the water of a 3D scenario is a surface, and the flat state its alternative");
         assertEquals(Scenario.DAM_BREAK_3D.view(), c.view());
         assertEquals(Scenario.DAM_BREAK_3D.defaults(), c.tuning());
@@ -46,7 +46,7 @@ class ControlsTest {
         first.show(View.TEMPERATURE);
         first.speed(4);
         first.stable(false);
-        first.budget(1 << 20);
+        first.stepScale(2);
         first.toggleVolume();
 
         Controls second = start();
@@ -55,7 +55,7 @@ class ControlsTest {
         assertEquals(Scenario.BOILING.view(), second.view(Scenario.BOILING));
         assertEquals(1, second.timeScale());
         assertEquals(Controls.STABLE_COURANT, second.courant());
-        assertTrue(second.auto());
+        assertEquals(1, second.stepScale());
         assertTrue(second.volume());
     }
 
@@ -73,20 +73,34 @@ class ControlsTest {
     }
 
     @Test
+    void aFlagForASettingBecomesAPropertyAndTheFrameworkKeepsItsOwn() {
+        java.util.Map<String, String> set = new java.util.LinkedHashMap<>();
+        String[] rest = Controls.asProperties(new String[] {"--speed=4", "--automation=0", "--slice", "120",
+                "--BOILING.stones=0", "--nonsense=1"}, set::put);
+        assertEquals(java.util.Map.of("speed", "4", "slice", "true", "BOILING.stones", "0"), set);
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new String[] {"--automation=0", "120", "--nonsense=1"}, rest,
+                "the framework's flags, frame counts and anything unknown are the framework's to read or refuse");
+        Controls c = new Controls(set::get);
+        assertEquals(4, c.timeScale());
+        assertTrue(c.slice());
+        assertEquals(0, c.tuning(Scenario.BOILING).get(Knob.STONES));
+    }
+
+    @Test
     void aMalformedOrOutOfRangeFlagIsADefaultOrClamped() {
         Controls c = new Controls(key -> switch (key) {
             case "speed" -> "fast";
             case "scenario" -> "NOT_A_SCENARIO";
-            case "budgeted" -> "yes";
-            case "budget" -> "1e30";
+            case "stepsize" -> "1e30";
+            case "particles" -> "3";
             case "DAM_BREAK.gravity" -> "NaN";
             case "DAM_BREAK.column" -> "5000";
             default -> null;
         });
         assertEquals(1, c.timeScale());
         assertEquals(Scenario.DAM_BREAK_3D, c.scenario());
-        assertFalse(c.budgeted());
-        assertEquals(Controls.MOST_BUDGET, c.budget());
+        assertEquals(Controls.LARGEST_STEP, c.stepScale());
+        assertEquals(4, c.particles(), "rounded to a power of two");
         assertEquals(1, c.tuning(Scenario.DAM_BREAK).get(Knob.GRAVITY));
         assertEquals(100, c.tuning(Scenario.DAM_BREAK).get(Knob.COLUMN_WIDTH));
     }
@@ -98,15 +112,17 @@ class ControlsTest {
         old.putString("speed", "0.25");
         old.putString("scenario", "DAM_BREAK_3D");
         old.putString("DAM_BREAK_3D.view", "FROUDE");
+        old.putString("budgeted", "true");            // a setting there is no longer
         old.putInt("window.main.width", 1111);
         old.save();
 
-        assertEquals(3, Controls.forget(Settings.at(file)));
+        assertEquals(4, Controls.forget(Settings.at(file)));
 
         Settings after = Settings.at(file);
         for (String key : Controls.keys()) {
             assertFalse(after.has(key), key + " should be gone");
         }
+        assertFalse(after.has("budgeted"), "and so should what a retired setting left");
         assertEquals(1111, after.getInt("window.main.width", 0));
         assertEquals(0, Controls.forget(after), "a file with nothing to forget is not written again");
     }
@@ -116,13 +132,13 @@ class ControlsTest {
         Controls c = new Controls(key -> key.equals("speed") ? "8" : null);
         c.select(Scenario.CONVECTION);
         c.tune(Knob.CONDUCTIVITY, 20);
-        c.budgeted(true);
+        c.stepScale(0.5);
 
         c.restoreAll();
 
         assertEquals(Scenario.DAM_BREAK_3D, c.scenario());
         assertEquals(1, c.timeScale(), "a flag given at launch does not survive being told to go back to defaults");
-        assertFalse(c.budgeted());
+        assertEquals(1, c.stepScale());
         assertEquals(Scenario.CONVECTION.defaults(), c.tuning(Scenario.CONVECTION));
     }
 

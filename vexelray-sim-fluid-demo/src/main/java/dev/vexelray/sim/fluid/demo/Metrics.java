@@ -1,15 +1,15 @@
 package dev.vexelray.sim.fluid.demo;
 
 /**
- * The live numbers a frame leaves for the control panel: how the run is keeping up, what a frame costs, and how healthy
- * the step is, each for the panel to put beside the control that moves it.
+ * The live numbers a frame leaves for the control panel: how the world is keeping up, what a frame and a step cost,
+ * and how healthy the step is, each for the panel to put beside the control that moves it.
  *
  * <p>The {@link Readout} has these and more as lines of text, for whoever is debugging the solver. This is the same
- * frame's figures as numbers, so the panel can phrase them for whoever is only trying to make it run smoothly, colour a
- * number that is out of bounds, and show none of it where it does not apply.
+ * figures as numbers, so the panel can phrase them for whoever is only trying to make it run smoothly, colour a number
+ * that is out of bounds, and show none of it where it does not apply. Most come from the physics lane's latest report
+ * ({@link PhysicsNews}); the frame's own and the world clock's are the session's.
  *
- * <p>Main thread only: the session writes it in the frame and the panel reads it in the frame before, both from
- * {@code FrameStage.APP} hooks.
+ * <p>Main thread only: the session writes it in the frame and the panel reads it in the same frame, before.
  */
 final class Metrics {
 
@@ -17,25 +17,22 @@ final class Metrics {
     boolean three;
     /** Whether a three-dimensional scenario can be drawn as a surface: its simulation shares the window's device. */
     boolean surfaceAvailable = true;
-    /** Whether a two-dimensional scenario can run on a fixed amount of work a frame; some step kinds cannot be sliced. */
-    boolean fixedWorkAvailable = true;
-    /** Whether that fixed-work pacing is what is running now. */
-    boolean fixedWork;
 
-    /** Simulated seconds since the scenario started. */
+    /** Seconds of the world's time since the scenario started. */
     double simTime;
-    /** Simulated time gained against the time the speed setting asked for, smoothed: 1 is keeping up. */
+    /** The world's time against the time the speed setting asked for, over the last second or so: 1 is keeping up. */
     double keepingUp = 1;
-    /** Whether the last frame had to stop short of the steps it owed. */
-    boolean behind;
-    int stepsPerFrame;
+    /** The fluid's steps in a world step. */
+    int substeps;
     /** Wall time between frames, smoothed, in ms. */
     double frameMs;
-    /** The part of a frame spent on the simulation — stepping, reading back and drawing it — smoothed, in ms. */
+    /** The part of a frame spent on the simulation's picture and readings, smoothed, in ms. */
     double workMs;
-    /** What one step costs, in ms, where it is measured. */
+    /** What a world step costs on the physics lane, readbacks included, in ms. */
     double stepMs;
-    /** The step's length in simulated time, in s. */
+    /** The time between finished world steps, as the world's clock predicts it, in ms. */
+    double stepEveryMs;
+    /** The fluid's step in simulated time, in s. */
     double dt;
 
     /** The acoustic Courant number, and the most it may be. */
@@ -51,15 +48,8 @@ final class Metrics {
     long activeParticles;
     int grid;
 
-    /** Fixed-work pacing: the work a frame, keyframes finished a second, and how far into the next. */
-    long budget;
-    double keyframeRate;
-    double keyframeProgress;
-    /** Interpolating between keyframes: how far the guess is from the truth, rms, in grid cells; NaN where not guessing. */
-    double guessError = Double.NaN;
-
     /**
-     * The problems a session has latched, keyed as it keys them, in words for the panel: when, and what it means. The
+     * The problems a run has latched, keyed as it keys them, in words for the panel: when, and what it means. The
      * technical line stays the {@link Readout}'s; each starts {@code t=<seconds>s}, which is where the time comes from.
      */
     static String plain(java.util.Map<String, String> alarms) {
@@ -83,22 +73,21 @@ final class Metrics {
         return out.toString();
     }
 
-    /** Folds one frame's achieved and wanted simulated time into {@link #keepingUp}. */
-    void kept(double achieved, double wanted) {
-        if (wanted <= 0) {
-            return;
-        }
-        keepingUp = 0.9 * keepingUp + 0.1 * Math.min(1, achieved / wanted);
-    }
-
-    /** Starts the averages again, for a new scenario. */
-    void reset() {
-        keepingUp = 1;
-        behind = false;
-        stepsPerFrame = 0;
-        problems = "";
-        guessError = Double.NaN;
-        keyframeRate = 0;
-        keyframeProgress = 0;
+    /** The physics lane's figures, from its latest report. */
+    void take(PhysicsNews.Figures f) {
+        three = f.three();
+        surfaceAvailable = f.surface();
+        simTime = f.simTime();
+        dt = f.dt();
+        substeps = f.substeps();
+        stepMs = f.stepMs();
+        courant = f.courant();
+        courantLimit = f.courantLimit();
+        compression = f.compression();
+        compressionLimit = f.compressionLimit();
+        problems = f.problems();
+        particles = f.particles();
+        activeParticles = f.activeParticles();
+        grid = f.grid();
     }
 }

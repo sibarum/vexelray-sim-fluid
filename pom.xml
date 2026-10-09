@@ -39,6 +39,7 @@
         <vexelray.framework.version>0.1.0-SNAPSHOT</vexelray.framework.version>
         <tactroller.version>1.0-SNAPSHOT</tactroller.version>
         <vexelray.sim.core.version>0.1.0-SNAPSHOT</vexelray.sim.core.version>
+        <kronometer.version>1.0-SNAPSHOT</kronometer.version>
 
         <junit.version>5.11.4</junit.version>
 
@@ -72,6 +73,14 @@
                 <groupId>dev.vexelray.sim</groupId>
                 <artifactId>vexelray-sim-core-gui</artifactId>
                 <version>${vexelray.sim.core.version}</version>
+            </dependency>
+
+            <!-- The world's clock in the demo: a fixed step in the playback tempo, run on the physics lane, whose time
+                 slows rather than hurry when steps are slow. -->
+            <dependency>
+                <groupId>sibarum.kronometer</groupId>
+                <artifactId>kronometer-core</artifactId>
+                <version>${kronometer.version}</version>
             </dependency>
 
             <!-- SupirVast's pure-Java IR, and with vexelray-sim-core the only thing -core depends on. -->

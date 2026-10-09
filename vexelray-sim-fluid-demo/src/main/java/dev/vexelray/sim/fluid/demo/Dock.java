@@ -66,7 +66,7 @@ final class Dock {
             pause.label(isPaused ? "Resume" : "Pause");
         }
         String text = String.format("%s  ·  %.2f s simulated", isPaused ? "Paused" : "Running", metrics.simTime);
-        if (!isPaused && !metrics.fixedWork && metrics.keepingUp < 0.95) {
+        if (!isPaused && metrics.keepingUp < 0.95) {
             text += "  ·  slower than asked (" + ControlPanel.percent(metrics.keepingUp) + ")";
         }
         statusText = Entry.set(status, statusText, text);

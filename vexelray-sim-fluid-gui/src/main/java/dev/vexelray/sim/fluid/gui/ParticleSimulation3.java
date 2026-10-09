@@ -4,6 +4,7 @@ import dev.supirvast.vastir.pass.Pass;
 import dev.supirvast.vastir.tools.Accelerator;
 import dev.supirvast.vastir.tools.GpuContext;
 import dev.supirvast.vastir.tools.PassRunner;
+import dev.vexelray.sim.core.gui.KeptSlots;
 import dev.vexelray.sim.fluid.particle.Flip3;
 import dev.vexelray.sim.fluid.particle.Flip3Step;
 import dev.vexelray.sim.fluid.particle.Scatter;
@@ -320,6 +321,20 @@ public final class ParticleSimulation3 implements AutoCloseable {
                     + runner.program().buffers().keySet());
         }
         return runner.resident(name).vkBuffer();
+    }
+
+    /**
+     * Slots for a picture's {@code ShownRing}, beside this simulation on the device it computes on: copies of the grid's
+     * mass, {@code gm}, which {@link FluidView3} marches. Made, kept into and closed on the thread that steps, and closed
+     * before this is.
+     *
+     * @throws IllegalStateException if the simulation is on the CPU, which has no device to keep them on
+     */
+    public KeptSlots keptSlots() {
+        if (!onGpu()) {
+            throw new IllegalStateException("a simulation on the CPU has no device to keep its steps beside");
+        }
+        return new KeptSlots(accelerator, runner.resident("gm"));
     }
 
     /** Blocks until every step taken so far has finished: the dependency between the kernels and a draw. */

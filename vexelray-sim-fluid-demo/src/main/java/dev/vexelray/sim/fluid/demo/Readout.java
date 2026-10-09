@@ -60,11 +60,7 @@ final class Readout {
                 + "N next scenario · 1-8 colour view\n"
                 + "= - playback speed · C time step safe or too big\n"
                 + "3D: drag to turn · wheel to zoom\n"
-                + "3D: D surface or flat · V slice or see-through\n"
-                + "Fixed work: B on or off · A automatic\n"
-                + "Fixed work: [ ] work · ; ' frame time aimed for\n"
-                + "Fixed work: Z X steps per picture · E smooth the jump\n"
-                + "Fixed work: I hold, guess or live between pictures");
+                + "3D: D surface or flat · V slice or see-through");
     }
 
     Node node() {

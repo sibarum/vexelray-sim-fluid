@@ -7,13 +7,14 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiConsumer;
 import java.util.function.UnaryOperator;
 
 /**
  * What the user has asked for, held until the next frame takes it — for this run only.
  *
- * <p>Key and widget handlers run on worker threads and the simulation lives on the main thread, so a handler only
- * records a request here and the frame acts on it: no handler touches the GPU, and no request is acted on halfway
+ * <p>Key and widget handlers run on worker threads, so a handler only records a request here and the frame acts on it,
+ * telling the physics lane what concerns it: no handler touches the simulation, and no request is acted on halfway
  * through a frame. Requests that are events — reset, step — are flags the frame clears; settings — the view, the
  * speed, a knob — are values it reads.
  *
@@ -28,35 +29,12 @@ import java.util.function.UnaryOperator;
  * {@code -Dkey=value} property, read once at start by the {@code read} function given to the constructor, and gone the
  * next time the application starts without it.
  *
- * <p>The keys are the names below: {@code scenario}, {@code speed}, {@code unstable}, the budgeted-mode settings, and per
- * scenario {@code <scenario>.view} and {@code <scenario>.<knob>}.
+ * <p>The keys are the names below: {@code scenario}, {@code speed}, {@code unstable}, the pictures', and per scenario
+ * {@code <scenario>.view} and {@code <scenario>.<knob>}. There are more of them than a framework {@code @Setting} could
+ * name, and they are made from the scenarios at run time, so a flag for one is turned into a property before the
+ * framework reads the command line ({@link #asProperties}), and read as a property here.
  */
 final class Controls {
-
-    /**
-     * What budgeted mode draws. {@code HOLD}: the last keyframe that finished, until the next does. {@code INTERPOLATE}: the
-     * particles of that keyframe moved along toward where they are predicted to be at the next, by the share of its work
-     * that is done. {@code LIVE}: the particles where the work has got them, which is the truth that {@code INTERPOLATE}
-     * is an estimate of, and needs no keyframe at all.
-     */
-    enum Display {
-        HOLD("hold"), INTERPOLATE("interpolate"), LIVE("live");
-
-        private final String label;
-
-        Display(String label) {
-            this.label = label;
-        }
-
-        String label() {
-            return label;
-        }
-
-        Display next() {
-            Display[] all = values();
-            return all[(ordinal() + 1) % all.length];
-        }
-    }
 
     /** The stable Courant number, and the one past the limit that shows the scheme failing. */
     static final double STABLE_COURANT = 0.45;
@@ -68,18 +46,16 @@ final class Controls {
     /** The 3D step is scaled between these, in octaves; one is the step the Courant number chose. */
     static final double SMALLEST_STEP = 0.25;
     static final double LARGEST_STEP = 2;
-    /** The longest a 3D frame may spend stepping, in ms, in octaves down from the most. */
-    static final double LEAST_POWER = 50.0 / 32;
-    static final double MOST_POWER = 50;
     /** The particles a cell of 3D water can be held to: eight, four, two or one. */
     static final double FEWEST_PARTICLES = 1;
     static final double MOST_PARTICLES = 8;
-    static final long LEAST_BUDGET = 2048;
-    static final long MOST_BUDGET = 64_000_000L;
-    static final double SHORTEST_TARGET = 2;
-    static final double LONGEST_TARGET = 250;
-    static final int SHORTEST_KEYFRAME = 25;
-    static final int LONGEST_KEYFRAME = 1600;
+
+    /**
+     * Keys of settings there are no longer, which an older build may have left in the settings file: the budgeted mode's,
+     * and the most time a 3D frame might spend stepping, both gone since the world's clock paces the physics.
+     */
+    private static final List<String> RETIRED = List.of("power", "budgeted", "auto", "budget", "target", "keyframe",
+            "display", "ease");
 
     /** How long a change to something that restarts the scenario waits for the next one, so dragging a slider restarts it once. */
     private static final long RESET_SETTLE_NANOS = 300_000_000L;
@@ -88,11 +64,7 @@ final class Controls {
     private static final Scenario DEFAULT_SCENARIO = Scenario.DAM_BREAK_3D;
     private static final double DEFAULT_SPEED = 1;
     private static final double DEFAULT_STEP = 1;
-    private static final double DEFAULT_POWER = 25;
     private static final double DEFAULT_PARTICLES = 8;
-    private static final long DEFAULT_BUDGET = 400_000;
-    private static final int DEFAULT_KEYFRAME = 100;
-    private static final double DEFAULT_TARGET = 1000.0 / 60;
 
     private volatile Scenario scenario;
     private final Map<Scenario, View> views = new EnumMap<>(Scenario.class);
@@ -101,20 +73,12 @@ final class Controls {
     private volatile boolean unstable;
     private volatile double timeScale;
     private volatile double stepScale;
-    private volatile double power;
     private volatile double particles;
     private volatile boolean resetRequested = true;
     private volatile long resetNotBefore;
     private volatile boolean stepRequested;
-    private volatile boolean budgeted;
-    private volatile long budget;
-    private volatile boolean auto;
     private volatile boolean slice;
     private volatile boolean volume;
-    private volatile boolean ease;
-    private volatile int keyframeSteps;
-    private volatile Display display;
-    private volatile double targetMillis;
     private volatile long version;
 
     /**
@@ -135,21 +99,13 @@ final class Controls {
             for (Scenario.Param p : s.params()) {
                 values.put(p.knob(), p.clamp(number(read.apply(knobKey(s, p.knob())), p.def())));
             }
-            tunings.put(s, new Scenario.Tuning(values));
+            tunings.put(s, Scenario.Tuning.of(values));
         }
         timeScale = clamp(number(read.apply("speed"), DEFAULT_SPEED), SLOWEST, FASTEST);
         stepScale = clamp(number(read.apply("stepsize"), DEFAULT_STEP), SMALLEST_STEP, LARGEST_STEP);
-        power = clamp(number(read.apply("power"), DEFAULT_POWER), LEAST_POWER, MOST_POWER);
         particles = Math.pow(2, Math.round(Math.log(clamp(number(read.apply("particles"), DEFAULT_PARTICLES), FEWEST_PARTICLES,
                 MOST_PARTICLES)) / Math.log(2)));
         unstable = bool(read.apply("unstable"), false);
-        budgeted = bool(read.apply("budgeted"), false);
-        auto = bool(read.apply("auto"), true);
-        budget = (long) clamp(number(read.apply("budget"), DEFAULT_BUDGET), LEAST_BUDGET, MOST_BUDGET);
-        targetMillis = clamp(number(read.apply("target"), DEFAULT_TARGET), SHORTEST_TARGET, LONGEST_TARGET);
-        keyframeSteps = (int) clamp(number(read.apply("keyframe"), DEFAULT_KEYFRAME), SHORTEST_KEYFRAME, LONGEST_KEYFRAME);
-        display = choose(Display.values(), read.apply("display"), Display.HOLD);
-        ease = bool(read.apply("ease"), true);
         slice = bool(read.apply("slice"), false);
         // On: the water as a surface is the picture of a 3D scenario, and the flat view of its state is the
         // alternative. It was off while it was new; a setting a user has already made is still read as theirs.
@@ -191,7 +147,7 @@ final class Controls {
         for (Scenario.Param p : scenario.params()) {
             values.put(p.knob(), p.knob() == knob ? chosen : before.get(p.knob()));
         }
-        tunings.put(scenario, new Scenario.Tuning(values));
+        tunings.put(scenario, Scenario.Tuning.of(values));
         changed();
         if (knob.resets()) {
             requestReset(true);
@@ -270,90 +226,6 @@ final class Controls {
         changed();
     }
 
-    /** Work per tick, or the ordinary real-time stepping; a change of mode starts the scenario again. */
-    synchronized void toggleBudget() {
-        budgeted(!budgeted);
-    }
-
-    synchronized void budgeted(boolean value) {
-        budgeted = value;
-        changed();
-        requestReset(false);
-    }
-
-    /** Sets the budget by hand, which turns the controller off; it starts from what the controller had. */
-    synchronized void moreBudget() {
-        budget(budget * 2);
-    }
-
-    synchronized void lessBudget() {
-        budget(budget / 2);
-    }
-
-    synchronized void budget(long value) {
-        auto = false;
-        budget = Math.min(Math.max(value, LEAST_BUDGET), MOST_BUDGET);
-        changed();
-    }
-
-    /** The controller on or off. */
-    synchronized void toggleAuto() {
-        auto(!auto);
-    }
-
-    synchronized void auto(boolean value) {
-        auto = value;
-        changed();
-    }
-
-    /** The tick time the controller aims for, halved or doubled, between 2 and 250 ms. */
-    synchronized void shorterTarget() {
-        target(targetMillis / 2);
-    }
-
-    synchronized void longerTarget() {
-        target(targetMillis * 2);
-    }
-
-    synchronized void target(double millis) {
-        targetMillis = clamp(millis, SHORTEST_TARGET, LONGEST_TARGET);
-        changed();
-    }
-
-    /** What budgeted mode draws between keyframes; see {@link Display}. */
-    synchronized void cycleDisplay() {
-        display(display.next());
-    }
-
-    synchronized void display(Display value) {
-        display = value;
-        changed();
-    }
-
-    /** Steps in a keyframe, halved or doubled, between 25 and 1600: a longer one is more to draw between. */
-    synchronized void longerKeyframe() {
-        keyframe(keyframeSteps * 2);
-    }
-
-    synchronized void shorterKeyframe() {
-        keyframe(keyframeSteps / 2);
-    }
-
-    synchronized void keyframe(int steps) {
-        keyframeSteps = Math.min(Math.max(steps, SHORTEST_KEYFRAME), LONGEST_KEYFRAME);
-        changed();
-    }
-
-    /** Easing the jump when a keyframe lands, on or off. */
-    synchronized void toggleEase() {
-        ease(!ease);
-    }
-
-    synchronized void ease(boolean value) {
-        ease = value;
-        changed();
-    }
-
     /** A three-dimensional scenario drawn as a slice through its middle, or integrated along the depth. */
     synchronized void toggleSlice() {
         slice(!slice);
@@ -374,17 +246,6 @@ final class Controls {
         changed();
     }
 
-    /**
-     * While the controller runs, the manual budget follows what it chose, so turning it off starts from there. Not
-     * a change of the user's: it is the controller's.
-     */
-    synchronized void adopt(long chosen) {
-        if (auto && chosen != budget) {
-            budget = chosen;
-            version++;
-        }
-    }
-
     synchronized void faster() {
         speed(timeScale * 2);
     }
@@ -401,11 +262,6 @@ final class Controls {
     /** Holds 3D water to this many particles a cell, rounded to a power of two: the level the slots merge or split to. */
     synchronized void particles(double value) {
         particles = Math.pow(2, Math.round(Math.log(clamp(value, FEWEST_PARTICLES, MOST_PARTICLES)) / Math.log(2)));
-        changed();
-    }
-
-    synchronized void power(double value) {
-        power = clamp(value, LEAST_POWER, MOST_POWER);
         changed();
     }
 
@@ -442,25 +298,8 @@ final class Controls {
         return particles;
     }
 
-    /** The most milliseconds a 3D frame spends stepping. */
-    double power() {
-        return power;
-    }
-
     double timeScale() {
         return timeScale;
-    }
-
-    boolean budgeted() {
-        return budgeted;
-    }
-
-    long budget() {
-        return budget;
-    }
-
-    boolean auto() {
-        return auto;
     }
 
     boolean slice() {
@@ -469,22 +308,6 @@ final class Controls {
 
     boolean volume() {
         return volume;
-    }
-
-    boolean ease() {
-        return ease;
-    }
-
-    int keyframeSteps() {
-        return keyframeSteps;
-    }
-
-    Display display() {
-        return display;
-    }
-
-    double targetMillis() {
-        return targetMillis;
     }
 
     /** Counts every change, so whoever shows the settings can tell when to read them again. */
@@ -539,7 +362,9 @@ final class Controls {
      */
     static int forget(Settings settings) {
         int removed = 0;
-        for (String key : keys()) {
+        List<String> written = new ArrayList<>(keys());
+        written.addAll(RETIRED);
+        for (String key : written) {
             if (settings.has(key)) {
                 settings.remove(key);
                 removed++;
@@ -551,10 +376,10 @@ final class Controls {
         return removed;
     }
 
-    /** Every key this class reads, for the framework's list of the flags it accepts. */
+    /** Every key this class reads. */
     static List<String> keys() {
-        List<String> keys = new ArrayList<>(List.of("scenario", "speed", "stepsize", "power", "particles", "unstable", "budgeted", "auto", "budget", "target",
-                "keyframe", "display", "ease", "slice", "volume"));
+        List<String> keys = new ArrayList<>(List.of("scenario", "speed", "stepsize", "particles", "unstable", "slice",
+                "volume"));
         for (Scenario s : Scenario.values()) {
             keys.add(s.name() + ".view");
             for (Scenario.Param p : s.params()) {
@@ -562,6 +387,31 @@ final class Controls {
             }
         }
         return keys;
+    }
+
+    /**
+     * The command line with every flag for one of these settings taken out and {@code set} as a property instead,
+     * {@code --speed=4} as {@code speed=4} and a bare {@code --slice} as {@code slice=true}; everything else is left for
+     * the framework. Its precedence puts a property just below a flag and nothing else sets these keys, so a flag means
+     * what it always has, and the framework, whose list of the flags it accepts comes from {@code @Setting}s, never
+     * sees one it would refuse.
+     */
+    static String[] asProperties(String[] args, BiConsumer<String, String> set) {
+        java.util.Set<String> ours = java.util.Set.copyOf(keys());
+        List<String> rest = new ArrayList<>();
+        for (String arg : args) {
+            if (arg != null && arg.startsWith("--")) {
+                String body = arg.substring(2);
+                int eq = body.indexOf('=');
+                String key = eq < 0 ? body : body.substring(0, eq);
+                if (ours.contains(key)) {
+                    set.accept(key, eq < 0 ? "true" : body.substring(eq + 1));
+                    continue;
+                }
+            }
+            rest.add(arg);
+        }
+        return rest.toArray(String[]::new);
     }
 
     // --- reading ------------------------------------------------------------------------------------------

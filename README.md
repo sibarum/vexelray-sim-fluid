@@ -47,12 +47,18 @@ right a transport (reset, pause, step) and a status line above two pages.
 
 | Page | What it holds |
 | --- | --- |
-| **Controls** | Every setting, each with a sentence on what it does, and only those that do something to the simulation that is running. Four groups: **Picture** (what the colours show; for 3D, a surface you drag to turn or a flat picture), **Scenario** (its physics knobs), **Speed and performance** (playback speed; for 3D the physics time a frame, particles per cell and grid size; for 2D real-time or fixed-work pacing), and **Stability** (the time step, and for 3D the step size). The live readings each control moves sit in a box beside it — keeping up, frame time, step cost beside the speed and performance controls; step safety, compression and any problems beside the time step. **Reset every setting** puts everything back. |
+| **Controls** | Every setting, each with a sentence on what it does, and only those that do something to the simulation that is running. Four groups: **Picture** (what the colours show; for 3D, a surface you drag to turn or a flat picture), **Scenario** (its physics knobs), **Speed and performance** (playback speed; for 3D particles per cell and grid size), and **Stability** (the time step, and for 3D the step size). The live readings each control moves sit in a box beside it — keeping up, frame time, what a step of physics costs beside the speed and performance controls; step safety, compression and any problems beside the time step. **Reset every setting** puts everything back. |
 | **Diagnostics** | Every number the solver has, for debugging it: time, steps, mass drift, density, speed, Courant number, the latched alarms, and the keys. |
 
 The simulations: a water dam break, oil on water, water on mercury, Rayleigh-Taylor, convection, boiling (with
 no nucleation sites it bumps) and a 3D dam break. A knob that changes the state a scenario starts from restarts it
 once the slider has stopped moving; every other knob reaches the running simulation.
+
+The physics runs on a lane of its own, on a compute queue of the window's GPU, and the frame never waits for it. A
+world clock (Kronometer's `Dilated`) makes a step due sixty times a simulated second; each is as many of the
+fluid's own small steps as its sound speed asks for. When the steps cost more than the clock allows, as at a high
+playback speed, the water slows down rather than the window, and **Keeping up** says by how much. The picture is the
+newest finished step, blended from the one before by how far the next has got.
 
 Nothing is remembered between runs: every launch starts from the defaults, so a setting that has gone wrong is
 always fixed by starting again. Only the window's placement is kept. Each setting is a flag for one launch,
@@ -60,7 +66,7 @@ always fixed by starting again. Only the window's placement is kept. Each settin
 
 Keys still work: **1–8** colour view · **N** next scenario · **R** reset · **space** pause · **.** single step ·
 **C** time step safe or too big · **= / −** speed · **D** the 3D water as a surface or flat, **V** a flat 3D slice or
-see-through, and **B A [ ] ; ' I Z X E** for fixed-work pacing.
+see-through.
 
 The debug view reserves two colours: **magenta** is a broken cell (NaN, infinity, negative depth), and
 **orange to red** is a cell outside the step size the scheme is guaranteed stable for. Alarms latch, with the

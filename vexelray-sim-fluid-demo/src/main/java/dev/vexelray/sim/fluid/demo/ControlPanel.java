@@ -109,18 +109,9 @@ final class ControlPanel {
         return three() && controls.volume() && metrics.surfaceAvailable;
     }
 
-    /** Whether a 2D scenario runs on a fixed amount of work a frame: chosen, and possible for this one. */
-    private boolean fixedWork() {
-        return !three() && controls.budgeted() && metrics.fixedWorkAvailable;
-    }
-
-    private boolean realTime() {
-        return !fixedWork();
-    }
-
-    /** Whether the run is falling short of the speed asked for: over a few frames, not one slow one. */
+    /** Whether the world is running slower than the speed asked for: over the last second or so, not one slow step. */
     private boolean lagging() {
-        return realTime() && !controls.paused() && metrics.keepingUp < 0.95;
+        return !controls.paused() && metrics.keepingUp < 0.95;
     }
 
     // --- picture --------------------------------------------------------------------------------------------
@@ -216,29 +207,18 @@ final class ControlPanel {
         entries.add(new Entry.Setting(gui,
                 Dial.logarithmic(SIDE, "Playback speed", Controls.SLOWEST, Controls.FASTEST, 1, controls::timeScale,
                         controls::speed, ControlPanel::speed),
-                () -> "How fast simulated time runs: x1 is real time. Ask for more than the computer can do and it falls "
-                        + "behind, shown below.",
-                this::realTime, false));
+                () -> "How fast simulated time runs: x1 is real time. Ask for more than the computer can do and the water "
+                        + "slows down rather than the window, shown below.",
+                () -> true, false));
         entries.add(gauges(gui,
-                reading(gui, "Keeping up", () -> percent(metrics.keepingUp) + (lagging() ? ", falling behind" : ""),
-                        this::lagging, this::realTime),
-                reading(gui, "Frame time", this::frameTime, () -> false, this::realTime),
-                reading(gui, "Spent simulating", () -> String.format("%.1f ms a frame", metrics.workMs), () -> false,
+                reading(gui, "Keeping up", () -> percent(metrics.keepingUp) + (lagging() ? ", slowed down" : ""),
+                        this::lagging, () -> true),
+                reading(gui, "Frame time", this::frameTime, () -> false, () -> true),
+                reading(gui, "Drawing it", () -> String.format("%.1f ms a frame", metrics.workMs), () -> false,
                         () -> true),
-                reading(gui, "Steps a frame", () -> metrics.stepsPerFrame + " of at most 600", this::lagging,
-                        () -> !three() && realTime())));
-
-        // Three dimensions: what the physics may spend, and what it costs.
-        entries.add(new Entry.Setting(gui,
-                Dial.logarithmic(SIDE, "Physics time a frame", Controls.LEAST_POWER, Controls.MOST_POWER, 1,
-                        controls::power, controls::power, ControlPanel::millis),
-                () -> "The most each frame may spend on physics. More keeps closer to real time; less keeps the window "
-                        + "quick to respond.",
-                this::three, false));
-        entries.add(gauges(gui,
-                reading(gui, "Physics used", () -> String.format("%.1f ms, %d steps", metrics.stepsPerFrame * metrics.stepMs,
-                        metrics.stepsPerFrame), this::lagging, this::three),
-                reading(gui, "One step costs", () -> String.format("%.2f ms", metrics.stepMs), () -> false, this::three)));
+                reading(gui, "A step of physics", () -> String.format("%.1f ms, one every %.1f ms", metrics.stepMs,
+                        metrics.stepEveryMs), this::lagging, () -> true),
+                reading(gui, "Steps inside it", () -> String.valueOf(metrics.substeps), () -> false, () -> true)));
         entries.add(new Entry.Setting(gui,
                 Dial.logarithmic(SIDE, "Particles per cell", Controls.FEWEST_PARTICLES, Controls.MOST_PARTICLES, 1,
                         controls::particles, controls::particles, v -> String.format("%.0f", v)),
@@ -257,64 +237,6 @@ final class ControlPanel {
                         : String.format("%,d of %,d", metrics.activeParticles, metrics.particles), () -> false, this::three),
                 reading(gui, "Grid", () -> metrics.grid + (three() ? " x " + metrics.grid + " x " : " x ") + metrics.grid,
                         () -> false, this::three)));
-
-        // Two dimensions: real time, or a fixed amount of work a frame.
-        entries.add(new Entry.Setting(gui,
-                Property.choice(SIDE, "Pacing",
-                        List.of(new Option<>("Real time", false), new Option<>("Fixed work", true)),
-                        controls::budgeted, controls::budgeted),
-                () -> controls.budgeted()
-                        ? "Each frame does a set amount of physics, so the window stays smooth on any computer, and the "
-                                + "simulation runs as fast as that allows. Changing it restarts the simulation."
-                        : "Simulated time keeps pace with the clock, as much as the computer can manage. Changing it "
-                                + "restarts the simulation.",
-                () -> !three() && metrics.fixedWorkAvailable, false));
-        entries.add(new Entry.Setting(gui,
-                Property.flag(SIDE, "Choose the work automatically", controls::auto, controls::auto),
-                () -> controls.auto() ? "The work is adjusted to meet the frame time below."
-                        : "The work is the amount you set below.",
-                this::fixedWork, true));
-        entries.add(new Entry.Setting(gui,
-                Dial.logarithmic(SIDE, "Frame time to aim for", Controls.SHORTEST_TARGET, Controls.LONGEST_TARGET, 0.5,
-                        controls::targetMillis, controls::target, ControlPanel::millis),
-                () -> "Shorter keeps the window smoother; longer gets more physics done each frame.",
-                () -> fixedWork() && controls.auto(), false));
-        entries.add(new Entry.Setting(gui,
-                Dial.logarithmic(SIDE, "Work a frame", Controls.LEAST_BUDGET, Controls.MOST_BUDGET, 1, controls::budget,
-                        v -> controls.budget((long) v), ControlPanel::work),
-                () -> "Particle updates each frame does. Moving this turns automatic off.",
-                () -> fixedWork() && !controls.auto(), false));
-        entries.add(gauges(gui,
-                reading(gui, "Frame time against aim", () -> String.format("%.1f of %.1f ms", metrics.frameMs,
-                        controls.targetMillis()), () -> metrics.frameMs > 1.05 * controls.targetMillis(), () -> fixedWork() && controls.auto()),
-                reading(gui, "Work now", () -> work(metrics.budget), () -> false, () -> fixedWork() && controls.auto()),
-                reading(gui, "Pictures a second", () -> String.format("%.1f, next %.0f%% done", metrics.keyframeRate,
-                        100 * metrics.keyframeProgress), () -> false, this::fixedWork)));
-        entries.add(new Entry.Setting(gui,
-                Dial.logarithmic(SIDE, "Steps per picture", Controls.SHORTEST_KEYFRAME, Controls.LONGEST_KEYFRAME, 1,
-                        controls::keyframeSteps, v -> controls.keyframe((int) Math.round(v)),
-                        v -> String.valueOf(Math.round(v))),
-                () -> "A new picture is finished every this many steps. More steps means pictures that come less often.",
-                this::fixedWork, false));
-        entries.add(new Entry.Setting(gui,
-                Property.choice(SIDE, "Between pictures",
-                        List.of(new Option<>("Hold", Controls.Display.HOLD),
-                                new Option<>("Guess", Controls.Display.INTERPOLATE),
-                                new Option<>("Live", Controls.Display.LIVE)),
-                        controls::display, controls::display),
-                () -> switch (controls.display()) {
-                    case HOLD -> "Show the last finished picture until the next one is ready.";
-                    case INTERPOLATE -> "Move the particles along their velocity until the next picture lands.";
-                    case LIVE -> "Show the particles part way through being updated. May look torn.";
-                },
-                this::fixedWork, false));
-        entries.add(new Entry.Setting(gui,
-                Property.flag(SIDE, "Smooth the jump", controls::ease, controls::ease),
-                () -> "Eases the small jump when a guessed picture is replaced by the real one.",
-                () -> fixedWork() && controls.display() == Controls.Display.INTERPOLATE, true));
-        entries.add(gauges(gui,
-                reading(gui, "Guess is off by", () -> String.format("%.2f cells", metrics.guessError), () -> false,
-                        () -> fixedWork() && !Double.isNaN(metrics.guessError))));
         return entries;
     }
 
@@ -412,18 +334,8 @@ final class ControlPanel {
         return String.format("%.0f%%", 100 * fraction);
     }
 
-    /** A time in milliseconds: {@code 25 ms}, {@code 1.6 ms}. */
-    static String millis(double v) {
-        return v >= 10 ? String.format("%.0f ms", v) : String.format("%.1f ms", v);
-    }
-
     /** A speed as a multiple of real time: {@code x4}, {@code x1/8}. */
     static String speed(double v) {
         return v >= 1 ? "x" + Math.round(v) : "x1/" + Math.round(1 / v);
-    }
-
-    /** Work in particle updates: thousands, then millions. */
-    static String work(double v) {
-        return v >= 1_000_000 ? String.format("%.1fM", v / 1e6) : String.format("%.0fk", v / 1000);
     }
 }

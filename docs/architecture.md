@@ -32,7 +32,7 @@ The fluid is one simulation of several, in sibling repos that depend downward on
 
 | Repo | What it is |
 | --- | --- |
-| `vexelray-sim-core` | What every simulation shares: the kernel body, a step as passes over named buffers, the clock, the work budget, the camera, the panel's rows. Infrastructure, never technique. |
+| `vexelray-sim-core` | What every simulation shares: the kernel body, a step as passes over named buffers, the clock, the work budget, the camera, the panel's rows, the lent compute queue (`AppCompute`) and the ring finished steps reach a picture through (`ShownRing`, `KeptSlots`). Infrastructure, never technique. |
 | `vexelray-sim-fluid` | This: the fluid solver and its experiments. |
 | `vexelray-sim-rigid` | The rigid-body solver and its experiments. |
 | `vexelray-sim-physics` | The two coupled, and the front door: what an application that wants physics depends on. |
@@ -42,6 +42,53 @@ fast its surface moves — and gives back what the fluid did to it, and it does 
 boundary. Making the boundary a body, and turning what the fluid did into buoyancy and drag on it, is
 `vexelray-sim-physics`'. A contract both sides must agree on belongs in `vexelray-sim-core`, and moves there
 when a second simulation asks for it, not before.
+
+**The rigid demo leads on how a simulation is run and shown**, and this one follows it. Its plan is
+vexelray-sim-rigid's `docs/physics-timing.md`, which is kept up to date as it is built; read it, and that repo's
+latest commits, before trusting what this repo's TODO says the pattern is. The TODO has lagged it once already.
+
+## The demo: who runs what, and on which thread
+
+The demo is a framework application with **generated wiring**: `FluidDemoWiring` is written by
+vexelray-framework's processor from `@VexelApp` on `FluidDemo`, the `@Provides` methods of `Recipes`, and the
+`@Component` `Physics`. Nothing is wired by hand, and the processor checks the threading rules at compile time.
+
+```
+ main thread (the frame)                         lane "physics" (its own platform thread)
+ ───────────────────────                         ────────────────────────────────────────
+ Session  @MainThread, @BeforeFrame              Physics  @Component, lent the ComputeQueue
+   reads Controls, tells the clock and physics     FlatRun  2D: own device, readbacks here
+   draws the newest finished step                  BoxRun   3D: on the app's device, compute queue
+ Ui       the tree, the two views, the keys                 ───────────────────
+                                                    runs steps while the world's clock says one is due
+           ── Start · Tune · Look · Step ──▶       (Messages: records of values, over the bus)
+           ◀── FlatPictures · ShownRing · PhysicsNews (the only shared objects) ──
+                         Dilated world clock (timeline; both read it)
+```
+
+- **The world's clock** is Kronometer's `Dilated`: a fixed 60 Hz grid inside the playback `Tempo`, whose time is
+  counted by the steps that *finish*. When steps cost more than the grid allows, steps owed past `MOST_BEHIND` are
+  forgiven and the world slows; the frame rate does not. Its `onDue` publishes `Next` to the lane, on the timeline.
+- **A world step is not the fluid's step.** It is a sixtieth of a simulated second, taken in as many of the fluid's
+  own steps as its sound speed asks for (`Physics.substeps`: 125 for the 2D dam break, 58 for the 3D one at 40³), the
+  step rounded down so a whole number fill it. Playback speed rescales the tempo, so it changes how often a world
+  step is due, never the step.
+- **Four objects are shared, and only four**: the clock, `FlatPictures` (the two newest host pictures, so the frame
+  can blend them by `world.phase`), the `ShownRing` (the 3D surface, on the device), and `PhysicsNews` (the readout's
+  lines and the panel's figures, newest only; also the loop's `WakeSource`, so a step finished while paused is drawn).
+  Everything else crosses as a message, and a message must be **deeply immutable**: the processor refuses a record
+  holding a `Map` or a `List` (rule T2.4), which is why `Scenario.Tuning` is a record of doubles and a bitmask.
+- **The 3D surface never comes to the host.** `BoxRun` keeps each step's grid mass in a ring slot with a copy kernel
+  that signals a timeline (`KeptSlots`), and `FluidView3` draws the slot waiting on that timeline inside the GPU.
+  The step reached the value before it was published, so the wait is already met. A new simulation is a new
+  *generation* of the ring, and the old one is freed only once the frame has moved past its slots
+  (`ShownRing.retired`); a frame that stops showing the surface `release`s it.
+- **Readbacks happen on the lane**, where waiting costs the world and not the window: the 2D picture and its
+  diagnostics every world step, the 3D readings every sixth while the surface shows (every step while the flat
+  picture does, which is why that view slows the world).
+- **Close order matters.** Parts are closed in reverse order of construction. `Ui` is built before the window, so
+  it must hold nothing made on the device; its views make their pipelines lazily and `Session`, built after the
+  device, closes them. `Physics` closes slots before the simulation they sit beside, and the lent context last.
 
 ## Two scales of fluid
 

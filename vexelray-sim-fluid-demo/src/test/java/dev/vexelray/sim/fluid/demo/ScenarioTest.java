@@ -106,7 +106,7 @@ class ScenarioTest {
         for (Scenario.Param p : s.params()) {
             values.put(p.knob(), p.knob() == knob ? value : p.def());
         }
-        return new Scenario.Tuning(values);
+        return Scenario.Tuning.of(values);
     }
 
     private static int filled(Scenario s, Scenario.Tuning t) {

@@ -43,6 +43,10 @@
             <groupId>dev.vexelray.sim</groupId>
             <artifactId>vexelray-sim-fluid-gui</artifactId>
         </dependency>
+        <dependency>
+            <groupId>sibarum.kronometer</groupId>
+            <artifactId>kronometer-core</artifactId>
+        </dependency>
         <!-- The application edge: input, clipboard, window memory, clock, frame loop, shutdown. -->
         <dependency>
             <groupId>dev.vexelray.framework</groupId>
@@ -136,6 +140,22 @@
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!-- The framework's annotation processor: it generates FluidDemoWiring from Recipes and Physics,
+                         and what its vocabulary calls a compile error is one. Named rather than found, because since
+                         JDK 23 javac runs no processor it merely finds on the class path. -->
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>dev.vexelray.framework</groupId>
+                            <artifactId>vexelray-framework-processor</artifactId>
+                            <version>${vexelray.framework.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
