@@ -119,8 +119,34 @@
                                  options. Windows linker options. -->
                             <buildArg>-H:NativeLinkerOption=/SUBSYSTEM:${native.subsystem}</buildArg>
                             <buildArg>-H:NativeLinkerOption=/ENTRY:mainCRTStartup</buildArg>
+                            <buildArg>-H:NativeLinkerOption=${project.build.directory}/fluid-sim.res</buildArg>
                         </buildArgs>
                     </configuration>
+                </plugin>
+                <!-- The executable's icon: a resource linked into the program, so it has to exist as a compiled .res
+                     before link time. rc.exe is the Windows SDK's resource compiler and must be on PATH, as it is in a
+                     Visual Studio developer prompt (which the native build already needs for link.exe). -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-antrun-plugin</artifactId>
+                    <version>3.1.0</version>
+                    <executions>
+                        <execution>
+                            <id>compile-icon-resource</id>
+                            <phase>prepare-package</phase>
+                            <goals><goal>run</goal></goals>
+                            <configuration>
+                                <target>
+                                    <exec executable="rc.exe" searchpath="true" failonerror="true">
+                                        <arg value="/nologo"/>
+                                        <arg value="/fo"/>
+                                        <arg file="${project.build.directory}/fluid-sim.res"/>
+                                        <arg file="${project.basedir}/src/main/rc/fluid-sim.rc"/>
+                                    </exec>
+                                </target>
+                            </configuration>
+                        </execution>
+                    </executions>
                 </plugin>
             </plugins>
         </pluginManagement>
@@ -183,7 +209,8 @@
     <profiles>
         <!--
           GraalVM native images, profile-gated as vexelray-gui-demo's are: native-image takes a minute and needs a
-          GraalVM JDK, and an ordinary package must not pay for it.
+          GraalVM JDK, and an ordinary package must not pay for it. Both run rc.exe for the icon (src/main/rc), so run
+          them from a Visual Studio developer prompt, which link.exe already asks for.
 
           mvn -Pnative-release -pl vexelray-sim-fluid-demo -am package  ->  target/fluid-sim.exe
               what ships: a GUI subsystem program with no automation module; installer.json points at it.
@@ -194,6 +221,10 @@
             <id>native</id>
             <build>
                 <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                    </plugin>
                     <plugin>
                         <groupId>org.graalvm.buildtools</groupId>
                         <artifactId>native-maven-plugin</artifactId>
@@ -211,6 +242,10 @@
             </properties>
             <build>
                 <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                    </plugin>
                     <plugin>
                         <groupId>org.graalvm.buildtools</groupId>
                         <artifactId>native-maven-plugin</artifactId>

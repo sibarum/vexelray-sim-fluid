@@ -75,7 +75,10 @@ simulated time they were first seen, until a reset.
 ### Native executable
 
 With a GraalVM JDK (25, as `JAVA_HOME`), the demo builds to a native binary, as two editions of the same code.
-Both are profile-gated, so ordinary builds stay fast:
+Both are profile-gated, so ordinary builds stay fast. Run them from a Visual Studio developer prompt (or after
+`vcvars64.bat`), so `link.exe` is MSVC's and `rc.exe` is on `PATH`: both editions link the icon,
+`vexelray-sim-fluid-demo/src/main/rc/fluid-sim.ico`, which is `fluid-sim.svg` (the suite icon canvas's Fluid
+experiments primary) rendered by `vex-suite-common`'s `tools/Ico.java`.
 
 ```bash
 mvn -Pnative-release -pl vexelray-sim-fluid-demo package -DskipTests

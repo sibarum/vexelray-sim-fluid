@@ -1,0 +1,11 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><defs>
+<linearGradient id="t24" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f7fbfe"/><stop offset="1" stop-color="#d5e9fb"/></linearGradient>
+<linearGradient id="e24" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".55"/><stop offset=".45" stop-color="#ffffff" stop-opacity="0"/></linearGradient>
+<clipPath id="c24"><rect x="2" y="2" width="60" height="60" rx="15"/></clipPath>
+</defs>
+<rect x="2" y="2" width="60" height="60" rx="15" fill="url(#t24)"/>
+<rect x="2" y="2" width="60" height="60" rx="15" fill="none" stroke="#aac8e3" stroke-width="1"/><rect x="2" y="2" width="60" height="12.5" fill="#0177bc" clip-path="url(#c24)"/><g transform="translate(32 39) scale(.66) translate(-32 -32)">
+<path d="M10 52 V42 C10 27 21 15.5 35 15.5 C46 15.5 54 22.5 54 31 C54 37.5 48.5 41 43.5 39.2 C39.5 37.8 38.6 32.6 41.6 30.4 C44 28.7 47 29.8 47.6 31.8 C48.4 25.8 42.6 21.6 36.2 22.6 C28.2 23.8 23.6 31.6 25.6 39.4 C27 44.6 31.6 47 36.4 47 H54 V52 Z" fill="#0177bc"/>
+<path d="M14.6 41 C15.6 30.6 23.6 21.2 34.4 19.8" fill="none" stroke="#72b8f2" stroke-width="2.6" stroke-linecap="round"/>
+<circle cx="51.5" cy="13" r="2.3" fill="#72b8f2"/>
+<circle cx="56.2" cy="19" r="1.6" fill="#72b8f2"/></g><rect x="2.6" y="2.6" width="58.8" height="58.8" rx="14.4" fill="none" stroke="url(#e24)" stroke-width="1.2"/></svg>
