@@ -5,10 +5,11 @@
   "description": "Fluid simulation experiments on the VexelRay stack: dam breaks, mixing, heat and a 3D dam break, live on the GPU.",
   "version": "0.1.0",
 
-  "repo": "sibarum/vexelray-sim-fluid",
+  "repo": "sibarum/vexelray-dist",
   "branch": "main",
-  "releasesRepo": "sibarum/vexelray-sim-fluid",
-  "tagFormat": "v{version}",
+  "repoPath": "apps/fluid-sim",
+  "releasesRepo": "sibarum/vexelray-dist",
+  "tagFormat": "fluid-sim-v{version}",
 
   "windows": {
     "binaries": [
