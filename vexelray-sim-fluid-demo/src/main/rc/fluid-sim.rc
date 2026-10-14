@@ -5,3 +5,8 @@
 // fluid-sim.ico is fluid-sim.svg (the suite icon canvas's Fluid experiments primary, dark) rendered at 16 to 256 px
 // by vex-suite-common's tools/Ico.java. The window, file and light variants are kept beside it.
 1 ICON "fluid-sim.ico"
+
+// The manifest: PerMonitorV2 DPI awareness and the OS compatibility java.exe declares, so this executable is
+// drawn at the display's real pixels exactly as a JVM launch is, rather than rendered at 96 DPI and stretched by
+// Windows. Resource 1 of type 24 (RT_MANIFEST) is the one the loader reads for a process.
+1 24 "fluid-sim.manifest"
