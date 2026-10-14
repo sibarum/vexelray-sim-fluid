@@ -4,6 +4,8 @@ Fluid simulation for VexelRay — **an expressive API and a high-performance sim
 bet on SupirVast: dynamics declared symbolically and lowered, in stages, to kernels that run on the GPU and the
 CPU from one source.
 
+**Try it:** the Fluid Sim demo installs on Windows with the other VexelRay applications, from [sibarum.github.io](https://sibarum.github.io/).
+
 It is a series of experiments rather than an implementation yet: each technique is built far enough to be
 measured, and the implementation will be chosen from the results. Two scales of fluid are in view — **prop
 scale** (fluid in containers) and **world scale** (fluid that is the environment) — and the work starts with
