@@ -130,20 +130,13 @@ one is untested.
 [`vexelray-installer`](https://github.com/sibarum/vexelray-installer): `fluid-sim.exe` in
 `%LOCALAPPDATA%\Programs\Fluid Sim`, with Start menu and desktop shortcuts and an Apps entry. Installing through
 `irm ... | iex` rather than a browser download means the executable never carries the Mark of the Web, so
-SmartScreen does not stand between a person and the first run. From a checkout of `vexelray-installer`, after
-`mvn -Pnative-release -pl vexelray-sim-fluid-demo package -DskipTests` here:
+SmartScreen does not stand between a person and the first run.
 
-```bash
-java -jar installer-core/target/installer-core-0.1.0-SNAPSHOT-cli.jar --config ../vexelray-sim-fluid/installer.json --version 0.1.0 --out ../vexelray-sim-fluid --assets ../vexelray-sim-fluid/target/installer-assets
-```
-
-Upload `target/installer-assets/0.1.0/fluid-sim.exe` to the release `v0.1.0` (or add `--publish`), then commit the
-generated `install.ps1`, `uninstall.ps1`, `update.ps1`, `manifest.json` and `INSTALL.md` (the generator leaves
-this README alone). The one-liner is then:
-
-```powershell
-irm https://raw.githubusercontent.com/sibarum/vexelray-sim-fluid/main/install.ps1 | iex
-```
+The installer scripts and the binaries are published from
+[`vexelray-dist`](https://github.com/sibarum/vexelray-dist) (`apps/fluid-sim/`, releases tagged
+`fluid-sim-v<version>`), and its [DEPLOYING.md](https://github.com/sibarum/vexelray-dist/blob/main/DEPLOYING.md) says
+how a release goes out. The install page, with the one-liner, is
+<https://sibarum.github.io/vexelray-framework/install/>.
 
 ### Screenshots while developing
 
