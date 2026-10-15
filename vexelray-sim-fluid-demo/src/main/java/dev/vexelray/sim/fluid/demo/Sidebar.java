@@ -57,7 +57,7 @@ final class Sidebar {
                 .scroll(false, true);
         // In em, since what it holds is text: the width follows zoom, which a dp width would not.
         panel = gui.column().direction(Direction.COLUMN)
-                .width(Length.em(13f)).height(Length.FILL)
+                .width(Length.rem(13f)).height(Length.FILL)
                 .gap(Look.TIGHT).padding(Look.WIDE, Look.WIDE)
                 .background(gui.theme().color(Role.PANEL))
                 .children(list, name, about);
