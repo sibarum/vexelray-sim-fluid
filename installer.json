@@ -18,7 +18,8 @@
         "source": "vexelray-sim-fluid-demo/target/fluid-sim.exe",
         "icon": "vexelray-sim-fluid-demo/src/main/rc/fluid-sim.ico",
         "shortcuts": { "desktop": true, "startMenu": true, "label": "Fluid Sim" }
-      }
+      },
+      { "name": "notices", "source": "THIRD-PARTY-NOTICES.txt" }
     ]
   }
 }
