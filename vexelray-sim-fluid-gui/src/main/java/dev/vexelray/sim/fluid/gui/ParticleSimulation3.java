@@ -7,6 +7,7 @@ import dev.supirvast.vastir.tools.PassRunner;
 import dev.vexelray.sim.core.gui.KeptSlots;
 import dev.vexelray.sim.fluid.particle.Flip3;
 import dev.vexelray.sim.fluid.particle.Flip3Step;
+import dev.vexelray.sim.fluid.particle.Plastic3;
 import dev.vexelray.sim.fluid.particle.Scatter;
 
 import java.util.ArrayList;
@@ -16,7 +17,7 @@ import java.util.List;
  * A particle fluid in one walled three-dimensional box, stepped on resident buffers: {@link ParticleSimulation}'s
  * counterpart for {@link Flip3Step}. The step is run by a {@link PassRunner} that records it once, so a step is one
  * submission. It is not sorted, and of the two-dimensional step's extras it has only surface tension: no heat,
- * convection or budgeting yet.
+ * convection or budgeting yet. It has one of its own, a {@link Plastic3} material for slime.
  *
  * <p>Runs on the GPU when there is one and dispatch by dispatch on the CPU otherwise, through the same buffers, though the
  * CPU is far too slow to watch.
@@ -30,6 +31,7 @@ public final class ParticleSimulation3 implements AutoCloseable {
 
     private final Flip3Step step;
     private final boolean tension;
+    private final boolean plastic;
     private final Accelerator accelerator;
     private final PassRunner runner;
     /** The level of detail's target and then its passes, as one list. */
@@ -49,14 +51,17 @@ public final class ParticleSimulation3 implements AutoCloseable {
     public static final class Prepared implements AutoCloseable {
         private final Flip3Step step;
         private final boolean tension;
+        private final boolean plastic;
         private final Accelerator accelerator;
         private final PassRunner runner;
         private final List<Pass> lod;
         private boolean taken;
 
-        private Prepared(Flip3Step step, boolean tension, Accelerator accelerator, PassRunner runner, List<Pass> lod) {
+        private Prepared(Flip3Step step, boolean tension, boolean plastic, Accelerator accelerator, PassRunner runner,
+                         List<Pass> lod) {
             this.step = step;
             this.tension = tension;
+            this.plastic = plastic;
             this.accelerator = accelerator;
             this.runner = runner;
             this.lod = lod;
@@ -72,6 +77,10 @@ public final class ParticleSimulation3 implements AutoCloseable {
 
         public boolean tension() {
             return tension;
+        }
+
+        public boolean plastic() {
+            return plastic;
         }
 
         /** The simulation it becomes has it now; a second simulation cannot be made from it. */
@@ -99,22 +108,34 @@ public final class ParticleSimulation3 implements AutoCloseable {
      * device, so that a picture of the state reads {@link #vkBuffer the buffers the kernels wrote} where they are.
      */
     public static Prepared prepare(GpuContext context, int nx, int ny, int nz, int particles, boolean tension) {
-        return prepare(Accelerator.on(context), nx, ny, nz, particles, tension);
+        return prepare(context, nx, ny, nz, particles, tension, false);
+    }
+
+    /** As above, and with a {@link Plastic3} stress on the particles if {@code plastic}. */
+    public static Prepared prepare(GpuContext context, int nx, int ny, int nz, int particles, boolean tension,
+                                   boolean plastic) {
+        return prepare(Accelerator.on(context), nx, ny, nz, particles, tension, plastic);
     }
 
     /** As above, on a device of its own, made on first use. */
     public static Prepared prepare(int nx, int ny, int nz, int particles, boolean tension) {
-        return prepare(new Accelerator(), nx, ny, nz, particles, tension);
+        return prepare(nx, ny, nz, particles, tension, false);
     }
 
-    private static Prepared prepare(Accelerator accelerator, int nx, int ny, int nz, int particles, boolean tension) {
-        Flip3Step step = new Flip3Step(nx, ny, nz, particles, tension);
+    /** As above, and with a {@link Plastic3} stress on the particles if {@code plastic}. */
+    public static Prepared prepare(int nx, int ny, int nz, int particles, boolean tension, boolean plastic) {
+        return prepare(new Accelerator(), nx, ny, nz, particles, tension, plastic);
+    }
+
+    private static Prepared prepare(Accelerator accelerator, int nx, int ny, int nz, int particles, boolean tension,
+                                    boolean plastic) {
+        Flip3Step step = new Flip3Step(nx, ny, nz, particles, tension, plastic);
         PassRunner runner = PassRunner.gpu(accelerator, step, Scatter.WORKGROUP, Scatter.SUBGROUP);
         List<Pass> lod = new ArrayList<>(step.lodTarget());
         lod.addAll(step.lod());
         runner.prepare(step.step());
         runner.prepare(lod);
-        return new Prepared(step, tension, accelerator, runner, List.copyOf(lod));
+        return new Prepared(step, tension, plastic, accelerator, runner, List.copyOf(lod));
     }
 
     /**
@@ -147,6 +168,12 @@ public final class ParticleSimulation3 implements AutoCloseable {
         this(prepare(context, nx, ny, nz, particles, tension));
     }
 
+    /** As above, and with a {@link Plastic3} stress on the particles if {@code plastic}. */
+    public ParticleSimulation3(GpuContext context, int nx, int ny, int nz, int particles, boolean tension,
+                               boolean plastic) {
+        this(prepare(context, nx, ny, nz, particles, tension, plastic));
+    }
+
     /**
      * Finishes what {@link #prepare} made, on the owning thread: the buffers cleared, in one submission. The step and the
      * level of detail are each recorded as one on their first run. The preparation is this simulation's from then on.
@@ -155,6 +182,7 @@ public final class ParticleSimulation3 implements AutoCloseable {
         prepared.take();
         accelerator = prepared.accelerator;
         tension = prepared.tension;
+        plastic = prepared.plastic;
         step = prepared.step;
         runner = prepared.runner;
         lod = prepared.lod;
@@ -182,6 +210,11 @@ public final class ParticleSimulation3 implements AutoCloseable {
         return tension;
     }
 
+    /** Whether the particles carry a {@link Plastic3} stress, whose material is in the parameters. */
+    public boolean plastic() {
+        return plastic;
+    }
+
     /** Whether a step is one GPU submission, as opposed to the CPU fallback. */
     public boolean onGpu() {
         return runner.onDevice();
@@ -189,7 +222,7 @@ public final class ParticleSimulation3 implements AutoCloseable {
 
     /**
      * Replaces the particles, in node units and node units per second, and the parameters ({@code Flip3.params}); every
-     * particle starts at its rest volume and with no affine velocity.
+     * particle starts at its rest volume, with no affine velocity and, if it carries one, no stress.
      */
     public void load(float[][] at, float[][] velocity, float[] mass, int[] params) {
         write("x", at[0]);
@@ -210,6 +243,11 @@ public final class ParticleSimulation3 implements AutoCloseable {
         write("j", rest);
         for (String affine : List.of("c00", "c01", "c02", "c10", "c11", "c12", "c20", "c21", "c22")) {
             write(affine, new float[mass.length]);
+        }
+        if (plastic) {
+            for (String stress : Plastic3.STRESS_NAMES) {
+                write(stress, new float[mass.length]);
+            }
         }
         runner.write("params", params);
         float[] full = new float[runner.program().buffers().get("level").length()];

@@ -78,6 +78,14 @@ cannot be fixed from here at all.
       only near fluid, one pool shared by every blob, bricks that sleep when still, and slime as a yield-stress
       material. The plan and the first experiment are in [sparse-fluid.md](sparse-fluid.md).
 
+- [ ] **Slime is built in 3D only, and not with everything.** `Plastic3` (a stress a particle, elastic to a yield, then
+      Bingham) and the "Slime" scenario work and are tested (`Plastic3Test`). Not done: the level of detail moves mass
+      between slots but leaves their stress where it was, so a slot that joins keeps a stale one (it should take the
+      givers' mass-weighted mean, as it does `C` and `J`); slime with surface tension on runs, but nothing tests it; the
+      shear wave costs steps (61 a world step at 40³, the world at 70% while the ball splats); the knobs' units are
+      approximate (in the test, a firmness of 18 cells comes to a heap of 10.7). And for the Ratchet & Clank feel: more than one
+      blob, something to throw them at, and slime that sticks to walls.
+
 - [ ] **Second order.** The first kernel is first-order: Ritter's L1 error goes 1.28% → 0.80% from 200 to
       400 cells. A MUSCL reconstruction with a limiter sharpens fronts at the same resolution, and is the
       first change that is a *second scheme* — the point at which the discretisation level of the tower

@@ -91,8 +91,12 @@ It is the best first case for sparse fluid for three reasons: a blob is small an
 bricks; a yield stress makes it **actually come to a stop**, which gives sleeping a clear moment to start; and
 `Tension3` already gives a blob its rounded, wobbling surface.
 
-The step has no viscosity or yield stress today. They are new work, separable from the sparse grid, and can be
-tried in the dense box first.
+**This part is built**, in the dense box: `Plastic3`, and the demo's "Slime" scenario. A particle carries its
+deviatoric stress, loaded elastically and held to the yield as Bingham's flow says, with a little damping. Under a
+steady shear it gives Bingham's `τ_y + η·γ̇` to the digit on both backends, and a firm ball dropped on the floor
+comes to a heap 10.7 cells high whose fastest particle moves 0.006 cells a second after 6 s, where water spreads to
+1.7 (`Plastic3Test`). A softer one settles too, only more slowly, since it flows while it is at its yield: that is
+the material, not drift, so the "lake at rest" problem does not stand in the way of sleeping slime.
 
 ## The first experiment
 

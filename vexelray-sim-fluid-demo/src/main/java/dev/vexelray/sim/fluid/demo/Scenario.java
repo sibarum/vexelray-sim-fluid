@@ -197,6 +197,33 @@ enum Scenario {
         double density3(int col, int row, int layer, Tuning t) {
             return col < t.cells(Knob.COLUMN_WIDTH) && row < 30 && layer >= 12 && layer < 32 ? WATER : 0;
         }
+    },
+
+    /**
+     * A ball of slime dropped onto the floor of the box: a viscoplastic material, a soft elastic solid until it is pushed
+     * past its yield and then a thick liquid. It splats, shivers and settles into a heap that stays, where water would
+     * spread flat.
+     */
+    SLIME_3D("Slime", Group.THREE_DIMENSIONS, View.DEPTH,
+            "A ball of slime dropped on\nthe floor: it splats, wobbles\nand settles into a heap.",
+            param(Knob.GRAVITY, 0.05, 2, 1),
+            param(Knob.FIRMNESS, 0, 30, 12),
+            param(Knob.THICKNESS, 0, 50, 10),
+            param(Knob.WOBBLE, 1, 12, 4),
+            param(Knob.RESOLUTION, 32, 96, 40),
+            param(Knob.TENSION, 0, 10, 0)) {
+        @Override
+        int dimensions() {
+            return 3;
+        }
+
+        @Override
+        double density3(int col, int row, int layer, Tuning t) {
+            double dx = col + 0.5 - SLIME_X;
+            double dy = row + 0.5 - SLIME_Y;
+            double dz = layer + 0.5 - SLIME_X;
+            return dx * dx + dy * dy + dz * dz <= SLIME_RADIUS * SLIME_RADIUS ? WATER : 0;
+        }
     };
 
     /** How the scenarios are grouped in the list. */
@@ -239,7 +266,7 @@ enum Scenario {
      */
     record Tuning(long held, double gravity, double secondDensity, double columnWidth, double conductivity,
                   double expansion, double boilPoint, double foamDrop, double superheat, double stones, double resolution,
-                  double pump, double angle, double tension) {
+                  double pump, double angle, double tension, double firmness, double thickness, double wobble) {
 
         /** The knobs in {@code values}, each held; every other one not, and read as 0. */
         static Tuning of(Map<Knob, Double> values) {
@@ -251,7 +278,8 @@ enum Scenario {
                     value(values, Knob.COLUMN_WIDTH), value(values, Knob.CONDUCTIVITY), value(values, Knob.EXPANSION),
                     value(values, Knob.BOIL_POINT), value(values, Knob.FOAM_DROP), value(values, Knob.SUPERHEAT),
                     value(values, Knob.STONES), value(values, Knob.RESOLUTION), value(values, Knob.PUMP),
-                    value(values, Knob.ANGLE), value(values, Knob.TENSION));
+                    value(values, Knob.ANGLE), value(values, Knob.TENSION), value(values, Knob.FIRMNESS),
+                    value(values, Knob.THICKNESS), value(values, Knob.WOBBLE));
         }
 
         private static double value(Map<Knob, Double> values, Knob knob) {
@@ -276,6 +304,9 @@ enum Scenario {
                 case PUMP -> pump;
                 case ANGLE -> angle;
                 case TENSION -> tension;
+                case FIRMNESS -> firmness;
+                case THICKNESS -> thickness;
+                case WOBBLE -> wobble;
             };
         }
 
@@ -306,6 +337,10 @@ enum Scenario {
     static final double SPOUT_X = 100;
     static final double SPOUT_Y = 12;
     static final double SPOUT_RADIUS = 3;
+    /** The slime ball, in the cells of the box the 3D scenarios are written for: across, up, and its radius. */
+    static final double SLIME_X = 22.5;
+    static final double SLIME_Y = 24;
+    static final double SLIME_RADIUS = 9;
 
     private final String title;
     private final Group group;
@@ -400,6 +435,11 @@ enum Scenario {
     /** A three-dimensional scenario's rest density in a cell of the box, or 0. */
     double density3(int col, int row, int layer, Tuning tuning) {
         return 0;
+    }
+
+    /** Whether the fluid is a viscoplastic material, whose {@link Knob#FIRMNESS} and the knobs beside it then set it. */
+    boolean plastic() {
+        return param(Knob.FIRMNESS) != null;
     }
 
     /** Whether the scenario has a drain and a spout, which its {@link Knob#PUMP} and {@link Knob#ANGLE} then steer. */

@@ -52,8 +52,8 @@ import static dev.supirvast.vastir.build.Body.v;
  */
 public final class Flip3 {
 
-    /** {@code [dt, gx, gy, gz, bulk, rho0, sigma]}, see {@link #params}. */
-    public static final int PARAM_COUNT = 7;
+    /** {@code [dt, gx, gy, gz, bulk, rho0, sigma, shear, yield, flow, damping]}, see {@link #params}. */
+    public static final int PARAM_COUNT = 11;
 
     static final int DT = 0;
     static final int GX = 1;
@@ -62,6 +62,10 @@ public final class Flip3 {
     static final int BULK = 4;
     static final int RHO0 = 5;
     static final int SIGMA = 6;
+    static final int SHEAR = 7;
+    static final int YIELD = 8;
+    static final int FLOW = 9;
+    static final int DAMPING = 10;
 
     /** Particles are kept this far inside the box, as in {@link Flip#WALL}. */
     public static final float WALL = Flip.WALL;
@@ -95,11 +99,21 @@ public final class Flip3 {
      * second squared, which a step built with tension turns into a force at the interface. Zero is none.
      */
     public static int[] params(double dt, double gx, double gy, double gz, double bulk, double rho0, double sigma) {
+        return params(dt, gx, gy, gz, bulk, rho0, sigma, Plastic3.Material.NONE);
+    }
+
+    /**
+     * As above, with a {@link Plastic3} {@code material}, which a step built plastic gives its particles' stress. A step
+     * built without it reads none of the material, and {@link Plastic3.Material#NONE} is water.
+     */
+    public static int[] params(double dt, double gx, double gy, double gz, double bulk, double rho0, double sigma,
+                               Plastic3.Material material) {
         if (!(dt > 0) || !(bulk >= 0) || !(rho0 > 0)) {
             throw new IllegalArgumentException("dt > 0, bulk >= 0 and rho0 > 0, got dt " + dt + ", bulk " + bulk
                     + ", rho0 " + rho0);
         }
-        return new int[] {bits(dt), bits(gx), bits(gy), bits(gz), bits(bulk), bits(rho0), bits(sigma)};
+        return new int[] {bits(dt), bits(gx), bits(gy), bits(gz), bits(bulk), bits(rho0), bits(sigma),
+                bits(material.shear()), bits(material.yield()), bits(material.flow()), bits(material.damping())};
     }
 
     /** The largest stable step for sound speed {@code √(bulk/rho0)} and flow up to {@code speed}, as {@link Flip#stableStep}. */
@@ -143,10 +157,16 @@ public final class Flip3 {
     /** {@link #GRID_NAMES}, then the capillary stress {@link Tension3#stress} left and the colour it was taken from. */
     static final String[] TENSION_GRID_NAMES = names(GRID_NAMES, Tension3.STRESS_NAMES, "colour");
 
+    /** {@link #SCATTER_NAMES} and {@link #ADVECT_NAMES}, then the particle's {@link Plastic3} stress. */
+    static final String[] PLASTIC_SCATTER_NAMES = names(SCATTER_NAMES, Plastic3.STRESS_NAMES);
+    static final String[] PLASTIC_ADVECT_NAMES = names(ADVECT_NAMES, Plastic3.STRESS_NAMES);
+
     public static final List<Buffer> CLEAR_BUFFERS = bind(CLEAR_NAMES);
     public static final List<Buffer> SCATTER_BUFFERS = bind(SCATTER_NAMES);
     public static final List<Buffer> GRID_BUFFERS = bind(GRID_NAMES);
     public static final List<Buffer> ADVECT_BUFFERS = bind(ADVECT_NAMES);
+    public static final List<Buffer> PLASTIC_SCATTER_BUFFERS = bind(PLASTIC_SCATTER_NAMES);
+    public static final List<Buffer> PLASTIC_ADVECT_BUFFERS = bind(PLASTIC_ADVECT_NAMES);
     public static final List<Buffer> TENSION_GRID_BUFFERS = bind(TENSION_GRID_NAMES);
 
     // --- clear ---------------------------------------------------------------------------------------------
@@ -171,8 +191,20 @@ public final class Flip3 {
      * {@code (w·m)·(v + C·d) + w·s·d} with {@code s = 4·dt·V₀·B·(1 − J)}.
      */
     public static Function scatter(int nx, int ny, int nz) {
+        return scatter(nx, ny, nz, false);
+    }
+
+    /**
+     * {@link #scatter}, and with the impulse of each particle's {@link Plastic3} stress beside the pressure's: node
+     * {@code k} gets {@code w·A·d} more, with {@code A = −4·dt·V₀·J·σ}.
+     */
+    public static Function plasticScatter(int nx, int ny, int nz) {
+        return scatter(nx, ny, nz, true);
+    }
+
+    private static Function scatter(int nx, int ny, int nz, boolean plastic) {
         Body b = new Body();
-        List<Buffer> bs = SCATTER_BUFFERS;
+        List<Buffer> bs = plastic ? PLASTIC_SCATTER_BUFFERS : SCATTER_BUFFERS;
         Buffer[] grid = {bs.get(0), bs.get(1), bs.get(2), bs.get(3)};
         Buffer[] at = {bs.get(4), bs.get(5), bs.get(6)};
         Buffer[] velocity = {bs.get(7), bs.get(8), bs.get(9)};
@@ -196,6 +228,11 @@ public final class Flip3 {
             // 4 · dt · V₀ · J · p, with V₀ = m/ρ₀ and J·p = B·(1 − J).
             LocalVar s = t.let("s", mul(mul(f(4), mul(load(params, i(DT)), div(v(m), load(params, i(RHO0))))),
                     mul(load(params, i(BULK)), sub(f(1), load(volume, v(p))))));
+            LocalVar[] stress = null;
+            if (plastic) {
+                LocalVar current = t.let("vol", mul(div(v(m), load(params, i(RHO0))), load(volume, v(p))));
+                stress = Plastic3.impulse(t, v(p), bs.subList(22, 28).toArray(new Buffer[0]), c, current, params);
+            }
             for (int k = 0; k < 27; k++) {
                 LocalVar wgt = stencil.weight(t, k);
                 LocalVar[] d = {stencil.dx(t, k), stencil.dy(t, k), stencil.dz(t, k)};
@@ -206,12 +243,17 @@ public final class Flip3 {
                     // The node's mass times the velocity there, plus the impulse, which carries the weight too.
                     Expr at3 = add(v(vel[a]), add(mul(v(c[3 * a]), v(d[0])),
                             add(mul(v(c[3 * a + 1]), v(d[1])), mul(v(c[3 * a + 2]), v(d[2])))));
-                    Expr momentum = add(mul(v(wm), at3), mul(v(wgt), mul(v(s), v(d[a]))));
+                    Expr push = mul(v(s), v(d[a]));
+                    if (plastic) {
+                        push = add(push, add(mul(v(stress[3 * a]), v(d[0])),
+                                add(mul(v(stress[3 * a + 1]), v(d[1])), mul(v(stress[3 * a + 2]), v(d[2])))));
+                    }
+                    Expr momentum = add(mul(v(wm), at3), mul(v(wgt), push));
                     t.atomic(AtomicOp.ADD, grid[1 + a], v(node), momentum);
                 }
             }
         }));
-        return function("flip3Scatter", b);
+        return function(plastic ? "flip3PlasticScatter" : "flip3Scatter", b);
     }
 
     // --- grid ----------------------------------------------------------------------------------------------
@@ -287,8 +329,17 @@ public final class Flip3 {
      * and it moves by its new velocity; past a wall it is put back inside with the velocity into the wall dropped.
      */
     public static Function advect(int nx, int ny, int nz) {
+        return advect(nx, ny, nz, false);
+    }
+
+    /** {@link #advect}, and then each particle's {@link Plastic3} stress taken a step on with the new {@code C}. */
+    public static Function plasticAdvect(int nx, int ny, int nz) {
+        return advect(nx, ny, nz, true);
+    }
+
+    private static Function advect(int nx, int ny, int nz, boolean plastic) {
         Body b = new Body();
-        List<Buffer> bs = ADVECT_BUFFERS;
+        List<Buffer> bs = plastic ? PLASTIC_ADVECT_BUFFERS : ADVECT_BUFFERS;
         Buffer[] at = {bs.get(0), bs.get(1), bs.get(2)};
         Buffer[] velocity = {bs.get(3), bs.get(4), bs.get(5)};
         Buffer mass = bs.get(6);
@@ -335,8 +386,11 @@ public final class Flip3 {
             }
             LocalVar j = t.let("j", mul(load(volume, v(p)), add(f(1), mul(v(dt), add(v(c[0]), add(v(c[4]), v(c[8])))))));
             t.store(volume, v(p), clamp(v(j), f(1 / J_BOUND), f(J_BOUND)));
+            if (plastic) {
+                Plastic3.update(t, v(p), bs.subList(21, 27).toArray(new Buffer[0]), c, dt, params);
+            }
         }));
-        return function("flip3Advect", b);
+        return function(plastic ? "flip3PlasticAdvect" : "flip3Advect", b);
     }
 
     // --- level of detail -----------------------------------------------------------------------------------

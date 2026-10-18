@@ -8,6 +8,7 @@ import dev.vexelray.sim.fluid.gui.ParticleSimulation3;
 import dev.vexelray.sim.fluid.gui.Scales;
 import dev.vexelray.sim.fluid.particle.Flip3;
 import dev.vexelray.sim.fluid.particle.ParticleDiagnostics;
+import dev.vexelray.sim.fluid.particle.Plastic3;
 
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -48,6 +49,8 @@ final class BoxRun implements AutoCloseable {
     private static final double COURANT_SHARE = 2.0 / 3;
     private static final double COMPRESSION_ALARM = 1.5;
     private static final double COURANT_ALARM = 0.45;
+    /** The slime's damping, as a share of the most a step takes: enough to still its shivering in a few wobbles. */
+    private static final double DAMPING_SHARE = 0.1;
 
     /** The application's device, on the queue lent to physics; null where none could be lent. */
     private final GpuContext context;
@@ -78,6 +81,8 @@ final class BoxRun implements AutoCloseable {
     private double bulk;
     /** The surface tension, in rest density times node spacings cubed per second squared; zero is none. */
     private double sigma;
+    /** What the slime is made of, from its knobs; water in a scenario that is not slime. */
+    private Plastic3.Material material = Plastic3.Material.NONE;
     private int substeps = 1;
     private double dt;
     private double simTime;
@@ -154,11 +159,13 @@ final class BoxRun implements AutoCloseable {
             }
         }
         boolean tension = tuning.has(Knob.TENSION);
-        boolean fits = sim != null && sim.particles() == count && sim.nx() == n && sim.tension() == tension;
+        boolean plastic = next.plastic();
+        boolean fits = sim != null && sim.particles() == count && sim.nx() == n && sim.tension() == tension
+                && sim.plastic() == plastic;
         if (!fits) {
             install(context != null
-                    ? new ParticleSimulation3(context, n, n, n, count, tension)
-                    : new ParticleSimulation3(n, n, n, count, tension), n);
+                    ? new ParticleSimulation3(context, n, n, n, count, tension, plastic)
+                    : new ParticleSimulation3(ParticleSimulation3.prepare(n, n, n, count, tension, plastic)), n);
         }
         scenario = next;
         this.tuning = tuning;
@@ -249,13 +256,28 @@ final class BoxRun implements AutoCloseable {
         // The knob is in the cells of the box the scenarios were written for, as the column's width is.
         double capillary = tuning.get(Knob.TENSION) * (n - 3) / (REFERENCE - 3);
         sigma = RHO0 * g * capillary * capillary;
-        double stable = Flip3.stableStep(bulk, RHO0, 2.5 * fall, pace.courant() * COURANT_SHARE * pace.stepScale());
+        double shear = 0;
+        if (scenario.plastic()) {
+            // A blob as wide as the scenario's, in this box's nodes, shivering at the knob's frequency: G = ρ·(2·L·f)².
+            double across = 2 * Scenario.SLIME_RADIUS * (n - 3) / (REFERENCE - 3);
+            double wave = 2 * across * tuning.get(Knob.WOBBLE);
+            shear = RHO0 * wave * wave;
+        }
+        double stable = Flip3.stableStep(Plastic3.waveModulus(bulk, shear), RHO0, 2.5 * fall,
+                pace.courant() * COURANT_SHARE * pace.stepScale());
         substeps = Physics.substeps(stable);
         dt = Physics.STEP_SECONDS / substeps;
+        material = Plastic3.Material.NONE;
+        if (scenario.plastic()) {
+            double firmness = tuning.get(Knob.FIRMNESS) * (n - 3) / (REFERENCE - 3);
+            double side = (n - 1) * (n - 1);
+            material = new Plastic3.Material(shear, 0.5 * RHO0 * g * firmness,
+                    RHO0 * tuning.get(Knob.THICKNESS) * 1e-3 * side, DAMPING_SHARE * Plastic3.stableDamping(dt, RHO0));
+        }
     }
 
     private int[] params() {
-        return Flip3.params(dt, 0, -gravity, 0, bulk, RHO0, sigma);
+        return Flip3.params(dt, 0, -gravity, 0, bulk, RHO0, sigma, material);
     }
 
     /** The knobs, the Courant number or the step size changed while running: the step's parameters again. */
@@ -352,7 +374,10 @@ final class BoxRun implements AutoCloseable {
         lines.put(Line.FROUDE, String.format("speed     max %.2f m/s · Mach %.2f", fastest / (n - 1), p.mach()));
         lines.put(Line.COURANT, String.format("Courant   acoustic %.2f of %.2f", p.courant(), COURANT_ALARM));
         lines.put(Line.BROKEN, String.format("broken    %d NaN/inf particles", p.nonFinite()));
-        lines.put(Line.HEAT, "");
+        lines.put(Line.HEAT, scenario.plastic()
+                ? String.format("slime     yields at %.0f · shear modulus %.0f · flow %.1f · damping %.1f",
+                        material.yield(), material.shear(), material.flow(), material.damping())
+                : "");
         if (sim.steps() > 0) {
             if (p.nonFinite() > 0) {
                 alarms.putIfAbsent("broken", String.format("t=%.3fs  %d broken particles", simTime, p.nonFinite()));

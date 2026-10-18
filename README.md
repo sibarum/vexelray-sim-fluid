@@ -53,7 +53,8 @@ right a transport (reset, pause, step) and a status line above two pages.
 | **Diagnostics** | Every number the solver has, for debugging it: time, steps, mass drift, density, speed, Courant number, the latched alarms, and the keys. |
 
 The simulations: a water dam break, oil on water, water on mercury, Rayleigh-Taylor, convection, boiling (with
-no nucleation sites it bumps) and a 3D dam break. A knob that changes the state a scenario starts from restarts it
+no nucleation sites it bumps), a 3D dam break, and slime: a ball of a viscoplastic material dropped on the floor,
+which splats and settles into a heap that stays. A knob that changes the state a scenario starts from restarts it
 once the slider has stopped moving; every other knob reaches the running simulation.
 
 The physics runs on a lane of its own, on a compute queue of the window's GPU, and the frame never waits for it. A

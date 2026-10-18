@@ -39,7 +39,16 @@ enum Knob {
             "Which way the spout points: 0 is right, 90 straight up, 180 left."),
     /** Surface tension, as the size below which it outweighs gravity: {@code σ = ρ·g·ℓ²}, at the box's own gravity. */
     TENSION("tension", "Surface tension", "cells", 0.5, false, false,
-            "How strongly the surface pulls itself together: the size of drop it holds round, in cells. 0 is none.");
+            "How strongly the surface pulls itself together: the size of drop it holds round, in cells. 0 is none."),
+    /** The yield stress, as a height of the material's own weight: {@code τ_y = ½·ρ·g·ℓ}, at the box's own gravity. */
+    FIRMNESS("firmness", "Firmness", "", 0.5, false, false,
+            "How hard it has to be pushed before it gives way and flows. Higher holds a taller heap; 0 runs like water."),
+    /** The viscosity once it flows, {@code η}, in thousandths of a box's side squared a second, times the rest density. */
+    THICKNESS("thickness", "Thickness", "", 0.5, false, false,
+            "How slowly it oozes once it does give way. 0 slides freely; higher is thick and slow."),
+    /** The elastic shear modulus, as the frequency the blob shivers at: {@code G = ρ·(2·L·f)²} for a blob across {@code L}. */
+    WOBBLE("wobble", "Wobble", "Hz", 0.5, false, false,
+            "How fast it shivers when it lands. Low is soft and slow to spring back; high is stiff jelly.");
 
     private final String key;
     private final String label;
