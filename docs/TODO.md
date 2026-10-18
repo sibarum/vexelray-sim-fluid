@@ -74,6 +74,10 @@ cannot be fixed from here at all.
 
 ## Later
 
+- [ ] **Sparse fluid for slime and effects: an idea, not started.** The 3D grid stored as small bricks that exist
+      only near fluid, one pool shared by every blob, bricks that sleep when still, and slime as a yield-stress
+      material. The plan and the first experiment are in [sparse-fluid.md](sparse-fluid.md).
+
 - [ ] **Second order.** The first kernel is first-order: Ritter's L1 error goes 1.28% → 0.80% from 200 to
       400 cells. A MUSCL reconstruction with a limiter sharpens fronts at the same resolution, and is the
       first change that is a *second scheme* — the point at which the discretisation level of the tower
