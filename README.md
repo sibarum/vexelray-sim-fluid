@@ -77,9 +77,9 @@ simulated time they were first seen, until a reset.
 
 ### Native executable
 
-With a GraalVM JDK (25, as `JAVA_HOME`), the demo builds to a native binary, as two editions of the same code.
+With a GraalVM JDK (25, as `JAVA_HOME`), the demo builds to a native binary two ways from the same code.
 Both are profile-gated, so ordinary builds stay fast. Run them from a Visual Studio developer prompt (or after
-`vcvars64.bat`), so `link.exe` is MSVC's and `rc.exe` is on `PATH`: both editions link the icon,
+`vcvars64.bat`), so `link.exe` is MSVC's and `rc.exe` is on `PATH`: both builds link the icon,
 `vexelray-sim-fluid-demo/src/main/rc/fluid-sim.ico`, which is `fluid-sim.svg` (the suite icon canvas's Fluid
 experiments primary) rendered by `vex-suite-common`'s `tools/Ico.java`.
 
@@ -92,12 +92,15 @@ mvn -Pnative -pl vexelray-sim-fluid-demo package -DskipTests
 ```
 
 - **release** gives `vexelray-sim-fluid-demo/target/fluid-sim.exe`: what ships, and what `installer.json` points
-  at. It is a Windows GUI subsystem program, so no console window appears, and it is built without the automation
-  module: `src/edition-release` is compiled instead of `src/edition-debug`, so the binary cannot open a driving
-  socket (`--automation` parses and does nothing). The log is still written, to `~/.vexelray-sim-fluid-demo/logs`.
-- **debug** gives `vexelray-sim-fluid-demo/target/vexelray-sim-fluid-demo.exe`: a console program with automation,
-  so `--automation=0` prints the port `ottermate --launch` reads. The plain JVM build, the tests and `exec:exec` are
-  this edition too.
+  at. It is a Windows GUI subsystem program, so no console window appears. The log is still written, to
+  `~/.vexelray-sim-fluid-demo/logs`, and a socket's port is in its discovery file (`~/.vexelray/automation/`), which
+  `ottermate` reads.
+- **debug** gives `vexelray-sim-fluid-demo/target/vexelray-sim-fluid-demo.exe`: a console program, so
+  `--automation=0` prints the port `ottermate --launch` reads.
+
+Both carry the framework's automation sockets, remote control and diagnostics, off until the launch asks
+(`--automation=0`, `VEXELRAY_AUTOMATION=0`) or the title bar's plug switches one on; `--automation.available=none`
+leaves them out of a run.
 
 Either is about 57 MB, built in under a minute. It is the only file: it runs from a folder holding nothing else,
 and extracts nothing. It takes the same arguments as the JVM run. That depends on nothing in the stack reaching AWT, which on Windows a
@@ -129,7 +132,7 @@ one is untested.
 
 ### Installer
 
-`installer.json` describes a per-user install of the release edition through
+`installer.json` describes a per-user install of the release build through
 [`vexelray-installer`](https://github.com/sibarum/vexelray-installer): `fluid-sim.exe` in
 `%LOCALAPPDATA%\Programs\Fluid Sim`, with Start menu and desktop shortcuts and an Apps entry. Installing through
 `irm ... | iex` rather than a browser download means the executable never carries the Mark of the Web, so

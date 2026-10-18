@@ -96,10 +96,4 @@ final class Recipes {
                     Dilated world) {
         return new Session(shell, app, ui, controls, metrics, news, pictures, ring, bus, krono.kron(), playback, world);
     }
-
-    /** The driving socket in the debug edition, off unless asked for; nothing in the release one. */
-    @Provides
-    AutoCloseable driver(Shell shell) {
-        return Edition.driver(shell);
-    }
 }

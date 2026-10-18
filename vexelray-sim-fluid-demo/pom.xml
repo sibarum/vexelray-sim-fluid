@@ -25,15 +25,7 @@
         <!-- The automation driver: "off", "on" for the default port, or a port number; 0 is a free one. -->
         <automation>off</automation>
         <app.jvmArgs></app.jvmArgs>
-        <!--
-          Two editions of the same code. The debug edition links the automation socket; the release edition does not
-          contain it at all: -Pnative-release swaps the source root below for src/edition-release (an Edition with no
-          driver) and gives the automation modules scope test, so they are on no runtime classpath. Everything but
-          -Pnative-release - tests, exec:exec, -Pnative - is the debug edition.
-        -->
-        <edition.src>src/edition-debug/java</edition.src>
-        <automation.scope>compile</automation.scope>
-        <!-- The debug edition is a console program, so ottermate can read the port it prints. -->
+        <!-- The debug build is a console program, so ottermate can read the port it prints. -->
         <native.imageName>vexelray-sim-fluid-demo</native.imageName>
         <native.subsystem>CONSOLE</native.subsystem>
     </properties>
@@ -53,12 +45,13 @@
             <artifactId>vexelray-framework-shell</artifactId>
             <version>${vexelray.framework.version}</version>
         </dependency>
-        <!-- The driving socket, off unless asked for; in the debug edition only. -->
+        <!-- The automation sockets, remote control and diagnostics: in every build, the release one too, off until
+             the launch or the title bar's plug switches one on, and the plug's lamps showing what is open and what
+             is or was connected. -->
         <dependency>
             <groupId>dev.vexelray.framework</groupId>
             <artifactId>vexelray-framework-automation</artifactId>
             <version>${vexelray.framework.version}</version>
-            <scope>${automation.scope}</scope>
         </dependency>
         <!-- The title bar, which the framework hands over and this application places. -->
         <dependency>
@@ -70,7 +63,6 @@
             <groupId>dev.vexelray.gui</groupId>
             <artifactId>vexelray-gui-automation</artifactId>
             <version>${vexelray.gui.version}</version>
-            <scope>${automation.scope}</scope>
         </dependency>
         <dependency>
             <groupId>sibarum.tactroller</groupId>
@@ -89,7 +81,7 @@
             <plugins>
                 <!--
                   GraalVM native image, shared by -Pnative and -Pnative-release, which differ only in the image's
-                  name, its subsystem and which edition is compiled. The reachability metadata (FFM downcalls and
+                  name and its subsystem. The reachability metadata (FFM downcalls and
                   upcalls, reflection, resources) is under src/main/resources/META-INF/native-image/; see the README
                   for how to record it again.
                 -->
@@ -115,7 +107,7 @@
                             <buildArg>-Dstdout.encoding=UTF-8</buildArg>
                             <!-- WINDOWS = no console window, and /ENTRY:mainCRTStartup is not optional alongside it:
                                  the linker would otherwise look for WinMain, and the image's entry is the C main.
-                                 CONSOLE is the linker's default, spelled out so both editions pass the same
+                                 CONSOLE is the linker's default, spelled out so both builds pass the same
                                  options. Windows linker options. -->
                             <buildArg>-H:NativeLinkerOption=/SUBSYSTEM:${native.subsystem}</buildArg>
                             <buildArg>-H:NativeLinkerOption=/ENTRY:mainCRTStartup</buildArg>
@@ -151,22 +143,6 @@
             </plugins>
         </pluginManagement>
         <plugins>
-            <!-- The edition's own source (Edition): src/edition-debug, or src/edition-release under -Pnative-release. -->
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>build-helper-maven-plugin</artifactId>
-                <version>3.6.0</version>
-                <executions>
-                    <execution>
-                        <id>add-edition-source</id>
-                        <phase>generate-sources</phase>
-                        <goals><goal>add-source</goal></goals>
-                        <configuration>
-                            <sources><source>${edition.src}</source></sources>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -213,9 +189,10 @@
           them from a Visual Studio developer prompt, which link.exe already asks for.
 
           mvn -Pnative-release -pl vexelray-sim-fluid-demo -am package  ->  target/fluid-sim.exe
-              what ships: a GUI subsystem program with no automation module; installer.json points at it.
+              what ships: a GUI subsystem program; installer.json points at it.
           mvn -Pnative -pl vexelray-sim-fluid-demo -am package          ->  target/vexelray-sim-fluid-demo.exe
-              the debug edition: a console program that ottermate can drive with its automation flag.
+              a console program, whose stdout carries the port ottermate reads.
+          Both carry the automation sockets, off until asked for, with the title bar's plug showing their state.
         -->
         <profile>
             <id>native</id>
@@ -235,8 +212,6 @@
         <profile>
             <id>native-release</id>
             <properties>
-                <edition.src>src/edition-release/java</edition.src>
-                <automation.scope>test</automation.scope>
                 <native.imageName>fluid-sim</native.imageName>
                 <native.subsystem>WINDOWS</native.subsystem>
             </properties>

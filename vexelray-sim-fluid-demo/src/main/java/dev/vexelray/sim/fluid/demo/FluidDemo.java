@@ -1,6 +1,7 @@
 package dev.vexelray.sim.fluid.demo;
 
 import dev.vexelray.framework.api.VexelApp;
+import dev.vexelray.framework.automation.AutomationStarter;
 import dev.vexelray.framework.shell.VexelApplication;
 
 /**
@@ -18,9 +19,15 @@ import dev.vexelray.framework.shell.VexelApplication;
  * FluidDemo --speed=4          any setting of {@link Controls}, for that launch only
  * </pre>
  *
+ * <p>{@link AutomationStarter} is the automation sockets, in every build, the release one included: off unless the
+ * launch asks ({@code --automation}, {@code VEXELRAY_AUTOMATION}) or a person switches them on from the title bar's
+ * plug, whose lamps show each one's port open or not and anything connected now or earlier.
+ * {@code --automation.available=none} leaves them out of a run altogether.
+ *
  * Needs {@code --enable-native-access=ALL-UNNAMED}; {@code mvn exec:exec} passes it.
  */
-@VexelApp(name = FluidDemo.APP, title = FluidDemo.TITLE, width = FluidDemo.W, height = FluidDemo.H)
+@VexelApp(name = FluidDemo.APP, title = FluidDemo.TITLE, width = FluidDemo.W, height = FluidDemo.H,
+        starters = AutomationStarter.class)
 public final class FluidDemo {
 
     /** The settings directory's name. Stable across releases, because changing it forgets window placement. */

@@ -1,4 +1,4 @@
-// The executable's icon, linked into fluid-sim.exe and the debug edition by both native profiles.
+// The executable's icon, linked into fluid-sim.exe and vexelray-sim-fluid-demo.exe by both native profiles.
 //
 // Ordinal 1, and it is the only icon here, because Windows shows a program's *lowest-numbered* icon resource
 // wherever it shows the program itself -- Explorer, the taskbar's pinned button, a shortcut, the Apps entry.
