@@ -219,12 +219,46 @@ enum Scenario {
 
         @Override
         double density3(int col, int row, int layer, Tuning t) {
-            double dx = col + 0.5 - SLIME_X;
-            double dy = row + 0.5 - SLIME_Y;
-            double dz = layer + 0.5 - SLIME_X;
-            return dx * dx + dy * dy + dz * dz <= SLIME_RADIUS * SLIME_RADIUS ? WATER : 0;
+            return ball(col, row, layer, SLIME_X, SLIME_Y, SLIME_X, SLIME_RADIUS) ? WATER : 0;
+        }
+    },
+
+    /**
+     * Three blobs of slime dropped onto each other, with surface tension: where they touch, the tension pulls them
+     * into one, and the firmness resists the change of shape. Soft and strongly pulled, they round into one blob; firm,
+     * they stick where they touch and stay a pile of three.
+     */
+    SLIME_BLOBS_3D("Slime blobs", Group.THREE_DIMENSIONS, View.DEPTH,
+            "Three blobs of slime dropped\nonto each other: surface\ntension pulls them into one.\nFirmer ones stick but stay three.",
+            param(Knob.GRAVITY, 0.05, 2, 1),
+            param(Knob.FIRMNESS, 0, 30, 8),
+            param(Knob.THICKNESS, 0, 50, 5),
+            param(Knob.WOBBLE, 1, 12, 3),
+            param(Knob.RESOLUTION, 32, 96, 40),
+            param(Knob.TENSION, 0, 10, 10)) {
+        @Override
+        int dimensions() {
+            return 3;
+        }
+
+        @Override
+        double density3(int col, int row, int layer, Tuning t) {
+            for (double[] blob : BLOBS) {
+                if (ball(col, row, layer, blob[0], blob[1], blob[2], BLOB_RADIUS)) {
+                    return WATER;
+                }
+            }
+            return 0;
         }
     };
+
+    /** Whether a cell's centre is inside the ball at {@code (x, y, z)}, all in cells of the reference box. */
+    private static boolean ball(int col, int row, int layer, double x, double y, double z, double radius) {
+        double dx = col + 0.5 - x;
+        double dy = row + 0.5 - y;
+        double dz = layer + 0.5 - z;
+        return dx * dx + dy * dy + dz * dz <= radius * radius;
+    }
 
     /** How the scenarios are grouped in the list. */
     enum Group {
@@ -341,6 +375,9 @@ enum Scenario {
     static final double SLIME_X = 22.5;
     static final double SLIME_Y = 24;
     static final double SLIME_RADIUS = 9;
+    /** The slime blobs' centres, in the same cells, from the lowest to the one dropped from highest, and their radius. */
+    private static final double[][] BLOBS = {{16, 8, 20}, {29, 20, 25}, {21, 35, 22.5}};
+    static final double BLOB_RADIUS = 7;
 
     private final String title;
     private final Group group;

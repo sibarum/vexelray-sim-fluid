@@ -79,12 +79,16 @@ cannot be fixed from here at all.
       material. The plan and the first experiment are in [sparse-fluid.md](sparse-fluid.md).
 
 - [ ] **Slime is built in 3D only, and not with everything.** `Plastic3` (a stress a particle, elastic to a yield, then
-      Bingham) and the "Slime" scenario work and are tested (`Plastic3Test`). Not done: the level of detail moves mass
-      between slots but leaves their stress where it was, so a slot that joins keeps a stale one (it should take the
-      givers' mass-weighted mean, as it does `C` and `J`); slime with surface tension on runs, but nothing tests it; the
-      shear wave costs steps (61 a world step at 40³, the world at 70% while the ball splats); the knobs' units are
-      approximate (in the test, a firmness of 18 cells comes to a heap of 10.7). And for the Ratchet & Clank feel: more than one
-      blob, something to throw them at, and slime that sticks to walls.
+      Bingham), a `kind` a particle picking its row of a table of four materials (water is a row of zeros), and the
+      "Slime" and "Slime blobs" scenarios work and are tested (`Plastic3Test`: slime and water in one step, each keeping
+      its own material; two touching soft blobs pulled into one by tension, firm ones staying two). Not done: the level
+      of detail moves mass between slots but leaves their stress where it was, so a slot that joins keeps a stale one (it
+      should take the givers' mass-weighted mean, as it does `C` and `J`); the demo's scenarios use one kind, and the
+      flat and surface pictures cannot tell kinds apart; the shear wave costs steps (61 a world step at 40³, the world
+      at 70% while the ball splats); the knobs' units are approximate (in the test, a firmness of 18 cells comes to a
+      heap of 10.7). Next, in order: a tension per kind, so two slimes can refuse to combine (each kind its own colour
+      field and surface); slime that sticks to walls; a hose in 3D; and washing slime off with it. Something to throw
+      blobs at is for after.
 
 - [ ] **Second order.** The first kernel is first-order: Ritter's L1 error goes 1.28% → 0.80% from 200 to
       400 cells. A MUSCL reconstruction with a limiter sharpens fronts at the same resolution, and is the

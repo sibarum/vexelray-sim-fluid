@@ -6,6 +6,7 @@ import dev.supirvast.vastir.core.Expr;
 import dev.supirvast.vastir.core.LocalVar;
 
 import static dev.supirvast.vastir.build.Body.add;
+import static dev.supirvast.vastir.build.Body.clamp;
 import static dev.supirvast.vastir.build.Body.div;
 import static dev.supirvast.vastir.build.Body.f;
 import static dev.supirvast.vastir.build.Body.gt;
@@ -15,6 +16,7 @@ import static dev.supirvast.vastir.build.Body.max;
 import static dev.supirvast.vastir.build.Body.mul;
 import static dev.supirvast.vastir.build.Body.sqrt;
 import static dev.supirvast.vastir.build.Body.sub;
+import static dev.supirvast.vastir.build.Body.toInt;
 import static dev.supirvast.vastir.build.Body.v;
 
 /**
@@ -24,7 +26,8 @@ import static dev.supirvast.vastir.build.Body.v;
  *
  * <p><b>What a particle carries.</b> Beside {@code J}, which keeps the pressure as it does for water, each particle carries
  * its deviatoric stress {@code s}, a symmetric trace-free {@code 3×3}, as its six components {@link #STRESS_NAMES}; start
- * them at zero. After the advect has the particle's new velocity gradient {@code C}, the stress is
+ * them at zero. It carries its {@link #KIND} too, which picks its row of a small {@link #TABLE table} of materials, so
+ * several slimes, and water, can share one step; water is a row of zeros, and every row nobody sets. After the advect has the particle's new velocity gradient {@code C}, the stress is
  * <ol>
  *   <li><b>loaded</b> elastically, by the Jaumann rate: {@code s += dt·(2G·dev D + W·s − s·W)}, with {@code D} and
  *       {@code W} the symmetric and skew parts of {@code C}. The rotation terms turn the stress with the material, so a
@@ -49,6 +52,23 @@ public final class Plastic3 {
 
     /** The particle's deviatoric stress: {@code xx, yy, zz, xy, xz, yz}. */
     public static final String[] STRESS_NAMES = {"sxx", "syy", "szz", "sxy", "sxz", "syz"};
+
+    /** The particle's material, a whole number below {@link #SLOTS} kept as a float: its row of {@link #TABLE}. */
+    public static final String KIND = "kind";
+
+    /** The table of materials, {@link #SLOTS} rows of {@link #WORDS}: {@link #table} writes it. */
+    public static final String TABLE = "materials";
+
+    /** How many materials one step holds. A slot that is never set is water. */
+    public static final int SLOTS = 4;
+
+    /** A row of the table: shear, yield, flow, damping. */
+    public static final int WORDS = 4;
+
+    private static final int SHEAR = 0;
+    private static final int YIELD = 1;
+    private static final int FLOW = 2;
+    private static final int DAMPING = 3;
 
     /** Which of {@link #STRESS_NAMES} is row {@code a}, column {@code e}. */
     private static final int[][] COMPONENT = {{0, 3, 4}, {3, 1, 5}, {4, 5, 2}};
@@ -81,6 +101,25 @@ public final class Plastic3 {
     }
 
     /**
+     * The table as {@link #TABLE}'s words: material {@code k} is the row a particle of kind {@code k} reads. Rows past the
+     * materials given are water, so a step that never writes the table is water throughout.
+     */
+    public static int[] table(Material... materials) {
+        if (materials.length > SLOTS) {
+            throw new IllegalArgumentException("a step holds " + SLOTS + " materials, got " + materials.length);
+        }
+        int[] words = new int[SLOTS * WORDS];
+        for (int k = 0; k < materials.length; k++) {
+            Material m = materials[k];
+            double[] row = {m.shear(), m.yield(), m.flow(), m.damping()};
+            for (int w = 0; w < WORDS; w++) {
+                words[k * WORDS + w] = Float.floatToRawIntBits((float) row[w]);
+            }
+        }
+        return words;
+    }
+
+    /**
      * The modulus of the fastest wave in a material of bulk modulus {@code bulk} and shear modulus {@code shear}: the
      * compression wave's {@code B + 4G/3}. {@link Flip3#stableStep} takes it in place of the bulk.
      */
@@ -102,9 +141,11 @@ public final class Plastic3 {
      * {@code w·A·d} of momentum. {@code σ} is the carried {@code s} and the damping's {@code 2μ·dev D} from the
      * particle's {@code C}. Row by row, nine locals of which six differ.
      */
-    static LocalVar[] impulse(Body t, Expr p, Buffer[] stress, LocalVar[] c, LocalVar volume, Buffer params) {
+    static LocalVar[] impulse(Body t, Expr p, Buffer[] stress, LocalVar[] c, LocalVar volume, Buffer params,
+                              Buffer kind, Buffer table) {
+        LocalVar row = row(t, p, kind);
         LocalVar[] deviator = deviator(t, c);
-        LocalVar mu2 = t.let("mu2", mul(f(2), load(params, i(Flip3.DAMPING))));
+        LocalVar mu2 = t.let("mu2", mul(f(2), word(table, row, DAMPING)));
         // −4 · dt · V₀ · J, with V₀ = m/ρ₀ folded into the volume the caller gives.
         LocalVar scale = t.let("scale", mul(f(-4), mul(load(params, i(Flip3.DT)), v(volume))));
         LocalVar[] unique = new LocalVar[6];
@@ -121,7 +162,8 @@ public final class Plastic3 {
      * The particle's stress after a step, for the advect, from its new {@code C}: loaded by the Jaumann rate and held to
      * the yield, as the class says. Stored back into {@code stress}.
      */
-    static void update(Body t, Expr p, Buffer[] stress, LocalVar[] c, LocalVar dt, Buffer params) {
+    static void update(Body t, Expr p, Buffer[] stress, LocalVar[] c, LocalVar dt, Buffer kind, Buffer table) {
+        LocalVar row = row(t, p, kind);
         LocalVar[] deviator = deviator(t, c);
         LocalVar[] spin = new LocalVar[9];
         for (int a = 0; a < 3; a++) {
@@ -134,7 +176,8 @@ public final class Plastic3 {
             old[k] = t.let("s", load(stress[k], p));
         }
         LocalVar[] s = full(old);
-        LocalVar shear2 = t.let("shear2", mul(f(2), load(params, i(Flip3.SHEAR))));
+        LocalVar shear = t.let("shear", word(table, row, SHEAR));
+        LocalVar shear2 = t.let("shear2", mul(f(2), v(shear)));
         LocalVar[] trial = new LocalVar[6];
         for (int a = 0; a < 3; a++) {
             for (int e = a; e < 3; e++) {
@@ -155,18 +198,26 @@ public final class Plastic3 {
             square = add(square, k < 3 ? term : mul(f(2), term));
         }
         LocalVar tau = t.let("tau", sqrt(mul(f(0.5), square)));
-        LocalVar yield = t.let("yield", load(params, i(Flip3.YIELD)));
+        LocalVar yield = t.let("yield", word(table, row, YIELD));
         LocalVar keep = t.let("keep", f(1));
         t.when(gt(v(tau), v(yield)), past -> {
-            LocalVar flow = past.let("flow", load(params, i(Flip3.FLOW)));
-            LocalVar share = past.let("share", div(v(flow),
-                    max(add(v(flow), mul(load(params, i(Flip3.SHEAR)), v(dt))), f(TINY))));
+            LocalVar flow = past.let("flow", word(table, row, FLOW));
+            LocalVar share = past.let("share", div(v(flow), max(add(v(flow), mul(v(shear), v(dt))), f(TINY))));
             LocalVar held = past.let("held", add(v(yield), mul(sub(v(tau), v(yield)), v(share))));
             past.set(keep, div(v(held), v(tau)));
         });
         for (int k = 0; k < 6; k++) {
             t.store(stress[k], p, mul(v(trial[k]), v(keep)));
         }
+    }
+
+    /** Where the particle's row of the table starts: its kind, held to the table, times a row's words. */
+    private static LocalVar row(Body t, Expr p, Buffer kind) {
+        return t.let("row", mul(toInt(clamp(load(kind, p), f(0), f(SLOTS - 1))), i(WORDS)));
+    }
+
+    private static Expr word(Buffer table, LocalVar row, int word) {
+        return load(table, add(v(row), i(word)));
     }
 
     /** {@code dev D}, the trace-free symmetric part of {@code C}, row by row. */

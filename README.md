@@ -54,7 +54,7 @@ right a transport (reset, pause, step) and a status line above two pages.
 
 The simulations: a water dam break, oil on water, water on mercury, Rayleigh-Taylor, convection, boiling (with
 no nucleation sites it bumps), a 3D dam break, and slime: a ball of a viscoplastic material dropped on the floor,
-which splats and settles into a heap that stays. A knob that changes the state a scenario starts from restarts it
+which splats and settles into a heap that stays, and three blobs of it that surface tension pulls into one. A knob that changes the state a scenario starts from restarts it
 once the slider has stopped moving; every other knob reaches the running simulation.
 
 The physics runs on a lane of its own, on a compute queue of the window's GPU, and the frame never waits for it. A

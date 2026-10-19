@@ -52,8 +52,8 @@ import static dev.supirvast.vastir.build.Body.v;
  */
 public final class Flip3 {
 
-    /** {@code [dt, gx, gy, gz, bulk, rho0, sigma, shear, yield, flow, damping]}, see {@link #params}. */
-    public static final int PARAM_COUNT = 11;
+    /** {@code [dt, gx, gy, gz, bulk, rho0, sigma]}, see {@link #params}. */
+    public static final int PARAM_COUNT = 7;
 
     static final int DT = 0;
     static final int GX = 1;
@@ -62,10 +62,6 @@ public final class Flip3 {
     static final int BULK = 4;
     static final int RHO0 = 5;
     static final int SIGMA = 6;
-    static final int SHEAR = 7;
-    static final int YIELD = 8;
-    static final int FLOW = 9;
-    static final int DAMPING = 10;
 
     /** Particles are kept this far inside the box, as in {@link Flip#WALL}. */
     public static final float WALL = Flip.WALL;
@@ -99,21 +95,11 @@ public final class Flip3 {
      * second squared, which a step built with tension turns into a force at the interface. Zero is none.
      */
     public static int[] params(double dt, double gx, double gy, double gz, double bulk, double rho0, double sigma) {
-        return params(dt, gx, gy, gz, bulk, rho0, sigma, Plastic3.Material.NONE);
-    }
-
-    /**
-     * As above, with a {@link Plastic3} {@code material}, which a step built plastic gives its particles' stress. A step
-     * built without it reads none of the material, and {@link Plastic3.Material#NONE} is water.
-     */
-    public static int[] params(double dt, double gx, double gy, double gz, double bulk, double rho0, double sigma,
-                               Plastic3.Material material) {
         if (!(dt > 0) || !(bulk >= 0) || !(rho0 > 0)) {
             throw new IllegalArgumentException("dt > 0, bulk >= 0 and rho0 > 0, got dt " + dt + ", bulk " + bulk
                     + ", rho0 " + rho0);
         }
-        return new int[] {bits(dt), bits(gx), bits(gy), bits(gz), bits(bulk), bits(rho0), bits(sigma),
-                bits(material.shear()), bits(material.yield()), bits(material.flow()), bits(material.damping())};
+        return new int[] {bits(dt), bits(gx), bits(gy), bits(gz), bits(bulk), bits(rho0), bits(sigma)};
     }
 
     /** The largest stable step for sound speed {@code √(bulk/rho0)} and flow up to {@code speed}, as {@link Flip#stableStep}. */
@@ -158,8 +144,10 @@ public final class Flip3 {
     static final String[] TENSION_GRID_NAMES = names(GRID_NAMES, Tension3.STRESS_NAMES, "colour");
 
     /** {@link #SCATTER_NAMES} and {@link #ADVECT_NAMES}, then the particle's {@link Plastic3} stress. */
-    static final String[] PLASTIC_SCATTER_NAMES = names(SCATTER_NAMES, Plastic3.STRESS_NAMES);
-    static final String[] PLASTIC_ADVECT_NAMES = names(ADVECT_NAMES, Plastic3.STRESS_NAMES);
+    static final String[] PLASTIC_SCATTER_NAMES = names(SCATTER_NAMES, Plastic3.STRESS_NAMES, Plastic3.KIND,
+            Plastic3.TABLE);
+    static final String[] PLASTIC_ADVECT_NAMES = names(ADVECT_NAMES, Plastic3.STRESS_NAMES, Plastic3.KIND,
+            Plastic3.TABLE);
 
     public static final List<Buffer> CLEAR_BUFFERS = bind(CLEAR_NAMES);
     public static final List<Buffer> SCATTER_BUFFERS = bind(SCATTER_NAMES);
@@ -231,7 +219,8 @@ public final class Flip3 {
             LocalVar[] stress = null;
             if (plastic) {
                 LocalVar current = t.let("vol", mul(div(v(m), load(params, i(RHO0))), load(volume, v(p))));
-                stress = Plastic3.impulse(t, v(p), bs.subList(22, 28).toArray(new Buffer[0]), c, current, params);
+                stress = Plastic3.impulse(t, v(p), bs.subList(22, 28).toArray(new Buffer[0]), c, current, params,
+                        bs.get(28), bs.get(29));
             }
             for (int k = 0; k < 27; k++) {
                 LocalVar wgt = stencil.weight(t, k);
@@ -387,7 +376,7 @@ public final class Flip3 {
             LocalVar j = t.let("j", mul(load(volume, v(p)), add(f(1), mul(v(dt), add(v(c[0]), add(v(c[4]), v(c[8])))))));
             t.store(volume, v(p), clamp(v(j), f(1 / J_BOUND), f(J_BOUND)));
             if (plastic) {
-                Plastic3.update(t, v(p), bs.subList(21, 27).toArray(new Buffer[0]), c, dt, params);
+                Plastic3.update(t, v(p), bs.subList(21, 27).toArray(new Buffer[0]), c, dt, bs.get(27), bs.get(28));
             }
         }));
         return function(plastic ? "flip3PlasticAdvect" : "flip3Advect", b);

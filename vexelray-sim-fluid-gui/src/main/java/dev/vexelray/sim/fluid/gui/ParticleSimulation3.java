@@ -210,7 +210,7 @@ public final class ParticleSimulation3 implements AutoCloseable {
         return tension;
     }
 
-    /** Whether the particles carry a {@link Plastic3} stress, whose material is in the parameters. */
+    /** Whether the particles carry a {@link Plastic3} stress, and a kind that picks their material from a table. */
     public boolean plastic() {
         return plastic;
     }
@@ -225,6 +225,19 @@ public final class ParticleSimulation3 implements AutoCloseable {
      * particle starts at its rest volume, with no affine velocity and, if it carries one, no stress.
      */
     public void load(float[][] at, float[][] velocity, float[] mass, int[] params) {
+        load(at, velocity, mass, null, params);
+    }
+
+    /**
+     * As above, and each particle's {@link Plastic3#KIND}, which picks its row of the {@linkplain #materials table}; null is
+     * every particle of kind 0. A simulation that is not plastic has no kinds and takes none.
+     */
+    public void load(float[][] at, float[][] velocity, float[] mass, float[] kind, int[] params) {
+        if (plastic) {
+            write(Plastic3.KIND, kind != null ? kind : new float[mass.length]);
+        } else if (kind != null) {
+            throw new IllegalArgumentException("a simulation that is not plastic has no kinds of particle");
+        }
         write("x", at[0]);
         write("y", at[1]);
         write("z", at[2]);
@@ -264,6 +277,14 @@ public final class ParticleSimulation3 implements AutoCloseable {
     /** Replaces the parameters without touching the particles. */
     public void params(int[] params) {
         runner.write("params", params);
+    }
+
+    /** Replaces the table of materials ({@link Plastic3#table}) a plastic simulation's particles read by their kind. */
+    public void materials(int[] table) {
+        if (!plastic) {
+            throw new IllegalStateException("a simulation that is not plastic has no materials");
+        }
+        runner.write(Plastic3.TABLE, table);
     }
 
     /** Takes {@code count} steps. */

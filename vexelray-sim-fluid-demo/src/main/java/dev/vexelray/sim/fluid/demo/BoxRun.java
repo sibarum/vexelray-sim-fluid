@@ -177,6 +177,7 @@ final class BoxRun implements AutoCloseable {
         this.initialMass = initialMass;
         physics();
         sim.load(at, new float[3][mass.length], mass, params());
+        materials();
         level = Flip3.GROUP;                           // a loaded simulation has every slot active
         settle = 0;
         simTime = 0;
@@ -277,7 +278,14 @@ final class BoxRun implements AutoCloseable {
     }
 
     private int[] params() {
-        return Flip3.params(dt, 0, -gravity, 0, bulk, RHO0, sigma, material);
+        return Flip3.params(dt, 0, -gravity, 0, bulk, RHO0, sigma);
+    }
+
+    /** The slime's material, the one kind its particles all are; nothing in a simulation that is not plastic. */
+    private void materials() {
+        if (sim.plastic()) {
+            sim.materials(Plastic3.table(material));
+        }
     }
 
     /** The knobs, the Courant number or the step size changed while running: the step's parameters again. */
@@ -286,6 +294,7 @@ final class BoxRun implements AutoCloseable {
         this.pace = pace;
         physics();
         sim.params(params());
+        materials();
     }
 
     /** One world step: the fluid's steps that fill it, the level of detail moved along, and the step kept in the ring. */

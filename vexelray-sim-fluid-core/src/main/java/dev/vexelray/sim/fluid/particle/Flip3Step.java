@@ -46,7 +46,9 @@ public final class Flip3Step implements Buffered {
 
     /**
      * As above, and with {@code plastic}, a {@link Plastic3} stress on every particle, {@code sxx … syz}, which start at zero:
-     * the scatter adds its impulse and the advect takes it on. Its material is in the parameters.
+     * the scatter adds its impulse and the advect takes it on. Each particle's {@code kind} picks its material from the
+     * {@code materials} table ({@link Plastic3#table}); both start at zero, which is every particle of kind 0 and every
+     * kind water.
      */
     public Flip3Step(int nx, int ny, int nz, int particles, boolean tension, boolean plastic) {
         if (particles < 1) {
@@ -73,6 +75,8 @@ public final class Flip3Step implements Buffered {
             for (String field : Plastic3.STRESS_NAMES) {
                 buffers.put(field, new BufferSpec(field, Body.F32, particles));
             }
+            buffers.put(Plastic3.KIND, new BufferSpec(Plastic3.KIND, Body.F32, particles));
+            buffers.put(Plastic3.TABLE, new BufferSpec(Plastic3.TABLE, Body.F32, Plastic3.SLOTS * Plastic3.WORDS));
         }
         List<Pass> passes = new ArrayList<>();
         passes.add(new Pass("clear", Flip3.clear(nx, ny, nz), Flip3.CLEAR_BUFFERS, List.of(Flip3.CLEAR_NAMES), nodes));
