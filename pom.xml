@@ -6,7 +6,7 @@
 
     <groupId>dev.vexelray.sim</groupId>
     <artifactId>vexelray-sim-fluid</artifactId>
-    <version>0.1.1</version>
+    <version>0.1.2-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <name>vexelray-sim-fluid</name>
@@ -33,13 +33,13 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <!-- The stack, installed to the local .m2 from the sibling checkouts. -->
-        <supirvast.version>0.2.1</supirvast.version>
-        <vexelray.version>0.1.1</vexelray.version>
-        <vexelray.gui.version>0.1.1</vexelray.gui.version>
-        <vexelray.framework.version>0.1.1</vexelray.framework.version>
-        <tactroller.version>1.1</tactroller.version>
-        <vexelray.sim.core.version>0.1.1</vexelray.sim.core.version>
-        <kronometer.version>1.1</kronometer.version>
+        <supirvast.version>0.2.2-SNAPSHOT</supirvast.version>
+        <vexelray.version>0.1.2-SNAPSHOT</vexelray.version>
+        <vexelray.gui.version>0.1.2-SNAPSHOT</vexelray.gui.version>
+        <vexelray.framework.version>0.1.2-SNAPSHOT</vexelray.framework.version>
+        <tactroller.version>1.2-SNAPSHOT</tactroller.version>
+        <vexelray.sim.core.version>0.1.2-SNAPSHOT</vexelray.sim.core.version>
+        <kronometer.version>1.2-SNAPSHOT</kronometer.version>
 
         <junit.version>5.11.4</junit.version>
 
