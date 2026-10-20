@@ -30,3 +30,4 @@ target/
 
 # Screenshots taken while developing, via the automation socket (ottermate ... shot screenshots/<name>.png)
 screenshots/
+.claude/
