@@ -7,7 +7,7 @@
     <parent>
         <groupId>dev.vexelray.sim</groupId>
         <artifactId>vexelray-sim-fluid</artifactId>
-        <version>0.1.1-SNAPSHOT</version>
+        <version>0.1.1</version>
     </parent>
 
     <artifactId>vexelray-sim-fluid-demo</artifactId>
