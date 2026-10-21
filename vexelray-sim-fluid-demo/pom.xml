@@ -176,7 +176,7 @@
                 <configuration>
                     <executable>${java.home}/bin/java</executable>
                     <classpathScope>runtime</classpathScope>
-                    <commandlineArgs>--enable-native-access=ALL-UNNAMED -Dstdout.encoding=UTF-8 -Dautomation=${automation} ${app.jvmArgs} -classpath %classpath ${app.mainClass} ${app.args}</commandlineArgs>
+                    <commandlineArgs>--enable-native-access=ALL-UNNAMED -Dstdout.encoding=UTF-8 -Dautomation=${automation} "-Dbuild.dir=${project.build.directory}" ${app.jvmArgs} -classpath %classpath ${app.mainClass} ${app.args}</commandlineArgs>
                 </configuration>
             </plugin>
         </plugins>

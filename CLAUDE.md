@@ -75,7 +75,7 @@ It prints `automation: localhost:<port>`. Drive it with **`ottermate`**, which i
   `@transport.*`.
 - **After clicking a button, SPACE presses that button, not the pause shortcut.** Use the Pause button (`find Resume`
   / `find Pause`) or another key. `settle` between keys; keys sent back to back have been lost before (see the TODO).
-- Close it by clicking the window's close box, which runs the shutdown order; `target/logs/` has the log and the probe.
+- Close it by clicking the window's close box, which runs the shutdown order; `target/logs/` (`target-linux/logs/` on Linux) has the log and the probe.
 - Things worth reading off the readout when checking timing: `world at N%` (the `Dilated` clock's dilation: 100% is
   real time, lower is the world slowed, by design), `a step every N ms`, and the panel's frame time, which should
   stay at the display's rate whatever the physics costs.
