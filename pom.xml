@@ -38,6 +38,7 @@
         <vexelray.gui.version>0.1.2-SNAPSHOT</vexelray.gui.version>
         <vexelray.framework.version>0.1.2-SNAPSHOT</vexelray.framework.version>
         <tactroller.version>1.2-SNAPSHOT</tactroller.version>
+        <vexelray.codec.version>0.1.2-SNAPSHOT</vexelray.codec.version>
         <vexelray.sim.core.version>0.1.2-SNAPSHOT</vexelray.sim.core.version>
         <kronometer.version>1.2-SNAPSHOT</kronometer.version>
 

@@ -74,6 +74,14 @@
             <artifactId>tactroller-clipboard</artifactId>
             <version>${tactroller.version}</version>
         </dependency>
+        <!-- The title bar's camera records video as well as taking screenshots: found through ServiceLoader, so this
+             dependency is all it takes. AV1 into Matroska, through an FFmpeg that holds the AV1 encoders and no
+             decoder (ffmpeg-wrapper-record). -->
+        <dependency>
+            <groupId>dev.vexelray.codec</groupId>
+            <artifactId>vexelray-codec-record</artifactId>
+            <version>${vexelray.codec.version}</version>
+        </dependency>
     </dependencies>
 
     <build>
