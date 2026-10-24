@@ -19,6 +19,11 @@
         "icon": "vexelray-sim-fluid-demo/src/main/rc/fluid-sim.ico",
         "shortcuts": { "desktop": true, "startMenu": true, "label": "Fluid Sim" }
       },
+      {
+        "name": "fluid-sim-ffmpeg-record",
+        "source": "vexelray-sim-fluid-demo/target/fluid-sim-ffmpeg-record-windows-x86_64.zip",
+        "dir": "ffmpeg-record"
+      },
       { "name": "notices", "source": "THIRD-PARTY-NOTICES.txt" }
     ]
   }

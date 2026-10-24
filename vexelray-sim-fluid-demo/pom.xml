@@ -146,6 +146,52 @@
                                 </target>
                             </configuration>
                         </execution>
+                        <!-- The recording encoder (see ffmpeg-record-beside) laid out flat in target/ffmpeg-record, and
+                             zipped for installer.json, which unpacks it into the install's own ffmpeg-record folder.
+                             Fixed times, so the same libraries make the same zip and an installer that already has
+                             its hash skips the download. -->
+                        <execution>
+                            <id>ffmpeg-record-zip</id>
+                            <phase>prepare-package</phase>
+                            <goals><goal>run</goal></goals>
+                            <configuration>
+                                <target>
+                                    <delete dir="${project.build.directory}/ffmpeg-record"/>
+                                    <copy todir="${project.build.directory}/ffmpeg-record" flatten="true">
+                                        <fileset dir="${project.build.directory}/ffmpeg-wrapper-record/natives/record/windows-x86_64"/>
+                                    </copy>
+                                    <delete file="${project.build.directory}/fluid-sim-ffmpeg-record-windows-x86_64.zip"/>
+                                    <zip destfile="${project.build.directory}/fluid-sim-ffmpeg-record-windows-x86_64.zip"
+                                         basedir="${project.build.directory}/ffmpeg-record"
+                                         modificationtime="2026-01-01T00:00:00Z"/>
+                                </target>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+                <!-- The camera's video recording beside the executable. ffmpeg-wrapper-record-windows's encoder (AV1 into
+                     Matroska, 14 MB) is not a resource of the image, so it is taken out of its jar (into
+                     target/ffmpeg-wrapper-record, then flattened into target/ffmpeg-record by ffmpeg-record-zip), where
+                     its loader looks beside an executable run from target/. Without it a native build offers
+                     "Record video to file…" and fails when it is clicked. FFmpeg's and SVT-AV1's licences come out
+                     with the libraries. -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-dependency-plugin</artifactId>
+                    <version>3.7.0</version>
+                    <executions>
+                        <execution>
+                            <id>ffmpeg-record-beside</id>
+                            <phase>prepare-package</phase>
+                            <goals><goal>unpack-dependencies</goal></goals>
+                            <configuration>
+                                <includeArtifactIds>ffmpeg-wrapper-record-windows</includeArtifactIds>
+                                <includes>natives/record/windows-x86_64/**</includes>
+                                <outputDirectory>${project.build.directory}/ffmpeg-wrapper-record</outputDirectory>
+                                <overWriteReleases>true</overWriteReleases>
+                                <overWriteSnapshots>true</overWriteSnapshots>
+                            </configuration>
+                        </execution>
                     </executions>
                 </plugin>
             </plugins>
@@ -208,6 +254,10 @@
                 <plugins>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-dependency-plugin</artifactId>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-antrun-plugin</artifactId>
                     </plugin>
                     <plugin>
@@ -225,6 +275,10 @@
             </properties>
             <build>
                 <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-dependency-plugin</artifactId>
+                    </plugin>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-antrun-plugin</artifactId>

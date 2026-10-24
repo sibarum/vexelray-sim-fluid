@@ -2,6 +2,8 @@ Fluid Sim: third-party software notices
 
 Fluid Sim contains the third-party software listed below. Each item names its licence; the full texts of the licences are at the end of this file. The rest of the program is VexelRay's own code.
 
+The ffmpeg-record folder next to Fluid Sim holds the libraries its camera records video with (AV1 into Matroska). They are not part of the program's executable. They are FFmpeg, licensed under the GNU Lesser General Public License, with SVT-AV1 (https://gitlab.com/AOMediaCodec/SVT-AV1, Copyright (c) 2021, Alliance for Open Media) linked in, licensed under the BSD 3-Clause Clear License and covered by the Alliance for Open Media Patent License 1.0. Their licences, the patent licence and where to get their source are in ffmpeg-record\FFMPEG-LICENSE.txt, ffmpeg-record\SVT-AV1-LICENSE.txt, ffmpeg-record\SVT-AV1-PATENTS.txt and ffmpeg-record\FFMPEG-SOURCE.txt. The same folder's ffrecord.dll is VexelRay's own code.
+
 ===============================================================================
 1. Oracle GraalVM Native Image runtime and Java class library 25.0.3
 https://www.graalvm.org/
