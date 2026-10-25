@@ -233,6 +233,23 @@
                     <commandlineArgs>--enable-native-access=ALL-UNNAMED -Dstdout.encoding=UTF-8 -Dautomation=${automation} "-Dbuild.dir=${project.build.directory}" ${app.jvmArgs} -classpath %classpath ${app.mainClass} ${app.args}</commandlineArgs>
                 </configuration>
             </plugin>
+            <!-- The bill the About window reads (vexelray-build/README.md). This module is the application, and its
+                 installer.json and THIRD-PARTY-NOTICES.txt are the repository's, at the root. -->
+            <plugin>
+                <groupId>dev.vexelray.build</groupId>
+                <artifactId>vexelray-build-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>identify</id>
+                        <goals>
+                            <goal>identify</goal>
+                        </goals>
+                        <configuration>
+                            <installerConfig>${project.basedir}/../installer.json</installerConfig>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 

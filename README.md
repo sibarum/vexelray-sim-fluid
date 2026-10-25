@@ -93,7 +93,7 @@ mvn -Pnative -pl vexelray-sim-fluid-demo package -DskipTests
 
 - **release** gives `vexelray-sim-fluid-demo/target/fluid-sim.exe`: what ships, and what `installer.json` points
   at. It is a Windows GUI subsystem program, so no console window appears. The log is still written, to
-  `~/.vexelray-sim-fluid-demo/logs`, and a socket's port is in its discovery file (`~/.vexelray/automation/`), which
+  `~/.fluid-sim/logs`, and a socket's port is in its discovery file (`~/.vexelray/automation/`), which
   `ottermate` reads.
 - **debug** gives `vexelray-sim-fluid-demo/target/vexelray-sim-fluid-demo.exe`: a console program, so
   `--automation=0` prints the port `ottermate --launch` reads.

@@ -26,12 +26,18 @@ import dev.vexelray.framework.shell.VexelApplication;
  *
  * Needs {@code --enable-native-access=ALL-UNNAMED}; {@code mvn exec:exec} passes it.
  */
-@VexelApp(name = FluidDemo.APP, title = FluidDemo.TITLE, width = FluidDemo.W, height = FluidDemo.H,
-        starters = AutomationStarter.class)
+@VexelApp(name = FluidDemo.APP, formerNames = FluidDemo.FORMER, title = FluidDemo.TITLE, width = FluidDemo.W,
+        height = FluidDemo.H, starters = AutomationStarter.class)
 public final class FluidDemo {
 
-    /** The settings directory's name. Stable across releases, because changing it forgets window placement. */
-    static final String APP = "vexelray-sim-fluid-demo";
+    /**
+     * The application's own name: its settings directory, and its installer id (installer.json), which the build
+     * checks are the same. Stable across releases; a rename lists the old one in {@link #FORMER}.
+     */
+    static final String APP = "fluid-sim";
+
+    /** The names it had before, whose settings directory moves to {@link #APP}'s on the first launch after. */
+    static final String FORMER = "vexelray-sim-fluid-demo";
 
     static final String TITLE = "Fluid experiments";
 
