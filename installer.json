@@ -3,7 +3,7 @@
   "name": "Fluid Sim",
   "publisher": "sibarum",
   "description": "Fluid simulation experiments on the VexelRay stack: dam breaks, mixing, heat and a 3D dam break, live on the GPU.",
-  "version": "0.1.2-SNAPSHOT",
+  "version": "0.1.2",
 
   "repo": "sibarum/vexelray-dist",
   "branch": "main",
